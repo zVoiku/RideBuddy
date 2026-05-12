@@ -1,30 +1,26 @@
-import { Text, View, StyleSheet, Image } from "react-native";
-
-const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+import { useEffect } from 'react';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import { getToken } from '../src/api';
+import { theme } from '../src/theme';
 
 export default function Index() {
-  console.log(EXPO_PUBLIC_BACKEND_URL, "EXPO_PUBLIC_BACKEND_URL");
-
+  const router = useRouter();
+  useEffect(() => {
+    (async () => {
+      const t = await getToken();
+      router.replace(t ? '/(tabs)/home' : '/login');
+    })();
+  }, []);
   return (
-    <View style={styles.container}>
-      <Image
-        source={require("../assets/images/app-image.png")}
-        style={styles.image}
-      />
+    <View style={styles.c} testID="splash-screen">
+      <Text style={styles.brand}>RideBuddy</Text>
+      <ActivityIndicator color={theme.colors.primary} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#0c0c0c",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  image: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "contain",
-  },
+  c: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.background, gap: 16 },
+  brand: { fontSize: 32, fontWeight: '800', color: theme.colors.primary, letterSpacing: -0.8 },
 });
