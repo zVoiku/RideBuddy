@@ -1,0 +1,139 @@
+{
+  "theme_archetype": {
+    "domain": "Mobility & Ride-hailing",
+    "theme": "Light",
+    "archetype": "Trust & Precision (Modified Swiss/Clear)",
+    "description": "A highly functional, modern, and trustworthy mobile application. Leverages sleek glassmorphism to feel native to iOS, anchored by a deep Royal Blue for authority and Mint Green for positive actions."
+  },
+  "colors": {
+    "primary": {
+      "royal_blue": "#0F4C81",
+      "royal_blue_light": "#3A73A9",
+      "royal_blue_dark": "#0A365D"
+    },
+    "accent": {
+      "mint_green": "#4ADE80",
+      "mint_green_light": "#86EFAC",
+      "mint_green_dark": "#22C55E"
+    },
+    "surface": {
+      "background": "#F8FAFC",
+      "card": "#FFFFFF",
+      "glass": "rgba(255, 255, 255, 0.75)"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#64748B",
+      "inverse": "#FFFFFF",
+      "accent": "#0F4C81"
+    },
+    "border": {
+      "light": "#E2E8F0",
+      "glass": "rgba(255, 255, 255, 0.5)"
+    },
+    "status": {
+      "success": "#22C55E",
+      "warning": "#F59E0B",
+      "error": "#EF4444"
+    }
+  },
+  "typography": {
+    "font_family": "System",
+    "fallback": "San Francisco (iOS), Roboto (Android)",
+    "scale": {
+      "h1": { "fontSize": 32, "fontWeight": "800", "letterSpacing": -0.8 },
+      "h2": { "fontSize": 24, "fontWeight": "700", "letterSpacing": -0.5 },
+      "h3": { "fontSize": 20, "fontWeight": "600", "letterSpacing": -0.3 },
+      "body_large": { "fontSize": 18, "fontWeight": "400", "lineHeight": 26 },
+      "body": { "fontSize": 16, "fontWeight": "400", "lineHeight": 24 },
+      "caption": { "fontSize": 14, "fontWeight": "500", "color": "#64748B" },
+      "overline": { "fontSize": 12, "fontWeight": "700", "letterSpacing": 1.2, "textTransform": "uppercase" }
+    }
+  },
+  "spacing_and_layout": {
+    "screen_padding": 20,
+    "element_gap": 16,
+    "touch_target_min": 44,
+    "border_radius": {
+      "sm": 8,
+      "md": 16,
+      "lg": 24,
+      "xl": 32,
+      "pill": 999
+    },
+    "shadows": {
+      "soft": "0px 4px 20px rgba(15, 76, 129, 0.08)",
+      "glass_inner": "inset 0px 1px 0px rgba(255, 255, 255, 0.6)"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "Background: Royal Blue, Text: Inverse (White), Radius: Pill (999px), Min-Height: 56px. Hover/Active opacity 0.8.",
+      "accent": "Background: Mint Green, Text: Primary (#0F172A), Radius: Pill, Min-Height: 56px.",
+      "glass": "Background: rgba(255,255,255,0.7), Blur: 10, Border: 1px solid rgba(255,255,255,0.5), Radius: 24px"
+    },
+    "inputs": {
+      "style": "Background: White, Border: 1px solid #E2E8F0, Radius: 16px, Padding: 16px, Min-Height: 56px.",
+      "focus": "Border: 2px solid Royal Blue"
+    },
+    "bottom_sheet": {
+      "style": "Background: Glass/White, Blur: 20 (expo-blur), Radius: 32px 32px 0 0, Padding: 24px, Shadow: soft",
+      "handle": "Width: 40px, Height: 4px, Background: #CBD5E1, Radius: Pill, Align: Center, Margin-Top: 8px"
+    },
+    "cards": {
+      "style": "Background: White, Radius: 24px, Padding: 20px, Border: 1px solid #E2E8F0, Shadow: soft"
+    },
+    "glass_panel": {
+      "library": "expo-blur (BlurView)",
+      "intensity": 50,
+      "tint": "light",
+      "style": "Border: 1px solid rgba(255, 255, 255, 0.4), Radius: 24px"
+    }
+  },
+  "screens": {
+    "onboarding_login": {
+      "layout": "SafeAreaView",
+      "components": "Hero image/Lottie, H1 Heading, Subtitle, Phone Number Input, OTP Input (4/6 boxes), Royal Blue Primary CTA."
+    },
+    "home_booking": {
+      "layout": "Map background (Mocked), Bottom Sheet (Glassmorphism) over the map.",
+      "features": "Point-to-Point, Hourly, Schedule Tabs. Owner-driver toggle switch (Mint Green active state). Address input fields with subtle shadow."
+    },
+    "fare_estimation": {
+      "layout": "Bottom Sheet expanding",
+      "components": "Vehicle type list, Price breakdown showing 10% discount in Mint Green, Payment selector (Cash/Card/UPI), 30% advance toggle, 'Confirm Ride' CTA."
+    },
+    "live_tracking_driver": {
+      "layout": "Map background + Floating Glass Header (Trip Code) + Bottom Sheet (Driver Info)",
+      "components": "Trip Code Handshake display (e.g. 'Start Code: 4812'). Driver Details card: Avatar, Name, Rating (★), Aadhaar verification badge. Action row: Call/Chat buttons."
+    },
+    "profile_garage": {
+      "layout": "Standard White background with Gray tint.",
+      "components": "User Info Header. 'My Garage' section: List of cars (Make/Model/Transmission), 'Add Car' floating action button."
+    },
+    "trip_history": {
+      "layout": "List layout (FlatList)",
+      "components": "Past trips cards. Date, Route (A to B), Fare, 'Download Invoice' outline button."
+    }
+  },
+  "technical_rules": {
+    "framework": "React Native (Expo)",
+    "styling": "StyleSheet API or NativeWind (if configured), no raw CSS.",
+    "accessibility": "Touch targets must be >= 44x44. Uses accessible labels.",
+    "testing": "All interactive elements MUST have `testID` attribute (React Native equivalent of data-testid). Example: `testID=\"login-submit-button\"`"
+  },
+  "media_urls": {
+    "map_mock": {
+      "url": "https://images.unsplash.com/photo-1680187287324-e64977a3e7c9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODF8MHwxfHNlYXJjaHwxfHxjaXR5JTIwc3RyZWV0JTIwbWFwJTIwbGlnaHR8ZW58MHx8fHwxNzc4NjAzMTI5fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Clean city street map background for live tracking mock"
+    },
+    "driver_avatar": {
+      "url": "https://images.unsplash.com/photo-1718434127037-efa9c3043f7f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBkcml2ZXIlMjBwb3J0cmFpdHxlbnwwfHx8fDE3Nzg2MDMxMjh8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Professional driver portrait for driver info card"
+    },
+    "car_profile": {
+      "url": "https://images.unsplash.com/photo-1724208905448-a0051be7d4bb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwyfHxtb2Rlcm4lMjBzZWRhbiUyMGNhciUyMHByb2ZpbGV8ZW58MHx8fHwxNzc4NjAzMTI4fDA&ixlib=rb-4.1.0&q=85",
+      "description": "Modern sedan car profile for garage section"
+    }
+  }
+}
