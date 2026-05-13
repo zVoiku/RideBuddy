@@ -21,7 +21,7 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-JWT_SECRET = "ridebuddy-secret-key-dev"
+JWT_SECRET = "ridebuddy-secret-key-dev-please-rotate-in-prod-32chars+"
 JWT_ALGO = "HS256"
 
 app = FastAPI()
@@ -454,12 +454,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 
 @app.on_event("shutdown")
