@@ -121,11 +121,55 @@ class TestEstimate:
         # base = 3 * 249 = 747
         assert r.json()["base_fare"] == 747.0
 
-    def test_estimate_round_trip(self, session, auth):
+    def test_estimate_round_trip_days_27_new_user(self, session):
+        """Spec: 27 days round trip, new user → base=40473, discount=5400, total=35073, per_day_rate=1499, per_day_discount=200"""
+        phone = f"+9198{int(time.time()*1000)%100000000:08d}"
+        session.post(f"{API}/auth/send-otp", json={"phone": phone})
+        v = session.post(f"{API}/auth/verify-otp", json={"phone": phone, "otp": "123456"}).json()
+        h = {"Content-Type": "application/json", "Authorization": f"Bearer {v['token']}"}
+        r = session.post(f"{API}/bookings/estimate", headers=h,
+                         json={"trip_type": "point_to_point", "one_way": False, "distance_km": 0, "days": 27})
+        assert r.status_code == 200
+        d = r.json()
+        assert d["base_fare"] == 40473.0, f"base_fare={d['base_fare']}"
+        assert d["discount"] == 5400.0, f"discount={d['discount']}"
+        assert d["total_fare"] == 35073.0, f"total={d['total_fare']}"
+        assert d["per_day_rate"] == 1499, f"per_day_rate={d['per_day_rate']}"
+        assert d["per_day_discount"] == 200, f"per_day_discount={d['per_day_discount']}"
+        assert d["days"] == 27
+
+    def test_estimate_round_trip_days_existing_user_no_discount(self, session, auth):
+        # auth fixture user already did profile update -> is_new=False
         r = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
-                         json={"trip_type": "point_to_point", "one_way": False, "distance_km": 20})
-        # base = 199 + 20*12 + 20*6 = 199 + 240 + 120 = 559
-        assert r.json()["base_fare"] == 559.0
+                         json={"trip_type": "point_to_point", "one_way": False, "distance_km": 0, "days": 5})
+        d = r.json()
+        assert d["base_fare"] == 5 * 1499
+        assert d["discount"] == 0
+        assert d["per_day_discount"] == 0
+
+    def test_create_booking_with_days_persists(self, session):
+        """Booking creation must accept and persist `days` and `return_at` from BookingIn."""
+        phone = f"+9197{int(time.time()*1000)%100000000:08d}"
+        session.post(f"{API}/auth/send-otp", json={"phone": phone})
+        v = session.post(f"{API}/auth/verify-otp", json={"phone": phone, "otp": "123456"}).json()
+        h = {"Content-Type": "application/json", "Authorization": f"Bearer {v['token']}"}
+        payload = {
+            "trip_type": "point_to_point", "one_way": False,
+            "pickup_address": "TEST RT Pickup", "drop_address": "TEST RT Drop",
+            "distance_km": 0, "duration_hours": 0,
+            "days": 27,
+            "schedule_now": False,
+            "scheduled_at": "2026-02-01T09:00:00Z",
+            "return_at": "2026-02-28T18:00:00Z",
+            "transmission": "Automatic", "payment_method": "upi", "pay_partial": False,
+        }
+        r = session.post(f"{API}/bookings", headers=h, json=payload)
+        assert r.status_code == 200, r.text
+        b = r.json()
+        assert b["days"] == 27, f"`days` was not persisted (got {b.get('days')}). BookingIn schema likely missing `days` field"
+        assert b["return_at"] is not None, "`return_at` was not persisted. BookingIn schema likely missing `return_at` field"
+        assert b["base_fare"] == 40473.0, f"base_fare={b['base_fare']} (expected 40473 = 27*1499)"
+        assert b["total_fare"] == 35073.0, f"total_fare={b['total_fare']} (expected 35073)"
 
 
 # ---------- Booking lifecycle ----------

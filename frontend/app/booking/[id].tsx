@@ -1,30 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image, Alert, TextInput, ScrollView, Linking } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Image, Alert, TextInput, Modal, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
 import { theme } from '../../src/theme';
 
-const STATUS_LABEL: Record<string, string> = {
-  searching: 'Finding the perfect driver…',
-  assigned: 'Driver is on the way',
-  arrived: 'Driver has arrived',
-  in_progress: 'Trip in progress',
-  completed: 'Trip completed',
-  cancelled: 'Trip cancelled',
-};
+function fmtDate(iso?: string) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${d.toLocaleString('en-US', { month: 'short', day: 'numeric' })} ${d.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+}
 
 export default function BookingDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const [booking, setBooking] = useState<any>(null);
+  const [b, setB] = useState<any>(null);
+  const [showMap, setShowMap] = useState(false);
+  const [showCodeEntry, setShowCodeEntry] = useState(false);
   const [code, setCode] = useState('');
   const pollRef = useRef<any>(null);
 
-  const load = async () => {
-    try { setBooking(await api.getBooking(id as string)); } catch {}
-  };
+  const load = async () => { try { setB(await api.getBooking(id as string)); } catch {} };
 
   useEffect(() => {
     load();
@@ -33,236 +30,277 @@ export default function BookingDetail() {
   }, [id]);
 
   useEffect(() => {
-    if (booking?.status === 'completed' || booking?.status === 'cancelled') {
-      clearInterval(pollRef.current);
-    }
-  }, [booking?.status]);
+    if (b?.status === 'completed' || b?.status === 'cancelled') clearInterval(pollRef.current);
+  }, [b?.status]);
 
-  const submitCode = async () => {
-    if (code.length !== 4) { Alert.alert('Invalid', 'Code must be 4 digits'); return; }
+  if (!b) return <View style={styles.c} />;
+  const d = b.driver;
+  const onTrip = b.status === 'in_progress';
+  const finalised = b.status === 'completed' || b.status === 'cancelled';
+
+  const startTrip = async () => {
+    if (code.length !== 4) { Alert.alert('Invalid', 'Enter the 4-digit code'); return; }
     try {
-      if (booking.status === 'in_progress') {
-        const b = await api.verifyEnd(booking.id, code);
-        setBooking(b); setCode('');
-        Alert.alert('Trip completed', 'Thanks for riding with us!');
-      } else {
-        const b = await api.verifyStart(booking.id, code);
-        setBooking(b); setCode('');
-      }
+      const r = await api.verifyStart(b.id, code);
+      setB(r); setCode(''); setShowCodeEntry(false);
     } catch (e: any) { Alert.alert('Wrong code', e.message); }
   };
 
-  const cancel = async () => {
-    Alert.alert('Cancel trip?', 'This will cancel your booking.', [
-      { text: 'No' },
-      {
-        text: 'Yes',
-        style: 'destructive',
-        onPress: async () => {
-          await api.cancelBooking(booking.id);
-          router.replace('/(tabs)/bookings');
-        },
-      },
-    ]);
+  const endTrip = async () => {
+    if (code.length !== 4) { Alert.alert('Invalid', 'Enter the 4-digit end code'); return; }
+    try {
+      const r = await api.verifyEnd(b.id, code);
+      setB(r); setCode(''); setShowCodeEntry(false);
+      Alert.alert('Trip completed', 'Thanks for riding with us!');
+    } catch (e: any) { Alert.alert('Wrong code', e.message); }
   };
 
-  const simulateArrived = async () => {
-    try { setBooking(await api.simulateArrived(booking.id)); } catch {}
-  };
-
-  if (!booking) {
-    return (
-      <SafeAreaView style={styles.c}><Text style={{ textAlign: 'center', marginTop: 80 }}>Loading…</Text></SafeAreaView>
-    );
-  }
-
-  const d = booking.driver;
-  const showCodeInput = ['assigned', 'arrived', 'in_progress'].includes(booking.status);
-  const isEndCode = booking.status === 'in_progress';
+  const simulateArrived = async () => { try { setB(await api.simulateArrived(b.id)); } catch {} };
 
   return (
     <View style={styles.c}>
-      <Image source={{ uri: 'https://images.unsplash.com/photo-1680187287324-e64977a3e7c9?w=1200' }} style={styles.map} />
-      <View style={styles.mapTint} />
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
-        <View style={styles.topBar}>
-          <TouchableOpacity testID="trip-back" onPress={() => router.replace('/(tabs)/bookings')} style={styles.backBtn}>
-            <Ionicons name="chevron-back" size={26} color={theme.colors.textPrimary} />
+        <View style={styles.head}>
+          <TouchableOpacity testID="detail-back" onPress={() => router.replace('/bookings')} style={styles.back}>
+            <Ionicons name="arrow-back" size={22} color={theme.colors.inverse} />
           </TouchableOpacity>
-          <View style={styles.statusChip}>
-            <View style={styles.pulse} />
-            <Text style={styles.statusText}>{STATUS_LABEL[booking.status]}</Text>
-          </View>
+          <Text style={styles.title}>{onTrip ? 'On Trip' : 'Booking Details'}</Text>
         </View>
 
-        {/* Simulated car marker */}
-        {d && booking.status !== 'completed' && booking.status !== 'cancelled' && (
-          <View style={styles.carMarker}>
-            <View style={styles.carPin}>
-              <Ionicons name="car-sport" size={22} color={theme.colors.inverse} />
-            </View>
-            <Text style={styles.etaText}>{d.eta_minutes} min</Text>
-          </View>
-        )}
-
-        <ScrollView style={styles.sheet} contentContainerStyle={{ paddingBottom: 50 }} showsVerticalScrollIndicator={false}>
-          <View style={styles.handle} />
-
-          {/* Trip Codes Card */}
-          {(booking.start_code) && (
-            <View style={styles.codesCard}>
-              <Text style={styles.codesTitle}>Safety Handshake</Text>
-              <View style={styles.codesRow}>
-                <View style={[styles.codeBox, !isEndCode && booking.status !== 'completed' && styles.codeBoxActive]}>
-                  <Text style={styles.codeLbl}>START CODE</Text>
-                  <Text testID="start-code" style={styles.codeVal}>{booking.start_code}</Text>
-                  <Text style={styles.codeHint}>Give to driver to begin</Text>
-                </View>
-                <View style={[styles.codeBox, isEndCode && styles.codeBoxActive]}>
-                  <Text style={styles.codeLbl}>END CODE</Text>
-                  <Text testID="end-code" style={styles.codeVal}>{booking.end_code}</Text>
-                  <Text style={styles.codeHint}>At destination</Text>
-                </View>
-              </View>
+        <ScrollView style={styles.sheet} contentContainerStyle={{ padding: 20, paddingBottom: 160 }}>
+          {/* Trip Code Card */}
+          {b.start_code && !finalised && (
+            <View style={styles.codeCard}>
+              <Text style={styles.codeLbl}>{onTrip ? 'TRIP END CODE' : 'TRIP CODE'}</Text>
+              <Text testID="trip-code" style={styles.codeBig}>{onTrip ? b.end_code : b.start_code}</Text>
+              <Text style={styles.codeHint}>{onTrip ? 'Share with partner when trip ends at destination' : 'Share this with your ride partner to start the trip'}</Text>
             </View>
           )}
 
-          {/* Driver card */}
+          {/* Driver Card */}
           {d ? (
             <View style={styles.driverCard}>
-              <Image source={{ uri: d.photo }} style={styles.dpic} />
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={styles.driverHead}>
+                <Image source={{ uri: d.photo }} style={styles.dpic} />
+                <View style={{ flex: 1 }}>
                   <Text style={styles.dname}>{d.name}</Text>
-                  {d.aadhaar_verified && <Ionicons name="shield-checkmark" size={16} color={theme.colors.accentDark} />}
-                </View>
-                <Text style={styles.dmeta}>★ {d.rating} · {d.trips} trips</Text>
-                <View style={styles.badges}>
-                  {d.aadhaar_verified && <View style={styles.badge}><Text style={styles.badgeText}>Aadhaar</Text></View>}
-                  {d.police_verified && <View style={styles.badge}><Text style={styles.badgeText}>Police</Text></View>}
+                  <View style={styles.starRow}>
+                    <Ionicons name="star" size={14} color="#FFC107" />
+                    <Text style={styles.starText}>{d.rating}</Text>
+                    <Text style={styles.tripCount}>· {d.trips} trips</Text>
+                  </View>
+                  <View style={styles.badges}>
+                    {d.aadhaar_verified && <View style={styles.badge}><Ionicons name="checkmark-circle" size={11} color={theme.colors.primary} /><Text style={styles.badgeText}>Aadhaar</Text></View>}
+                    {d.police_verified && <View style={styles.badge}><Ionicons name="shield-checkmark" size={11} color={theme.colors.primary} /><Text style={styles.badgeText}>Police</Text></View>}
+                  </View>
                 </View>
               </View>
-              <View style={styles.actionsCol}>
-                <TouchableOpacity testID="call-driver" style={styles.actionBtn} onPress={() => Linking.openURL(`tel:${d.phone}`)}>
+              <View style={styles.driverActions}>
+                <TouchableOpacity testID="call-driver" style={styles.actBtn} onPress={() => Linking.openURL(`tel:${d.phone}`)}>
                   <Ionicons name="call" size={18} color={theme.colors.inverse} />
+                  <Text style={styles.actText}>Call</Text>
                 </TouchableOpacity>
-                <TouchableOpacity testID="chat-driver" style={[styles.actionBtn, { backgroundColor: theme.colors.accent }]} onPress={() => Alert.alert('Chat', 'In-app chat coming soon. Use call for now.')}>
-                  <Ionicons name="chatbubble" size={18} color={theme.colors.primaryDark} />
+                <TouchableOpacity testID="msg-driver" style={[styles.actBtn, styles.actBtnAlt]} onPress={() => Alert.alert('Chat', 'In-app chat coming soon')}>
+                  <Ionicons name="chatbubble" size={18} color={theme.colors.primary} />
+                  <Text style={[styles.actText, { color: theme.colors.primary }]}>Message</Text>
                 </TouchableOpacity>
               </View>
             </View>
-          ) : (
+          ) : !finalised ? (
             <View style={styles.searching}>
-              <Ionicons name="search" size={28} color={theme.colors.primary} />
-              <Text style={styles.searchingT}>Searching for nearby drivers…</Text>
-              <Text style={styles.searchingS}>This usually takes a few seconds</Text>
+              <Text style={{ fontSize: 48 }}>🚗</Text>
+              <Text style={styles.searchT}>Searching nearby partners…</Text>
             </View>
-          )}
+          ) : null}
 
-          {/* Code entry */}
-          {showCodeInput && (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>
-                {isEndCode ? 'Enter End Code to complete' : 'Enter Start Code from driver'}
-              </Text>
-              <TextInput
-                testID="trip-code-input"
-                style={styles.codeInput}
-                value={code}
-                onChangeText={(t) => setCode(t.replace(/[^0-9]/g, '').slice(0, 4))}
-                placeholder="••••"
-                placeholderTextColor={theme.colors.textSecondary}
-                keyboardType="number-pad"
-                maxLength={4}
-              />
-              <TouchableOpacity testID="submit-code-btn" style={styles.cta} onPress={submitCode}>
-                <Text style={styles.ctaText}>{isEndCode ? 'Complete trip' : 'Start trip'}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Trip summary */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Trip summary</Text>
-            <View style={styles.routeLine}><View style={[styles.dot, { backgroundColor: theme.colors.accent }]} /><Text style={styles.addr}>{booking.pickup_address}</Text></View>
-            {booking.drop_address && <View style={styles.routeLine}><View style={[styles.dot, { backgroundColor: theme.colors.error }]} /><Text style={styles.addr}>{booking.drop_address}</Text></View>}
-            <View style={styles.fareRow}>
-              <Text style={styles.fareLbl}>Total fare</Text>
-              <Text style={styles.fareVal}>₹{booking.total_fare}</Text>
-            </View>
-            <Text style={styles.payNote}>
-              {booking.payment_method.toUpperCase()} · Paid ₹{booking.paid_amount}
-              {booking.paid_amount < booking.total_fare ? ` · Balance ₹${(booking.total_fare - booking.paid_amount).toFixed(2)} on completion` : ''}
-            </Text>
-          </View>
-
-          {/* Demo helpers */}
-          {booking.status === 'assigned' && (
-            <TouchableOpacity testID="sim-arrived" style={styles.demoBtn} onPress={simulateArrived}>
-              <Ionicons name="flash" size={14} color={theme.colors.primary} />
-              <Text style={styles.demoText}>Simulate driver arrived</Text>
+          {/* Live Trip Map button */}
+          {(b.status === 'assigned' || b.status === 'arrived' || onTrip) && (
+            <TouchableOpacity testID="live-map-btn" style={styles.mapBtn} onPress={() => setShowMap(true)}>
+              <Ionicons name="map" size={20} color={theme.colors.inverse} />
+              <Text style={styles.mapBtnText}>Live Trip Map</Text>
             </TouchableOpacity>
           )}
 
-          {(booking.status === 'searching' || booking.status === 'assigned' || booking.status === 'arrived') && (
-            <TouchableOpacity testID="cancel-btn" style={styles.cancelBtn} onPress={cancel}>
-              <Text style={styles.cancelText}>Cancel trip</Text>
+          {/* Trip Summary */}
+          <View style={styles.tripCard}>
+            <Text style={styles.sectionT}>Trip Summary</Text>
+            <View style={styles.routeRow}>
+              <View style={styles.pinDot}><Ionicons name="location" size={18} color={theme.colors.primary} /></View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.routeText}>
+                  <Text style={{ fontWeight: '900' }}>{b.pickup_address?.split(',')[0]}</Text>
+                  {'  →  '}
+                  <Text style={{ fontWeight: '900' }}>{(b.drop_address || '').split(',')[0]}</Text>
+                </Text>
+                <Text style={styles.routeMeta}>{b.one_way ? 'One Way' : 'Round Trip'} {b.days > 0 ? `· ${b.days} Days` : ''}</Text>
+              </View>
+            </View>
+            <View style={styles.dateLine}>
+              <Ionicons name="calendar-outline" size={16} color={theme.colors.primary} />
+              <Text style={styles.dateText}>{fmtDate(b.scheduled_at || b.created_at)}</Text>
+            </View>
+            {b.return_at && (
+              <View style={styles.dateLine}>
+                <Ionicons name="calendar-outline" size={16} color={theme.colors.primary} />
+                <Text style={styles.dateText}>Return: {fmtDate(b.return_at)}</Text>
+              </View>
+            )}
+            <View style={styles.fareRow}>
+              <Text style={styles.fareLbl}>Total Fare</Text>
+              <Text style={styles.fareVal}>₹{b.total_fare.toLocaleString('en-IN')}</Text>
+            </View>
+            <Text style={styles.paid}>Paid ₹{b.paid_amount.toLocaleString('en-IN')} {b.paid_amount < b.total_fare ? `· Balance ₹${(b.total_fare - b.paid_amount).toLocaleString('en-IN')}` : '· Fully Paid'}</Text>
+          </View>
+
+          {/* Helpers */}
+          {b.status === 'assigned' && (
+            <TouchableOpacity testID="sim-arrived" style={styles.sim} onPress={simulateArrived}>
+              <Ionicons name="flash" size={14} color={theme.colors.primary} />
+              <Text style={styles.simText}>Simulate Partner Arrived</Text>
             </TouchableOpacity>
           )}
         </ScrollView>
+
+        {/* Bottom action area */}
+        {!finalised && b.status !== 'searching' && (
+          <View style={styles.bottom}>
+            {onTrip ? (
+              <View style={{ gap: 10 }}>
+                <TouchableOpacity testID="sos-btn" style={styles.sos} onPress={() => Alert.alert('SOS', 'Emergency contacts notified (mock).')}>
+                  <Ionicons name="warning" size={20} color={theme.colors.inverse} />
+                  <Text style={styles.sosText}>SOS - Emergency Help</Text>
+                </TouchableOpacity>
+                <TouchableOpacity testID="end-trip-btn" style={styles.endTrip} onPress={() => setShowCodeEntry(true)}>
+                  <Text style={styles.endTripText}>Enter End Code</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity testID="start-trip-btn" style={styles.endTrip} onPress={() => setShowCodeEntry(true)}>
+                <Text style={styles.endTripText}>Enter Start Code</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
       </SafeAreaView>
+
+      {/* Code entry modal */}
+      <Modal visible={showCodeEntry} transparent animationType="slide" onRequestClose={() => setShowCodeEntry(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>{onTrip ? 'Enter Trip End Code' : 'Enter Trip Start Code'}</Text>
+            <Text style={styles.modalSub}>{onTrip ? 'Get the 4-digit end code from your partner' : 'Get the 4-digit code from your partner'}</Text>
+            <TextInput
+              testID="code-input"
+              style={styles.codeInput}
+              value={code}
+              onChangeText={(t) => setCode(t.replace(/[^0-9]/g, '').slice(0, 4))}
+              keyboardType="number-pad"
+              maxLength={4}
+              placeholder="• • • •"
+              placeholderTextColor={theme.colors.textSecondary}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+              <TouchableOpacity testID="modal-cancel" style={styles.modalSecondary} onPress={() => { setShowCodeEntry(false); setCode(''); }}>
+                <Text style={styles.modalSecondaryText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity testID="modal-confirm" style={styles.modalPrimary} onPress={onTrip ? endTrip : startTrip}>
+                <Text style={styles.modalPrimaryText}>{onTrip ? 'Complete Trip' : 'Start Trip'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Live Trip Map modal */}
+      <Modal visible={showMap} animationType="slide" onRequestClose={() => setShowMap(false)}>
+        <View style={{ flex: 1, backgroundColor: theme.colors.primaryDark }}>
+          <Image source={{ uri: 'https://images.unsplash.com/photo-1524661135-423995f22d0b?w=1200' }} style={StyleSheet.absoluteFillObject as any} />
+          <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(14,155,155,0.18)' }} />
+          <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+            <View style={styles.mapHead}>
+              <TouchableOpacity testID="map-close" onPress={() => setShowMap(false)} style={styles.mapBack}>
+                <Ionicons name="arrow-back" size={22} color={theme.colors.textPrimary} />
+              </TouchableOpacity>
+              <View style={styles.mapChip}>
+                <View style={styles.pulse} />
+                <Text style={styles.mapChipText}>{d?.eta_minutes ?? 5} min away</Text>
+              </View>
+            </View>
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={styles.carMarker}><Ionicons name="car-sport" size={28} color={theme.colors.inverse} /></View>
+            </View>
+            <View style={styles.mapFooter}>
+              <Text style={{ fontWeight: '900', fontSize: 18, color: theme.colors.textPrimary }}>{d?.name}</Text>
+              <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{b.pickup_address?.split(',')[0]} → {(b.drop_address || '').split(',')[0]}</Text>
+            </View>
+          </SafeAreaView>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  c: { flex: 1, backgroundColor: theme.colors.primaryDark },
-  map: { ...StyleSheet.absoluteFillObject, opacity: 0.9 },
-  mapTint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(15,76,129,0.15)' },
-  topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 4 },
-  backBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center', ...theme.shadow.soft },
-  statusChip: { marginLeft: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.95)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: theme.radius.pill, ...theme.shadow.soft },
-  pulse: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent },
-  statusText: { fontSize: 13, fontWeight: '700', color: theme.colors.textPrimary },
-  carMarker: { position: 'absolute', top: '32%', alignSelf: 'center', alignItems: 'center', gap: 4 },
-  carPin: { width: 48, height: 48, borderRadius: 24, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: theme.colors.card, ...theme.shadow.soft },
-  etaText: { fontSize: 12, fontWeight: '800', color: theme.colors.inverse, backgroundColor: theme.colors.primaryDark, paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.pill },
-  sheet: { flex: 1, marginTop: 'auto', backgroundColor: theme.colors.card, borderTopLeftRadius: 32, borderTopRightRadius: 32, padding: 20, maxHeight: '70%' },
-  handle: { width: 44, height: 4, borderRadius: 2, backgroundColor: '#CBD5E1', alignSelf: 'center', marginBottom: 14 },
-  codesCard: { padding: 16, borderRadius: theme.radius.lg, backgroundColor: '#EFF6FF', borderWidth: 1, borderColor: '#DBEAFE', marginBottom: 14 },
-  codesTitle: { fontSize: 14, fontWeight: '700', color: theme.colors.primary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 },
-  codesRow: { flexDirection: 'row', gap: 10 },
-  codeBox: { flex: 1, padding: 14, backgroundColor: theme.colors.card, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.colors.borderLight, alignItems: 'center' },
-  codeBoxActive: { borderColor: theme.colors.accent, borderWidth: 2, backgroundColor: '#F0FDF4' },
-  codeLbl: { fontSize: 10, color: theme.colors.textSecondary, fontWeight: '700', letterSpacing: 1 },
-  codeVal: { fontSize: 28, fontWeight: '800', color: theme.colors.primary, letterSpacing: 4, marginVertical: 4 },
-  codeHint: { fontSize: 11, color: theme.colors.textSecondary, textAlign: 'center' },
-  driverCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderRadius: theme.radius.lg, backgroundColor: theme.colors.card, borderWidth: 1, borderColor: theme.colors.borderLight, ...theme.shadow.soft, marginBottom: 12 },
-  dpic: { width: 60, height: 60, borderRadius: 30 },
-  dname: { fontSize: 17, fontWeight: '800', color: theme.colors.textPrimary },
-  dmeta: { color: theme.colors.textSecondary, fontSize: 13, marginTop: 2 },
+  c: { flex: 1, backgroundColor: theme.colors.primary },
+  head: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, gap: 14 },
+  back: { width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
+  title: { color: theme.colors.inverse, fontSize: 22, fontWeight: '900' },
+  sheet: { flex: 1, backgroundColor: theme.colors.card, borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+  codeCard: { padding: 22, borderRadius: theme.radius.lg, backgroundColor: theme.colors.softCard, borderWidth: 2, borderColor: theme.colors.primary, borderStyle: 'dashed', alignItems: 'center', marginBottom: 18 },
+  codeLbl: { color: theme.colors.primary, fontSize: 13, fontWeight: '800', letterSpacing: 1 },
+  codeBig: { fontSize: 56, fontWeight: '900', color: theme.colors.primary, letterSpacing: 18, marginVertical: 8 },
+  codeHint: { color: theme.colors.textSecondary, fontSize: 13, textAlign: 'center', paddingHorizontal: 20 },
+  driverCard: { padding: 16, borderRadius: theme.radius.lg, backgroundColor: theme.colors.softCard, marginBottom: 14 },
+  driverHead: { flexDirection: 'row', gap: 14, alignItems: 'center' },
+  dpic: { width: 64, height: 64, borderRadius: 32 },
+  dname: { fontSize: 18, fontWeight: '900', color: theme.colors.textPrimary },
+  starRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+  starText: { fontWeight: '800', color: theme.colors.textPrimary },
+  tripCount: { color: theme.colors.textSecondary, marginLeft: 4 },
   badges: { flexDirection: 'row', gap: 6, marginTop: 6 },
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill, backgroundColor: '#DCFCE7' },
-  badgeText: { fontSize: 10, fontWeight: '700', color: theme.colors.accentDark },
-  actionsCol: { gap: 8 },
-  actionBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center' },
-  searching: { alignItems: 'center', gap: 6, padding: 24, borderRadius: theme.radius.lg, backgroundColor: '#EFF6FF', marginBottom: 12 },
-  searchingT: { fontSize: 16, fontWeight: '700', color: theme.colors.primary },
-  searchingS: { color: theme.colors.textSecondary, fontSize: 13 },
-  card: { backgroundColor: theme.colors.card, borderRadius: theme.radius.lg, padding: 16, borderWidth: 1, borderColor: theme.colors.borderLight, marginBottom: 12 },
-  cardTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.textPrimary, marginBottom: 10 },
-  codeInput: { height: 64, borderRadius: theme.radius.md, borderWidth: 1.5, borderColor: theme.colors.borderLight, textAlign: 'center', fontSize: 28, letterSpacing: 14, fontWeight: '800', color: theme.colors.primary, backgroundColor: theme.colors.background },
-  cta: { backgroundColor: theme.colors.primary, height: 52, borderRadius: theme.radius.pill, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
-  ctaText: { color: theme.colors.inverse, fontSize: 16, fontWeight: '700' },
-  routeLine: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  addr: { flex: 1, color: theme.colors.textPrimary, fontSize: 14 },
-  fareRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.borderLight },
-  fareLbl: { color: theme.colors.textSecondary, fontWeight: '600' },
-  fareVal: { fontSize: 20, fontWeight: '800', color: theme.colors.textPrimary },
-  payNote: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 6 },
-  demoBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, padding: 12, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.primary, borderStyle: 'dashed', marginBottom: 10 },
-  demoText: { color: theme.colors.primary, fontWeight: '700', fontSize: 13 },
-  cancelBtn: { alignItems: 'center', paddingVertical: 12 },
-  cancelText: { color: theme.colors.error, fontWeight: '700' },
+  badge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill, backgroundColor: theme.colors.primarySoft },
+  badgeText: { fontSize: 10, fontWeight: '800', color: theme.colors.primary },
+  driverActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  actBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, backgroundColor: theme.colors.primary, borderRadius: theme.radius.pill },
+  actBtnAlt: { backgroundColor: theme.colors.card, borderWidth: 1, borderColor: theme.colors.primary },
+  actText: { color: theme.colors.inverse, fontWeight: '800', fontSize: 14 },
+  searching: { padding: 30, borderRadius: theme.radius.lg, backgroundColor: theme.colors.softCard, alignItems: 'center', marginBottom: 14, gap: 8 },
+  searchT: { fontSize: 16, fontWeight: '800', color: theme.colors.textPrimary },
+  mapBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 14, borderRadius: theme.radius.pill, backgroundColor: theme.colors.primary, marginBottom: 14 },
+  mapBtnText: { color: theme.colors.inverse, fontWeight: '800', fontSize: 15 },
+  tripCard: { padding: 16, borderRadius: theme.radius.lg, backgroundColor: theme.colors.softCard, gap: 10 },
+  sectionT: { fontSize: 18, fontWeight: '900', color: theme.colors.textPrimary, marginBottom: 6 },
+  routeRow: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+  pinDot: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
+  routeText: { color: theme.colors.textPrimary, fontSize: 15 },
+  routeMeta: { color: theme.colors.textSecondary, fontSize: 13, marginTop: 4 },
+  dateLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dateText: { color: theme.colors.textPrimary, fontSize: 14, fontWeight: '700' },
+  fareRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, paddingTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.06)' },
+  fareLbl: { fontWeight: '800', color: theme.colors.textPrimary },
+  fareVal: { fontWeight: '900', fontSize: 20, color: theme.colors.primary },
+  paid: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 },
+  sim: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 14, padding: 12, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.colors.primary, borderStyle: 'dashed' },
+  simText: { color: theme.colors.primary, fontWeight: '800', fontSize: 13 },
+  bottom: { padding: 16, backgroundColor: theme.colors.card, borderTopWidth: 1, borderTopColor: theme.colors.softCard },
+  sos: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, height: 56, borderRadius: theme.radius.md, backgroundColor: theme.colors.error },
+  sosText: { color: theme.colors.inverse, fontWeight: '900', fontSize: 16 },
+  endTrip: { height: 56, borderRadius: theme.radius.md, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center' },
+  endTripText: { color: theme.colors.inverse, fontWeight: '900', fontSize: 16 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: theme.colors.card, padding: 24, borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+  modalTitle: { fontSize: 22, fontWeight: '900', color: theme.colors.textPrimary },
+  modalSub: { color: theme.colors.textSecondary, marginTop: 6, marginBottom: 18 },
+  codeInput: { height: 80, borderRadius: theme.radius.md, borderWidth: 2, borderColor: theme.colors.primary, textAlign: 'center', fontSize: 36, fontWeight: '900', color: theme.colors.primary, letterSpacing: 24, backgroundColor: theme.colors.softCard },
+  modalSecondary: { flex: 1, height: 54, borderRadius: theme.radius.pill, backgroundColor: theme.colors.softCard, alignItems: 'center', justifyContent: 'center' },
+  modalSecondaryText: { color: theme.colors.textPrimary, fontWeight: '800' },
+  modalPrimary: { flex: 1, height: 54, borderRadius: theme.radius.pill, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center' },
+  modalPrimaryText: { color: theme.colors.inverse, fontWeight: '900' },
+  mapHead: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 },
+  mapBack: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center' },
+  mapChip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderRadius: theme.radius.pill, backgroundColor: 'rgba(255,255,255,0.95)' },
+  pulse: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent },
+  mapChipText: { fontWeight: '800', color: theme.colors.textPrimary },
+  carMarker: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: theme.colors.card },
+  mapFooter: { backgroundColor: theme.colors.card, padding: 18, borderTopLeftRadius: 22, borderTopRightRadius: 22 },
 });

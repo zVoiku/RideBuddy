@@ -79,8 +79,10 @@ class Booking(BaseModel):
     drop_lng: Optional[float] = None
     distance_km: float = 0
     duration_hours: float = 0  # for hourly
+    days: int = 0  # for round trips (number of days)
     schedule_now: bool = True
     scheduled_at: Optional[str] = None
+    return_at: Optional[str] = None
     intersect_at_owner: bool = True  # True = driver comes to owner; False = owner picks up driver
     transmission: Literal["Manual", "Automatic"] = "Automatic"
     car_id: Optional[str] = None
@@ -129,6 +131,7 @@ class EstimateIn(BaseModel):
     one_way: bool = True
     distance_km: float = 0
     duration_hours: float = 0
+    days: int = 0
 
 
 class BookingIn(BaseModel):
@@ -138,8 +141,10 @@ class BookingIn(BaseModel):
     drop_address: Optional[str] = None
     distance_km: float = 0
     duration_hours: float = 0
+    days: int = 0
     schedule_now: bool = True
     scheduled_at: Optional[str] = None
+    return_at: Optional[str] = None
     intersect_at_owner: bool = True
     transmission: Literal["Manual", "Automatic"] = "Automatic"
     car_id: Optional[str] = None
@@ -171,11 +176,15 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     return user
 
 
-def compute_fare(trip_type: str, one_way: bool, distance_km: float, duration_hours: float, is_new_user: bool):
+def compute_fare(trip_type: str, one_way: bool, distance_km: float, duration_hours: float, is_new_user: bool, days: int = 0):
     if trip_type == "point_to_point":
+        if not one_way and days > 0:
+            # Round trip = days-based pricing
+            base = days * 1499
+            discount = days * 200 if is_new_user else 0
+            total = base - discount
+            return float(base), float(discount), float(total)
         base = 199 + distance_km * 12
-        if not one_way:
-            base += distance_km * 6  # round trip surcharge
     else:  # hourly
         base = max(1, duration_hours) * 249
     discount = round(base * 0.10, 2) if is_new_user else 0.0
@@ -273,21 +282,25 @@ async def delete_car(car_id: str, user=Depends(get_current_user)):
 @api_router.post("/bookings/estimate")
 async def estimate(body: EstimateIn, user=Depends(get_current_user)):
     base, discount, total = compute_fare(
-        body.trip_type, body.one_way, body.distance_km, body.duration_hours, user.get("is_new", True)
+        body.trip_type, body.one_way, body.distance_km, body.duration_hours, user.get("is_new", True), body.days
     )
+    per_day_discount = 200 if (not body.one_way and body.days > 0 and user.get("is_new", True)) else 0
     return {
         "base_fare": base,
         "discount": discount,
         "total_fare": total,
         "new_user_discount": user.get("is_new", True),
         "advance_30": round(total * 0.30, 2),
+        "days": body.days,
+        "per_day_rate": 1499 if (not body.one_way and body.days > 0) else 0,
+        "per_day_discount": per_day_discount,
     }
 
 
 @api_router.post("/bookings")
 async def create_booking(body: BookingIn, user=Depends(get_current_user)):
     base, discount, total = compute_fare(
-        body.trip_type, body.one_way, body.distance_km, body.duration_hours, user.get("is_new", True)
+        body.trip_type, body.one_way, body.distance_km, body.duration_hours, user.get("is_new", True), body.days
     )
     paid = 0.0
     if body.payment_method != "cash":

@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 2 of RideBuddy (redesigned UI + days-based pricing). Backend: 16/16 pytest passed AFTER fixing one CRITICAL bug. Frontend: full happy-path E2E completed end-to-end (login -> OTP -> onboarding car make/model -> home with date picker -> fare estimate -> summary -> payment -> finding -> booking detail with driver auto-assigned; bookings list with tabs renders correctly).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/bookings", "issue": "FIXED by test agent: BookingIn Pydantic schema was missing `days: int = 0` and `return_at: Optional[str] = None`. As a result, ALL booking creation POSTs returned 500 InternalServerError with AttributeError: 'BookingIn' object has no attribute 'days'. The frontend payment.tsx sends both fields. Without this fix the entire booking flow (and therefore the entire app's primary user journey) was broken.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "startup", "issue": "logger.info call at line 457 references `logger` but `logger = logging.getLogger(__name__)` is never defined in server.py. Currently silent because seeding only runs on cold start with empty drivers collection, but will throw NameError if hit. Add `logger = logging.getLogger(__name__)` near the top."},
+      {"endpoint": "estimate", "issue": "Pydantic v2 will warn that `EstimateIn.days` has a literal default; not blocking."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "global", "issues": ["Deprecation warnings persist: 'shadow*' style props deprecated, use boxShadow. Not blocking."]},
+      {"screen": "bookings", "issues": ["Booking cards in /bookings list do not expose a testID like `booking-card-{id}` for automated tap testing. Card visually renders correctly with 'Partner Assigned' pill in teal, but cannot be tapped via data-testid in tests. Add testID='booking-card-{id}' to the TouchableOpacity wrapping each card."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_ridebuddy.py", "/app/test_reports/pytest/results.xml"],
+  "action_items": [
+    "VERIFY the BookingIn schema fix already applied to /app/backend/server.py (added `days: int = 0` and `return_at: Optional[str] = None`). Backend has been restarted and all tests pass — no further backend changes required for this bug.",
+    "Add testID='booking-card-{booking.id}' to the card TouchableOpacity in /app/frontend/app/bookings.tsx for better testability.",
+    "Define logger in /app/backend/server.py (e.g., `logger = logging.getLogger(__name__)`) before its usage in seed_drivers() to avoid future NameError.",
+    "Optional: Clean up shadow* deprecation warnings -> use boxShadow."
+  ],
+  "critical_code_review_comments": [
+    "Days-based pricing math is correct: compute_fare(one_way=False, days=N) -> base=N*1499, new-user discount=N*200. Verified at days=27 (40473/5400/35073) AND days=19 (28481/3800/24681) via live E2E.",
+    "Frontend correctly passes `days` and `return_at` to POST /api/bookings via api.createBooking in payment.tsx, but BEFORE the fix these were silently dropped by Pydantic strict mode (Pydantic v2 raises on extras only when configured; here it accepted and ignored them in JSON but the python attribute access in compute_fare crashed).",
+    "Auto-assign driver still works (asyncio.sleep(3) then assigns first available matching driver; finding screen polls and navigates to /booking/[id] correctly).",
+    "Home -> date picker modal uses testIDs day-N and time-X correctly; picker-confirm dismisses and writes pickup/return into route params.",
+    "Spec says default Return Date / pickup time -> on the home screen, return-date defaults to pickup+5 days (verified by URL params); fare estimate of 19 days corresponds to picker selection in test.",
+    "All routes use /api prefix; mongo _id is excluded everywhere via {'_id': 0}."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (added `days: int = 0` and `return_at: Optional[str] = None` to BookingIn schema)",
+    "/app/backend/tests/test_ridebuddy.py (replaced obsolete round_trip estimate test with three new tests: days_27_new_user, days_existing_user_no_discount, create_booking_with_days_persists)"
+  ],
+  "success_rate": {"backend": "100% (16/16) after fix", "frontend": "100% of critical happy-path E2E flows (login through booking detail) verified visually + via testID navigation"},
+  "seed_data_creation": "5 drivers seeded on backend startup automatically. Test users created with TEST_ phone prefix.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend URL: EXPO_PUBLIC_BACKEND_URL from frontend/.env. Mock OTP accepts any 6 digits. New-user discount is ₹200/day for round trips (days-based), 10% for one-way and hourly. is_new flips to false on profile update OR first completed trip. Driver auto-assign delay is asyncio.sleep(3). For the new onboarding flow: after OTP, new users (no cars) route to /onboarding/car-make then /onboarding/car-model; existing users route directly to /home. Bookings list card has no booking-card-{id} testID yet (request main agent to add).",
+  "rca_of_issue": "RCA: The BookingIn Pydantic schema was authored without the new fields that the redesigned frontend now sends. Backend code (compute_fare and Booking model construction) had been updated to consume `body.days`, but the input schema BookingIn (lines 137-150 of server.py) was not updated alongside. Pydantic v2 strict-by-default would normally reject extra fields, but FastAPI here silently dropped them; the crash came from `body.days` AttributeError during fare computation in create_booking. FIX: Added `days: int = 0` and `return_at: Optional[str] = None` to BookingIn. Verified by re-running pytest and the live frontend E2E: a 19-day round-trip booking (Mumbai->Pune) was created successfully with total=₹24,681 and was auto-assigned a driver. Reproduction steps: 1) login any phone, 2) go to home, 3) pick pickup+return dates spanning >1 day, 4) tap Fare Estimate -> Confirm & Pay -> Pay Now. Without the fix, step 4 returns 500. With the fix, it succeeds and navigates to /booking/finding then /booking/[id]."
+}
