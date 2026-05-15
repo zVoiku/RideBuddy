@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Image, Alert, TextInput, Modal, Linking } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Image, Alert, TextInput, Modal, Linking, Keyboard } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -40,6 +40,7 @@ export default function BookingDetail() {
 
   const startTrip = async () => {
     if (code.length !== 4) { Alert.alert('Invalid', 'Enter the 4-digit code'); return; }
+    Keyboard.dismiss();
     try {
       const r = await api.verifyStart(b.id, code);
       setB(r); setCode(''); setShowCodeEntry(false);
@@ -48,6 +49,7 @@ export default function BookingDetail() {
 
   const endTrip = async () => {
     if (code.length !== 4) { Alert.alert('Invalid', 'Enter the 4-digit end code'); return; }
+    Keyboard.dismiss();
     try {
       const r = await api.verifyEnd(b.id, code);
       setB(r); setCode(''); setShowCodeEntry(false);

@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Modal, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Modal, Alert, Switch, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api, clearToken } from '../src/api';
 import { theme } from '../src/theme';
+import CityPicker from '../src/CityPicker';
 
 type DateField = 'pickup' | 'return';
+type TripMode = 'point_to_point' | 'hourly';
 
 function pad(n: number) { return String(n).padStart(2, '0'); }
 function fmtDate(d: Date) {
@@ -23,13 +25,18 @@ export default function Home() {
   const [user, setUser] = useState<any>(null);
   const [drawer, setDrawer] = useState(false);
   const [recent, setRecent] = useState<any[]>([]);
+  const [tripMode, setTripMode] = useState<TripMode>('point_to_point');
+  const [oneWay, setOneWay] = useState(true);
   const [pickupAddr, setPickupAddr] = useState('Mumbai, Maharashtra');
   const [dropAddr, setDropAddr] = useState('Delhi, Delhi');
+  const [hours, setHours] = useState('4');
   const today = new Date(); today.setHours(today.getHours() + 1, 30, 0, 0);
   const ret = new Date(today); ret.setDate(ret.getDate() + 5);
   const [pickupDate, setPickupDate] = useState<Date>(today);
   const [returnDate, setReturnDate] = useState<Date | null>(ret);
   const [picker, setPicker] = useState<DateField | null>(null);
+  const [cityPicker, setCityPicker] = useState<null | 'pickup' | 'drop'>(null);
+  const [intersect, setIntersect] = useState(true);
 
   const load = async () => {
     try {
@@ -39,16 +46,24 @@ export default function Home() {
   };
   useFocusEffect(useCallback(() => { load(); }, []));
 
-  const days = returnDate ? Math.max(1, Math.ceil((returnDate.getTime() - pickupDate.getTime()) / (1000 * 60 * 60 * 24))) : 0;
+  const days = oneWay || tripMode === 'hourly' || !returnDate ? 0 :
+    Math.max(1, Math.ceil((returnDate.getTime() - pickupDate.getTime()) / (1000 * 60 * 60 * 24)));
+
+  const valid = tripMode === 'hourly' ? !!pickupAddr && parseFloat(hours) > 0 : !!pickupAddr && !!dropAddr;
 
   const goEstimate = () => {
-    if (!pickupAddr || !dropAddr) { Alert.alert('Missing', 'Enter pickup & destination'); return; }
+    if (!valid) { Alert.alert('Missing', 'Please complete trip details'); return; }
     router.push({
       pathname: '/booking/summary',
       params: {
-        pickup_address: pickupAddr, drop_address: dropAddr,
-        scheduled_at: pickupDate.toISOString(), return_at: returnDate?.toISOString() || '',
+        trip_mode: tripMode,
+        one_way: oneWay ? '1' : '0',
+        pickup_address: pickupAddr, drop_address: tripMode === 'hourly' ? '' : dropAddr,
+        scheduled_at: pickupDate.toISOString(),
+        return_at: tripMode === 'point_to_point' && !oneWay && returnDate ? returnDate.toISOString() : '',
         days: String(days),
+        duration_hours: tripMode === 'hourly' ? hours : '0',
+        intersect_at_owner: intersect ? '1' : '0',
       },
     });
   };
@@ -70,27 +85,62 @@ export default function Home() {
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 130 }} showsVerticalScrollIndicator={false}>
 
-              <View style={styles.locCard}>
+              {/* Trip Mode Segmented */}
+              <View style={styles.segment}>
+                {(['point_to_point', 'hourly'] as TripMode[]).map((t) => (
+                  <TouchableOpacity key={t} testID={`mode-${t}`} style={[styles.seg, tripMode === t && styles.segActive]} onPress={() => setTripMode(t)}>
+                    <Text style={[styles.segText, tripMode === t && styles.segTextActive]}>{t === 'point_to_point' ? 'Point-to-Point' : 'Hourly Rental'}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {tripMode === 'point_to_point' && (
+                <View style={styles.row}>
+                  {(['one', 'round'] as const).map((k) => {
+                    const isOne = k === 'one'; const active = oneWay === isOne;
+                    return (
+                      <TouchableOpacity key={k} testID={`way-${k}`} style={[styles.pill, active && styles.pillActive]} onPress={() => setOneWay(isOne)}>
+                        <Text style={[styles.pillText, active && styles.pillTextActive]}>{isOne ? 'One Way' : 'Round Trip'}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              {/* Pickup City */}
+              <TouchableOpacity testID="pickup-btn" style={[styles.locCard, { marginTop: 16 }]} onPress={() => setCityPicker('pickup')}>
                 <Text style={styles.locLbl}>Pickup</Text>
                 <View style={styles.locRow}>
                   <Ionicons name="location" size={20} color={theme.colors.primary} />
-                  <TextInput testID="pickup-input" style={styles.locInput} value={pickupAddr} onChangeText={setPickupAddr} placeholder="Pickup" placeholderTextColor={theme.colors.textSecondary} />
+                  <Text style={styles.locValue}>{pickupAddr}</Text>
+                  <Ionicons name="chevron-down" size={18} color={theme.colors.textSecondary} />
                 </View>
-              </View>
+              </TouchableOpacity>
 
-              <View style={styles.swapWrap}>
-                <View style={styles.swapBtn}>
-                  <Ionicons name="arrow-down" size={20} color={theme.colors.inverse} />
-                </View>
-              </View>
+              {tripMode === 'point_to_point' && (
+                <>
+                  <View style={styles.swapWrap}><View style={styles.swapBtn}><Ionicons name="arrow-down" size={20} color={theme.colors.inverse} /></View></View>
+                  <TouchableOpacity testID="drop-btn" style={styles.locCard} onPress={() => setCityPicker('drop')}>
+                    <Text style={styles.locLbl}>Destination</Text>
+                    <View style={styles.locRow}>
+                      <Ionicons name="location" size={20} color={theme.colors.primary} />
+                      <Text style={styles.locValue}>{dropAddr}</Text>
+                      <Ionicons name="chevron-down" size={18} color={theme.colors.textSecondary} />
+                    </View>
+                  </TouchableOpacity>
+                </>
+              )}
 
-              <View style={styles.locCard}>
-                <Text style={styles.locLbl}>Destination</Text>
-                <View style={styles.locRow}>
-                  <Ionicons name="location" size={20} color={theme.colors.primary} />
-                  <TextInput testID="drop-input" style={styles.locInput} value={dropAddr} onChangeText={setDropAddr} placeholder="Destination" placeholderTextColor={theme.colors.textSecondary} />
+              {tripMode === 'hourly' && (
+                <View style={[styles.locCard, { marginTop: 12 }]}>
+                  <Text style={styles.locLbl}>Duration</Text>
+                  <View style={styles.locRow}>
+                    <Ionicons name="time-outline" size={20} color={theme.colors.primary} />
+                    <TextInput testID="hours-input" style={styles.hoursInput} value={hours} onChangeText={(t) => setHours(t.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" placeholder="4" placeholderTextColor={theme.colors.textSecondary} />
+                    <Text style={styles.hoursLbl}>hours</Text>
+                  </View>
                 </View>
-              </View>
+              )}
 
               <View style={styles.divider}><Text style={styles.dividerText}>Trip Schedule</Text></View>
 
@@ -104,15 +154,26 @@ export default function Home() {
                 </View>
               </TouchableOpacity>
 
-              <TouchableOpacity testID="return-date" style={styles.dateCard} onPress={() => setPicker('return')}>
-                <Text style={styles.locLbl}>Return Date & Time</Text>
-                <View style={styles.dateRow}>
-                  <Ionicons name="calendar" size={20} color={theme.colors.primary} />
-                  <Text style={[styles.dateText, !returnDate && { color: theme.colors.textSecondary }]}>
-                    {returnDate ? `${fmtDate(returnDate)}  ·  ${fmtTime(returnDate)}` : 'Select date'}
-                  </Text>
+              {tripMode === 'point_to_point' && !oneWay && (
+                <TouchableOpacity testID="return-date" style={styles.dateCard} onPress={() => setPicker('return')}>
+                  <Text style={styles.locLbl}>Return Date & Time</Text>
+                  <View style={styles.dateRow}>
+                    <Ionicons name="calendar" size={20} color={theme.colors.primary} />
+                    <Text style={[styles.dateText, !returnDate && { color: theme.colors.textSecondary }]}>
+                      {returnDate ? `${fmtDate(returnDate)}  ·  ${fmtTime(returnDate)}` : 'Select date'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
+              {/* Owner-Driver Intersect Toggle */}
+              <View style={styles.intersectCard}>
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={styles.intersectTitle}>Driver pickup at my location</Text>
+                  <Text style={styles.intersectSub}>{intersect ? 'Driver comes to your pickup' : "You'll pick up the driver"}</Text>
                 </View>
-              </TouchableOpacity>
+                <Switch testID="intersect-switch" value={intersect} onValueChange={setIntersect} trackColor={{ false: '#CBD5E1', true: theme.colors.primary }} thumbColor={theme.colors.card} />
+              </View>
 
               <View style={styles.recentHead}>
                 <Text style={styles.recentTitle}>Recent Bookings</Text>
@@ -125,7 +186,7 @@ export default function Home() {
                   <View style={styles.pinDot}><Ionicons name="location" size={18} color={theme.colors.primary} /></View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.recentRoute} numberOfLines={1}>
-                      <Text style={{ fontWeight: '900' }}>{b.pickup_address.split(',')[0]}</Text>  <Text>→</Text>  <Text style={{ fontWeight: '900' }}>{(b.drop_address || '').split(',')[0]}</Text>
+                      <Text style={{ fontWeight: '900' }}>{b.pickup_address.split(',')[0]}</Text>  <Text>→</Text>  <Text style={{ fontWeight: '900' }}>{(b.drop_address || 'Hourly').split(',')[0]}</Text>
                     </Text>
                     <Text style={styles.recentMeta}>{new Date(b.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}  ·  {b.one_way ? 'One Way' : 'Round Trip'}</Text>
                   </View>
@@ -133,7 +194,7 @@ export default function Home() {
               ))}
             </ScrollView>
             <View style={styles.bottomBar}>
-              <TouchableOpacity testID="fare-estimate-btn" style={[styles.cta, (!pickupAddr || !dropAddr) && styles.ctaDisabled]} onPress={goEstimate} disabled={!pickupAddr || !dropAddr}>
+              <TouchableOpacity testID="fare-estimate-btn" style={[styles.cta, !valid && styles.ctaDisabled]} onPress={goEstimate} disabled={!valid}>
                 <Text style={styles.ctaText}>Fare Estimate</Text>
               </TouchableOpacity>
             </View>
@@ -141,13 +202,29 @@ export default function Home() {
         </View>
       </SafeAreaView>
 
+      {/* City Pickers */}
+      <CityPicker
+        visible={cityPicker === 'pickup'}
+        title="Pickup City"
+        selected={pickupAddr}
+        onClose={() => setCityPicker(null)}
+        onSelect={setPickupAddr}
+      />
+      <CityPicker
+        visible={cityPicker === 'drop'}
+        title="Destination City"
+        selected={dropAddr}
+        onClose={() => setCityPicker(null)}
+        onSelect={setDropAddr}
+      />
+
       {/* Date Picker Modal */}
       <DateTimePicker
         visible={!!picker}
         initial={picker === 'pickup' ? pickupDate : (returnDate || new Date())}
         title={picker === 'pickup' ? 'Pickup Date & Time' : 'Return Date & Time'}
         onClose={() => setPicker(null)}
-        onConfirm={(d) => {
+        onConfirm={(d: Date) => {
           if (picker === 'pickup') setPickupDate(d); else setReturnDate(d);
           setPicker(null);
         }}
@@ -166,9 +243,9 @@ export default function Home() {
             <View style={styles.drawerProfile}>
               <View style={styles.avatar}><Ionicons name="person" size={36} color={theme.colors.textSecondary} /></View>
               <View>
-                <Text style={styles.dName}>{user?.name || 'Arjun Patel'}</Text>
-                <Text style={styles.dPhone}>{user?.phone || '+91 98765 43210'}</Text>
-                <View style={styles.starRow}><Ionicons name="star" size={14} color="#FFC107" /><Text style={styles.starText}>4.9</Text></View>
+                <Text style={styles.dName}>{user?.name || 'Rider'}</Text>
+                <Text style={styles.dPhone}>{user?.phone}</Text>
+                {user?.email && <Text style={styles.dPhone}>{user.email}</Text>}
               </View>
             </View>
             <TouchableOpacity testID="menu-bookings" style={styles.drawerItem} onPress={() => { setDrawer(false); router.push('/bookings'); }}>
@@ -189,17 +266,25 @@ export default function Home() {
 }
 
 function DateTimePicker({ visible, initial, title, onClose, onConfirm }: any) {
-  const [date, setDate] = useState(initial);
-  useEffect(() => { if (visible) setDate(initial); }, [visible]);
+  const [date, setDate] = useState<Date>(initial);
+  useEffect(() => { if (visible) setDate(new Date(initial)); }, [visible, initial]);
   if (!visible) return null;
+
   const year = date.getFullYear();
   const month = date.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDay = new Date(year, month, 1).getDay();
-  const grid: (number | null)[] = [];
-  for (let i = 0; i < firstDay; i++) grid.push(null);
-  for (let d = 1; d <= daysInMonth; d++) grid.push(d);
-  const times = ['12:00 AM', '12:30 AM', '1:00 AM', '1:30 AM', '2:00 AM', '2:30 AM', '8:00 AM', '9:00 AM', '10:00 AM', '12:00 PM', '3:00 PM', '6:00 PM', '9:00 PM', '11:00 PM'];
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const monthName = date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const times = ['06:00 AM', '08:00 AM', '09:00 AM', '10:00 AM', '11:00 AM', '12:00 PM', '01:00 PM', '02:00 PM', '03:00 PM', '06:00 PM', '08:00 PM', '10:00 PM'];
+
+  const goMonth = (delta: number) => {
+    const nd = new Date(date); nd.setMonth(nd.getMonth() + delta); setDate(nd);
+  };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -210,19 +295,29 @@ function DateTimePicker({ visible, initial, title, onClose, onConfirm }: any) {
             <Text style={pickerStyles.title}>{title}</Text>
           </View>
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 140 }}>
+            <View style={pickerStyles.monthRow}>
+              <TouchableOpacity testID="prev-month" onPress={() => goMonth(-1)} style={pickerStyles.monthNav}><Ionicons name="chevron-back" size={20} color={theme.colors.primary} /></TouchableOpacity>
+              <Text style={pickerStyles.monthLbl}>{monthName}</Text>
+              <TouchableOpacity testID="next-month" onPress={() => goMonth(1)} style={pickerStyles.monthNav}><Ionicons name="chevron-forward" size={20} color={theme.colors.primary} /></TouchableOpacity>
+            </View>
+            <View style={pickerStyles.weekRow}>
+              {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((w, i) => <Text key={i} style={pickerStyles.weekText}>{w}</Text>)}
+            </View>
             <View style={pickerStyles.grid}>
-              {grid.map((d, i) => {
-                const sel = d === date.getDate();
+              {cells.map((d, i) => {
+                const sel = !!d && d === date.getDate();
                 return (
-                  <TouchableOpacity
-                    key={i}
-                    testID={d ? `day-${d}` : undefined}
-                    disabled={!d}
-                    style={[pickerStyles.day, sel && pickerStyles.daySel, !d && { backgroundColor: 'transparent' }]}
-                    onPress={() => { if (d) { const nd = new Date(date); nd.setDate(d); setDate(nd); } }}
-                  >
-                    <Text style={[pickerStyles.dayText, sel && { color: theme.colors.inverse }, !d && { opacity: 0 }]}>{d || ''}</Text>
-                  </TouchableOpacity>
+                  <View key={i} style={pickerStyles.dayWrap}>
+                    {d ? (
+                      <TouchableOpacity
+                        testID={`day-${d}`}
+                        style={[pickerStyles.dayCell, sel && pickerStyles.daySel]}
+                        onPress={() => { const nd = new Date(date); nd.setDate(d); setDate(nd); }}
+                      >
+                        <Text style={[pickerStyles.dayText, sel && pickerStyles.dayTextSel]}>{d}</Text>
+                      </TouchableOpacity>
+                    ) : <View style={pickerStyles.dayCell} />}
+                  </View>
                 );
               })}
             </View>
@@ -245,7 +340,7 @@ function DateTimePicker({ visible, initial, title, onClose, onConfirm }: any) {
                       const nd = new Date(date); nd.setHours(h, m, 0, 0); setDate(nd);
                     }}
                   >
-                    <Text style={[pickerStyles.timeText, sel && { color: theme.colors.inverse }]}>{t}</Text>
+                    <Text style={[pickerStyles.timeText, sel && pickerStyles.timeTextSel]}>{t}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -268,10 +363,22 @@ const styles = StyleSheet.create({
   menuBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 22, fontWeight: '800', color: theme.colors.inverse },
   sheet: { flex: 1, backgroundColor: theme.colors.card, borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: 'hidden' },
+  segment: { flexDirection: 'row', backgroundColor: theme.colors.softCard, borderRadius: theme.radius.pill, padding: 4 },
+  seg: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: theme.radius.pill },
+  segActive: { backgroundColor: theme.colors.primary },
+  segText: { color: theme.colors.textSecondary, fontWeight: '800', fontSize: 14 },
+  segTextActive: { color: theme.colors.inverse },
+  row: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  pill: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: theme.radius.pill, borderWidth: 1.5, borderColor: theme.colors.softCard, backgroundColor: theme.colors.card },
+  pillActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  pillText: { color: theme.colors.textSecondary, fontWeight: '700', fontSize: 13 },
+  pillTextActive: { color: theme.colors.inverse },
   locCard: { backgroundColor: theme.colors.card, borderRadius: theme.radius.md, padding: 14, borderWidth: 1, borderColor: theme.colors.softCard },
   locLbl: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 4 },
   locRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  locInput: { flex: 1, fontSize: 17, fontWeight: '800', color: theme.colors.textPrimary, height: 28, padding: 0 },
+  locValue: { flex: 1, fontSize: 17, fontWeight: '800', color: theme.colors.textPrimary },
+  hoursInput: { flex: 1, fontSize: 17, fontWeight: '800', color: theme.colors.textPrimary, height: 28, padding: 0 },
+  hoursLbl: { color: theme.colors.textSecondary, fontWeight: '700' },
   swapWrap: { alignItems: 'center', marginVertical: -16, zIndex: 2 },
   swapBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: theme.colors.card },
   divider: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginVertical: 18, gap: 10 },
@@ -279,8 +386,11 @@ const styles = StyleSheet.create({
   dateCard: { backgroundColor: theme.colors.card, borderRadius: theme.radius.md, padding: 14, borderWidth: 1, borderColor: theme.colors.softCard, marginBottom: 12 },
   dateRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
   dateText: { fontSize: 16, fontWeight: '800', color: theme.colors.textPrimary },
+  intersectCard: { flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: theme.radius.md, backgroundColor: theme.colors.softCard, marginTop: 6, marginBottom: 8 },
+  intersectTitle: { fontSize: 15, fontWeight: '900', color: theme.colors.textPrimary },
+  intersectSub: { color: theme.colors.textSecondary, fontSize: 13, marginTop: 2 },
   recentHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 22, marginBottom: 12 },
-  recentTitle: { fontSize: 20, fontWeight: '800', color: theme.colors.textPrimary },
+  recentTitle: { fontSize: 20, fontWeight: '900', color: theme.colors.textPrimary },
   seeAll: { color: theme.colors.primary, fontWeight: '700' },
   empty: { color: theme.colors.textSecondary, fontSize: 14, textAlign: 'center', paddingVertical: 20 },
   recentCard: { flexDirection: 'row', gap: 12, padding: 14, backgroundColor: theme.colors.softCard, borderRadius: theme.radius.md, marginBottom: 10, alignItems: 'center' },
@@ -300,8 +410,6 @@ const styles = StyleSheet.create({
   avatar: { width: 60, height: 60, borderRadius: 30, backgroundColor: theme.colors.card, alignItems: 'center', justifyContent: 'center' },
   dName: { color: theme.colors.inverse, fontSize: 18, fontWeight: '900' },
   dPhone: { color: 'rgba(255,255,255,0.85)', marginTop: 2 },
-  starRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
-  starText: { color: theme.colors.inverse, fontWeight: '800' },
   drawerItem: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 20 },
   drawerItemText: { fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary },
   logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, margin: 16, padding: 16, borderRadius: theme.radius.md, backgroundColor: theme.colors.softCard },
@@ -312,20 +420,25 @@ const pickerStyles = StyleSheet.create({
   head: { backgroundColor: theme.colors.primary, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
   back: { width: 40, height: 40, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
   title: { color: theme.colors.inverse, fontSize: 22, fontWeight: '900' },
+  monthRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, paddingHorizontal: 6 },
+  monthNav: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.softCard, alignItems: 'center', justifyContent: 'center' },
+  monthLbl: { fontSize: 18, fontWeight: '900', color: theme.colors.textPrimary },
+  weekRow: { flexDirection: 'row', marginBottom: 8 },
+  weekText: { flex: 1, textAlign: 'center', fontSize: 12, fontWeight: '800', color: theme.colors.textSecondary },
   grid: { flexDirection: 'row', flexWrap: 'wrap' },
-  day: { width: `${100 / 7}%`, aspectRatio: 1, padding: 4 },
-  dayText: { textAlign: 'center', textAlignVertical: 'center', lineHeight: 50, fontSize: 18, fontWeight: '700', color: theme.colors.textPrimary, backgroundColor: theme.colors.card, borderRadius: theme.radius.md, height: 50 },
-  daySel: {},
-  timeHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 20, marginBottom: 12 },
+  dayWrap: { width: `${100 / 7}%`, padding: 3 },
+  dayCell: { height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.card },
+  daySel: { backgroundColor: theme.colors.primary },
+  dayText: { fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary },
+  dayTextSel: { color: theme.colors.inverse },
+  timeHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 24, marginBottom: 12 },
   timeTitle: { fontSize: 20, fontWeight: '900', color: theme.colors.textPrimary },
-  timeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  timePill: { width: '30%', paddingVertical: 14, alignItems: 'center', borderRadius: theme.radius.pill, backgroundColor: theme.colors.softCard },
-  timePillSel: { backgroundColor: theme.colors.primary },
+  timeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  timePill: { paddingVertical: 12, paddingHorizontal: 14, borderRadius: theme.radius.pill, backgroundColor: theme.colors.card, borderWidth: 1, borderColor: theme.colors.softCard },
+  timePillSel: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
   timeText: { fontWeight: '800', color: theme.colors.textPrimary, fontSize: 14 },
+  timeTextSel: { color: theme.colors.inverse },
   bottom: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 16, backgroundColor: theme.colors.card },
   cta: { backgroundColor: theme.colors.primary, height: 58, borderRadius: theme.radius.md, alignItems: 'center', justifyContent: 'center' },
   ctaText: { color: theme.colors.inverse, fontSize: 18, fontWeight: '900' },
 });
-
-// Override the daySel style to actually highlight
-Object.assign(pickerStyles.daySel, {});

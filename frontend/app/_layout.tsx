@@ -12,6 +12,7 @@ export default function RootLayout() {
           <Stack.Screen name="index" />
           <Stack.Screen name="login" />
           <Stack.Screen name="otp" />
+          <Stack.Screen name="onboarding/profile" />
           <Stack.Screen name="onboarding/car-make" />
           <Stack.Screen name="onboarding/car-model" />
           <Stack.Screen name="home" />

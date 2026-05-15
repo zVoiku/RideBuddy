@@ -17,13 +17,16 @@ export default function Summary() {
   const pickup = p.scheduled_at ? new Date(p.scheduled_at) : new Date();
   const ret = p.return_at ? new Date(p.return_at) : null;
   const days = parseInt(p.days || '1');
+  const isHourly = p.trip_mode === 'hourly';
+  const hours = parseFloat(p.duration_hours || '0');
 
   useEffect(() => {
     (async () => {
       try {
         const r = await api.estimate({
-          trip_type: 'point_to_point', one_way: !ret,
-          distance_km: 0, duration_hours: 0, days,
+          trip_type: isHourly ? 'hourly' : 'point_to_point',
+          one_way: p.one_way === '1' || isHourly,
+          distance_km: 0, duration_hours: hours, days,
         });
         setEst(r);
       } catch (e: any) { Alert.alert('Error', e.message); }

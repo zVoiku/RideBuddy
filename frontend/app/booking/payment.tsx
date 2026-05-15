@@ -21,16 +21,17 @@ export default function Payment() {
     try {
       setBusy(true);
       const b = await api.createBooking({
-        trip_type: 'point_to_point',
-        one_way: !p.return_at,
+        trip_type: p.trip_mode === 'hourly' ? 'hourly' : 'point_to_point',
+        one_way: p.one_way === '1' || p.trip_mode === 'hourly',
         pickup_address: p.pickup_address,
-        drop_address: p.drop_address,
-        distance_km: 0, duration_hours: 0,
+        drop_address: p.drop_address || undefined,
+        distance_km: 0,
+        duration_hours: parseFloat(p.duration_hours || '0'),
         days: parseInt(p.days || '0'),
         schedule_now: false,
         scheduled_at: p.scheduled_at,
         return_at: p.return_at || undefined,
-        intersect_at_owner: true,
+        intersect_at_owner: p.intersect_at_owner === '1',
         transmission: 'Automatic',
         payment_method: 'upi',
         pay_partial: partial,
