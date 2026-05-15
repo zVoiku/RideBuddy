@@ -115,8 +115,29 @@ export default function BookingDetail() {
             </View>
           ) : null}
 
-          {/* Live Trip Map button */}
-          {(b.status === 'assigned' || b.status === 'arrived' || onTrip) && (
+          {/* Static trip route preview before trip starts */}
+          {(b.status === 'assigned' || b.status === 'arrived') && (
+            <View style={styles.routePreviewCard}>
+              <Image source={{ uri: 'https://images.unsplash.com/photo-1524661135-423995f22d0b?w=1200' }} style={styles.routePreviewImg} />
+              <View style={styles.routePreviewOverlay} />
+              <View style={styles.routePreviewPins}>
+                <View style={styles.routePinTop}>
+                  <View style={[styles.routePin, { backgroundColor: theme.colors.accent }]}><Ionicons name="location" size={14} color={theme.colors.inverse} /></View>
+                  <Text style={styles.routePinText} numberOfLines={1}>{b.pickup_address?.split(',')[0]}</Text>
+                </View>
+                <View style={styles.routePinDots}>
+                  {[1, 2, 3, 4].map((i) => <View key={i} style={styles.routePinDot} />)}
+                </View>
+                <View style={styles.routePinBottom}>
+                  <View style={[styles.routePin, { backgroundColor: theme.colors.error }]}><Ionicons name="flag" size={14} color={theme.colors.inverse} /></View>
+                  <Text style={styles.routePinText} numberOfLines={1}>{(b.drop_address || 'Destination').split(',')[0]}</Text>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Live Trip Map button — only after trip started */}
+          {onTrip && (
             <TouchableOpacity testID="live-map-btn" style={styles.mapBtn} onPress={() => setShowMap(true)}>
               <Ionicons name="map" size={20} color={theme.colors.inverse} />
               <Text style={styles.mapBtnText}>Live Trip Map</Text>
@@ -195,11 +216,16 @@ export default function BookingDetail() {
               testID="code-input"
               style={styles.codeInput}
               value={code}
-              onChangeText={(t) => setCode(t.replace(/[^0-9]/g, '').slice(0, 4))}
+              onChangeText={(t) => {
+                const d = t.replace(/[^0-9]/g, '').slice(0, 4);
+                setCode(d);
+                if (d.length === 4) Keyboard.dismiss();
+              }}
               keyboardType="number-pad"
               maxLength={4}
               placeholder="• • • •"
               placeholderTextColor={theme.colors.textSecondary}
+              autoFocus
             />
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
               <TouchableOpacity testID="modal-cancel" style={styles.modalSecondary} onPress={() => { setShowCodeEntry(false); setCode(''); }}>
@@ -218,14 +244,11 @@ export default function BookingDetail() {
         <View style={{ flex: 1, backgroundColor: theme.colors.primaryDark }}>
           <Image source={{ uri: 'https://images.unsplash.com/photo-1524661135-423995f22d0b?w=1200' }} style={StyleSheet.absoluteFillObject as any} />
           <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(14,155,155,0.18)' }} />
-          <SafeAreaView style={{ flex: 1 }} edges={['top']}>
+          <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
             <View style={styles.mapHead}>
-              <TouchableOpacity testID="map-close" onPress={() => setShowMap(false)} style={styles.mapBack}>
-                <Ionicons name="arrow-back" size={22} color={theme.colors.textPrimary} />
-              </TouchableOpacity>
               <View style={styles.mapChip}>
                 <View style={styles.pulse} />
-                <Text style={styles.mapChipText}>{d?.eta_minutes ?? 5} min away</Text>
+                <Text style={styles.mapChipText}>Live · {d?.eta_minutes ?? 5} min to destination</Text>
               </View>
             </View>
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -233,7 +256,11 @@ export default function BookingDetail() {
             </View>
             <View style={styles.mapFooter}>
               <Text style={{ fontWeight: '900', fontSize: 18, color: theme.colors.textPrimary }}>{d?.name}</Text>
-              <Text style={{ color: theme.colors.textSecondary, marginTop: 4 }}>{b.pickup_address?.split(',')[0]} → {(b.drop_address || '').split(',')[0]}</Text>
+              <Text style={{ color: theme.colors.textSecondary, marginTop: 4, marginBottom: 14 }}>{b.pickup_address?.split(',')[0]} → {(b.drop_address || 'Hourly').split(',')[0]}</Text>
+              <TouchableOpacity testID="map-close" onPress={() => setShowMap(false)} style={styles.mapBottomBack}>
+                <Ionicons name="arrow-back" size={20} color={theme.colors.inverse} />
+                <Text style={styles.mapBottomBackText}>Back to Booking Details</Text>
+              </TouchableOpacity>
             </View>
           </SafeAreaView>
         </View>
@@ -270,6 +297,16 @@ const styles = StyleSheet.create({
   searchT: { fontSize: 16, fontWeight: '800', color: theme.colors.textPrimary },
   mapBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 14, borderRadius: theme.radius.pill, backgroundColor: theme.colors.primary, marginBottom: 14 },
   mapBtnText: { color: theme.colors.inverse, fontWeight: '800', fontSize: 15 },
+  routePreviewCard: { height: 180, borderRadius: theme.radius.lg, overflow: 'hidden', marginBottom: 14, justifyContent: 'space-between', padding: 14 },
+  routePreviewImg: { ...StyleSheet.absoluteFillObject as any, width: '100%', height: '100%' },
+  routePreviewOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(14,155,155,0.25)' },
+  routePreviewPins: { flex: 1, justifyContent: 'space-between' },
+  routePinTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  routePinBottom: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  routePin: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: theme.colors.card },
+  routePinText: { flex: 1, color: theme.colors.inverse, fontWeight: '900', fontSize: 14, backgroundColor: 'rgba(0,0,0,0.45)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.pill, overflow: 'hidden' },
+  routePinDots: { alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 6, marginLeft: 13 },
+  routePinDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: theme.colors.inverse, opacity: 0.85 },
   tripCard: { padding: 16, borderRadius: theme.radius.lg, backgroundColor: theme.colors.softCard, gap: 10 },
   sectionT: { fontSize: 18, fontWeight: '900', color: theme.colors.textPrimary, marginBottom: 6 },
   routeRow: { flexDirection: 'row', gap: 12, alignItems: 'center' },
@@ -298,11 +335,13 @@ const styles = StyleSheet.create({
   modalSecondaryText: { color: theme.colors.textPrimary, fontWeight: '800' },
   modalPrimary: { flex: 1, height: 54, borderRadius: theme.radius.pill, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center' },
   modalPrimaryText: { color: theme.colors.inverse, fontWeight: '900' },
-  mapHead: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 12 },
+  mapHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 16 },
   mapBack: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center' },
   mapChip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 10, borderRadius: theme.radius.pill, backgroundColor: 'rgba(255,255,255,0.95)' },
   pulse: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent },
   mapChipText: { fontWeight: '800', color: theme.colors.textPrimary },
   carMarker: { width: 56, height: 56, borderRadius: 28, backgroundColor: theme.colors.primary, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: theme.colors.card },
   mapFooter: { backgroundColor: theme.colors.card, padding: 18, borderTopLeftRadius: 22, borderTopRightRadius: 22 },
+  mapBottomBack: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, height: 54, borderRadius: theme.radius.pill, backgroundColor: theme.colors.primary },
+  mapBottomBackText: { color: theme.colors.inverse, fontWeight: '900', fontSize: 16 },
 });

@@ -21,10 +21,10 @@ export default function OnboardingProfile() {
 
   const submit = async () => {
     if (!name.trim()) { Alert.alert('Missing', 'Please enter your name'); return; }
-    if (!email.includes('@')) { Alert.alert('Invalid', 'Please enter a valid email'); return; }
+    if (email.trim() && !email.includes('@')) { Alert.alert('Invalid', 'Please enter a valid email or leave it blank'); return; }
     try {
       setSaving(true);
-      await api.updateMe({ name: name.trim(), email: email.trim() });
+      await api.updateMe({ name: name.trim(), email: email.trim() || undefined });
       const cars = await api.listCars();
       router.replace(cars.length === 0 ? '/onboarding/car-make' : '/home');
     } catch (e: any) {
@@ -98,4 +98,6 @@ const styles = StyleSheet.create({
   verifText: { color: theme.colors.inverse, fontWeight: '900', fontSize: 11 },
   btn: { backgroundColor: theme.colors.primary, height: 56, borderRadius: theme.radius.pill, alignItems: 'center', justifyContent: 'center', marginTop: 28 },
   btnText: { color: theme.colors.inverse, fontSize: 18, fontWeight: '900' },
+});
+e, fontSize: 18, fontWeight: '900' },
 });

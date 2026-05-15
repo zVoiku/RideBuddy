@@ -74,11 +74,11 @@ export default function Home() {
     <View style={styles.c}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={styles.top}>
+          <View style={{ width: 44 }} />
+          <Text style={styles.title}>Reserve a ride</Text>
           <TouchableOpacity testID="menu-btn" onPress={() => setDrawer(true)} style={styles.menuBtn}>
             <Ionicons name="menu" size={22} color={theme.colors.inverse} />
           </TouchableOpacity>
-          <Text style={styles.title}>Reserve a ride</Text>
-          <View style={{ width: 44 }} />
         </View>
 
         <View style={styles.sheet}>
@@ -258,7 +258,6 @@ export default function Home() {
               <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
-          <TouchableOpacity style={{ flex: 1 }} onPress={() => setDrawer(false)} />
         </View>
       </Modal>
     </View>
@@ -402,7 +401,7 @@ const styles = StyleSheet.create({
   ctaDisabled: { backgroundColor: theme.colors.softCard },
   ctaText: { color: theme.colors.inverse, fontSize: 17, fontWeight: '800' },
   drawerOverlay: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.35)' },
-  drawer: { width: '78%', backgroundColor: theme.colors.card, paddingBottom: 40 },
+  drawer: { width: '78%', backgroundColor: theme.colors.card, paddingBottom: 40, marginLeft: 'auto' },
   drawerHead: { backgroundColor: theme.colors.primary, padding: 18, paddingTop: 56, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   drawerTitle: { color: theme.colors.inverse, fontSize: 24, fontWeight: '900' },
   closeBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
@@ -441,4 +440,6 @@ const pickerStyles = StyleSheet.create({
   bottom: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 16, backgroundColor: theme.colors.card },
   cta: { backgroundColor: theme.colors.primary, height: 58, borderRadius: theme.radius.md, alignItems: 'center', justifyContent: 'center' },
   ctaText: { color: theme.colors.inverse, fontSize: 18, fontWeight: '900' },
+});
+r: theme.colors.inverse, fontSize: 18, fontWeight: '900' },
 });
