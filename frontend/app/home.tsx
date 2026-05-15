@@ -441,5 +441,3 @@ const pickerStyles = StyleSheet.create({
   cta: { backgroundColor: theme.colors.primary, height: 58, borderRadius: theme.radius.md, alignItems: 'center', justifyContent: 'center' },
   ctaText: { color: theme.colors.inverse, fontSize: 18, fontWeight: '900' },
 });
-r: theme.colors.inverse, fontSize: 18, fontWeight: '900' },
-});
