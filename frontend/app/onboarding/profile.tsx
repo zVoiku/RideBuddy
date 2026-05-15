@@ -99,5 +99,3 @@ const styles = StyleSheet.create({
   btn: { backgroundColor: theme.colors.primary, height: 56, borderRadius: theme.radius.pill, alignItems: 'center', justifyContent: 'center', marginTop: 28 },
   btnText: { color: theme.colors.inverse, fontSize: 18, fontWeight: '900' },
 });
-e, fontSize: 18, fontWeight: '900' },
-});
