@@ -3,8 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { api } from '../src/api';
-import { theme } from '../src/theme';
+import { api } from '../../src/api';
+import { theme } from '../../src/theme';
 
 const STATUS_PILL: Record<string, { bg: string; fg: string; label: string; spinner?: boolean }> = {
   searching: { bg: '#FFFFFF', fg: theme.colors.primary, label: 'Finding Partner', spinner: true },

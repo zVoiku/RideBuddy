@@ -3,9 +3,9 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Modal,
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { api, clearToken } from '../src/api';
-import { theme } from '../src/theme';
-import CityPicker from '../src/CityPicker';
+import { api } from '../../src/api';
+import { theme } from '../../src/theme';
+import CityPicker from '../../src/CityPicker';
 
 type DateField = 'pickup' | 'return';
 type TripMode = 'point_to_point' | 'hourly';
@@ -23,7 +23,9 @@ function fmtTime(d: Date) {
 export default function Home() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
-  const [drawer, setDrawer] = useState(false);
+  // Drawer state kept but unused (now via tabs)
+  const drawer = false;
+  const setDrawer = (_: boolean) => {};
   const [recent, setRecent] = useState<any[]>([]);
   const [tripMode, setTripMode] = useState<TripMode>('point_to_point');
   const [oneWay, setOneWay] = useState(true);
@@ -68,17 +70,13 @@ export default function Home() {
     });
   };
 
-  const logout = async () => { await clearToken(); router.replace('/login'); };
+  const logout = async () => {};
 
   return (
     <View style={styles.c}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={styles.top}>
-          <View style={{ width: 44 }} />
           <Text style={styles.title}>Reserve a ride</Text>
-          <TouchableOpacity testID="menu-btn" onPress={() => setDrawer(true)} style={styles.menuBtn}>
-            <Ionicons name="menu" size={22} color={theme.colors.inverse} />
-          </TouchableOpacity>
         </View>
 
         <View style={styles.sheet}>
@@ -177,7 +175,7 @@ export default function Home() {
 
               <View style={styles.recentHead}>
                 <Text style={styles.recentTitle}>Recent Bookings</Text>
-                <TouchableOpacity onPress={() => router.push('/bookings')}><Text style={styles.seeAll}>See All</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => router.push('/(tabs)/trips')}><Text style={styles.seeAll}>See All</Text></TouchableOpacity>
               </View>
               {recent.length === 0 ? (
                 <Text style={styles.empty}>No bookings yet — your first trip awaits!</Text>

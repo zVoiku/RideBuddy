@@ -20,7 +20,7 @@ export default function CarModel() {
     try {
       setSaving(true);
       await api.addCar({ make: makeName, model: m.name, transmission });
-      router.replace('/home');
+      router.replace('/(tabs)/home');
     } catch (e: any) { Alert.alert('Error', e.message); }
     finally { setSaving(false); }
   };

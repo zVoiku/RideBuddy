@@ -1,35 +1,78 @@
+// RideBuddy v2 — Trail Green + Parchment design tokens
+// Per /app/memory design files (May 2026)
+
 export const theme = {
   colors: {
-    primary: '#0E9B9B',
-    primaryDark: '#067575',
-    primaryLight: '#22B0B0',
-    primarySoft: '#D5EFEC',
-    accent: '#34C759',
-    background: '#D8EFEB',
-    backgroundDeep: '#0E9B9B',
+    // Brand
+    primary: '#4A5C2F',          // Trail Green 500
+    primaryDark: '#384522',      // Green 700
+    primaryDeep: '#262F17',      // Green 800
+    primaryLight: '#8FA96A',     // Green 300 — mid tone / secondary accent
+    primaryPale: '#C5D4A8',      // Green 100 — light fills, hover
+    primarySoft: '#EDF0E8',      // Green 50 — selection bg
+
+    // Surfaces
+    background: '#F5F0E8',       // Parchment
     card: '#FFFFFF',
-    softCard: '#E6F5F2',
-    textPrimary: '#1A1A1A',
-    textSecondary: '#9CA3AF',
-    textOnPrimary: '#FFFFFF',
+    softCard: '#F7F7F5',         // Pill / detail tile background
+
+    // Text
+    textPrimary: '#1E1E1A',      // Charcoal
+    textSecondary: '#888888',    // Muted
+    textTertiary: '#AAAA9F',     // Greyer
     inverse: '#FFFFFF',
-    borderLight: '#E2E8F0',
-    success: '#34C759',
-    warning: '#F59E0B',
-    error: '#EF4444',
-    onTripGreen: '#34C759',
-    completedGrey: '#6B7280',
+    textOnPrimary: '#F5F0E8',    // Parchment on Trail Green button
+
+    // Lines
+    borderLight: 'rgba(100,100,100,0.15)',
+    borderHair: 'rgba(100,100,100,0.10)',
+
+    // Semantic
+    success: '#2E7D32',
+    successBg: '#E8F5E9',
+    warning: '#E65100',
+    warningBg: '#FFF3E0',
+    error: '#C62828',
+    errorBg: '#FFEBEE',
+    info: '#1565C0',
+    infoBg: '#E3F2FD',
+
+    // Status badge variants (UI library §08)
+    badgeAssignedBg: '#EDF0E8',
+    badgeAssignedFg: '#384522',
+    badgeInProgressBg: '#E3F2FD',
+    badgeInProgressFg: '#0D47A1',
+    badgeCompletedBg: '#F3E5F5',
+    badgeCompletedFg: '#4A148C',
+    badgeCancelledBg: '#FFEBEE',
+    badgeCancelledFg: '#B71C1C',
+    badgePendingBg: '#FFF3E0',
+    badgePendingFg: '#E65100',
+
+    // legacy aliases for screens still referencing the old palette
+    accent: '#8FA96A',
+    accentDark: '#384522',
+    onTripGreen: '#0D47A1',
+    completedGrey: '#4A148C',
   },
-  radius: { sm: 8, md: 14, lg: 20, xl: 28, pill: 999 },
-  spacing: { xs: 4, sm: 8, md: 16, lg: 20, xl: 24, xxl: 32 },
+
+  radius: { sm: 4, md: 8, lg: 12, xl: 16, pill: 9999 },
+  spacing: { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24, xxxl: 32, hero: 40 },
+
   shadow: {
     soft: {
-      shadowColor: '#0E9B9B',
+      shadowColor: '#646464',
       shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.08,
-      shadowRadius: 16,
+      shadowOpacity: 0.10,
+      shadowRadius: 12,
       elevation: 3,
     },
+  },
+
+  fonts: {
+    heading: 'Urbanist_700Bold',
+    body: 'DMSans_400Regular',
+    bodyMed: 'DMSans_500Medium',
   },
 };
 

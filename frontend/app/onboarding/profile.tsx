@@ -26,7 +26,7 @@ export default function OnboardingProfile() {
       setSaving(true);
       await api.updateMe({ name: name.trim(), email: email.trim() || undefined });
       const cars = await api.listCars();
-      router.replace(cars.length === 0 ? '/onboarding/car-make' : '/home');
+      router.replace(cars.length === 0 ? '/onboarding/car-make' : '/(tabs)/home');
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {

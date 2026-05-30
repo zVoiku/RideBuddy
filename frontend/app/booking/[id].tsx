@@ -63,7 +63,7 @@ export default function BookingDetail() {
     <View style={styles.c}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={styles.head}>
-          <TouchableOpacity testID="detail-back" onPress={() => router.replace('/bookings')} style={styles.back}>
+          <TouchableOpacity testID="detail-back" onPress={() => router.replace('/(tabs)/trips')} style={styles.back}>
             <Ionicons name="arrow-back" size={22} color={theme.colors.inverse} />
           </TouchableOpacity>
           <Text style={styles.title}>{onTrip ? 'On Trip' : 'Booking Details'}</Text>
