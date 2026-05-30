@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
 import uuid
 from datetime import datetime, timezone, timedelta
+from twilio.rest import Client as TwilioClient
+from twilio.base.exceptions import TwilioRestException
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -23,6 +25,13 @@ db = client[os.environ['DB_NAME']]
 
 JWT_SECRET = "ridebuddy-secret-key-dev-please-rotate-in-prod-32chars+"
 JWT_ALGO = "HS256"
+
+# Twilio config
+TWILIO_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+TWILIO_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+TWILIO_FROM = os.environ.get('TWILIO_FROM_NUMBER')
+TWILIO_VERIFIED = os.environ.get('TWILIO_VERIFIED_NUMBER')
+twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN) if (TWILIO_SID and TWILIO_TOKEN) else None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -232,19 +241,58 @@ async def root():
 
 @api_router.post("/auth/send-otp")
 async def send_otp(body: SendOtpIn):
-    # MOCKED: any 6-digit otp accepted later
-    return {"sent": True, "phone": body.phone, "hint": "Use any 6-digit code (e.g. 123456)"}
+    phone = body.phone.strip()
+    code = "".join(random.choices(string.digits, k=6))
+    expires = datetime.now(timezone.utc) + timedelta(minutes=5)
+    await db.otps.update_one(
+        {"phone": phone},
+        {"$set": {"phone": phone, "code": code, "expires_at": expires.isoformat(), "verified": False}},
+        upsert=True,
+    )
+    sent_via = "mock"
+    error_msg = None
+    # Real SMS only when Twilio configured AND phone matches verified trial number
+    if twilio_client and TWILIO_FROM and phone == TWILIO_VERIFIED:
+        try:
+            twilio_client.messages.create(
+                body=f"Your RideBuddy verification code is {code}. Valid for 5 minutes.",
+                from_=TWILIO_FROM,
+                to=phone,
+            )
+            sent_via = "twilio"
+            logger.info("Sent Twilio OTP to %s", phone)
+        except TwilioRestException as e:
+            error_msg = str(e)
+            logger.warning("Twilio failed for %s: %s", phone, e)
+    resp = {"sent": True, "phone": phone, "channel": sent_via}
+    if sent_via == "mock":
+        resp["hint"] = f"Mock mode — use the code {code} or any 6 digits"
+    if error_msg:
+        resp["twilio_error"] = error_msg
+    return resp
 
 
 @api_router.post("/auth/verify-otp")
 async def verify_otp(body: VerifyOtpIn):
+    phone = body.phone.strip()
     if not (body.otp.isdigit() and len(body.otp) == 6):
         raise HTTPException(400, "OTP must be 6 digits")
-    existing = await db.users.find_one({"phone": body.phone}, {"_id": 0})
+    record = await db.otps.find_one({"phone": phone}, {"_id": 0})
+    # For real Twilio SMS to the verified number, strict check
+    if twilio_client and phone == TWILIO_VERIFIED:
+        if not record or record.get("code") != body.otp:
+            raise HTTPException(400, "Invalid OTP")
+        expires = datetime.fromisoformat(record["expires_at"])
+        if datetime.now(timezone.utc) > expires:
+            raise HTTPException(400, "OTP expired, please request a new one")
+        await db.otps.update_one({"phone": phone}, {"$set": {"verified": True}})
+    # else: mock mode — accept any 6-digit code (backward compatible)
+
+    existing = await db.users.find_one({"phone": phone}, {"_id": 0})
     if existing:
         token = make_token(existing["id"])
         return {"token": token, "user": existing}
-    user = User(phone=body.phone)
+    user = User(phone=phone)
     await db.users.insert_one(user.dict())
     token = make_token(user.id)
     return {"token": token, "user": user.dict()}

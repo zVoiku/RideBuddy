@@ -16,8 +16,8 @@ export default function Login() {
     if (digits.length < 10) { Alert.alert('Invalid', 'Enter a valid 10-digit number'); return; }
     try {
       setLoading(true);
-      await api.sendOtp('+91' + digits);
-      router.push({ pathname: '/otp', params: { phone: '+91' + digits } });
+      const res = await api.sendOtp('+91' + digits);
+      router.push({ pathname: '/otp', params: { phone: '+91' + digits, channel: res?.channel || 'mock' } });
     } catch (e: any) { Alert.alert('Error', e.message); }
     finally { setLoading(false); }
   };

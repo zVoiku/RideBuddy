@@ -7,7 +7,7 @@ import { api, saveToken } from '../src/api';
 import { theme } from '../src/theme';
 
 export default function OtpScreen() {
-  const { phone } = useLocalSearchParams<{ phone: string }>();
+  const { phone, channel } = useLocalSearchParams<{ phone: string; channel?: string }>();
   const router = useRouter();
   const [digits, setDigits] = useState(['', '', '', '', '', '']);
   const [loading, setLoading] = useState(false);
@@ -83,7 +83,7 @@ export default function OtpScreen() {
           <TouchableOpacity testID="verify-otp-btn" style={styles.btn} onPress={verify} disabled={loading}>
             <Text style={styles.btnText}>{loading ? 'Verifying…' : 'Verify & Continue'}</Text>
           </TouchableOpacity>
-          <Text style={styles.hint}>Tip: any 6 digits work in mock mode (e.g. 123456)</Text>
+          <Text style={styles.hint}>{channel === 'twilio' ? 'Real SMS sent via Twilio — check your phone' : 'Tip: any 6 digits work in mock mode (e.g. 123456)'}</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
