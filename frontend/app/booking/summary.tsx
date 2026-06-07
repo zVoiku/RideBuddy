@@ -5,6 +5,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
 import { theme } from '../../src/theme';
+import { getDirections } from '../../src/maps';
+import RouteMap from '../../src/RouteMap';
 
 function fmt(d: Date) {
   return `${d.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} at ${d.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
@@ -19,16 +21,22 @@ export default function Summary() {
   const days = parseInt(p.days || '1');
   const isHourly = p.trip_mode === 'hourly';
   const hours = parseFloat(p.duration_hours || '0');
+  const [route, setRoute] = useState<any>(null);
 
   useEffect(() => {
     (async () => {
+      let distance_km = 0;
+      if (!isHourly && p.pickup_lat && p.drop_lat) {
+        const r = await getDirections(`${p.pickup_lat},${p.pickup_lng}`, `${p.drop_lat},${p.drop_lng}`);
+        if (r) { setRoute(r); distance_km = r.distance_km; }
+      }
       try {
         const r = await api.estimate({
           trip_type: isHourly ? 'hourly' : 'point_to_point',
           one_way: p.one_way === '1' || isHourly,
-          distance_km: 0, duration_hours: hours, days,
+          distance_km, duration_hours: hours, days,
         });
-        setEst(r);
+        setEst({ ...r, distance_km });
       } catch (e: any) { Alert.alert('Error', e.message); }
     })();
   }, []);
@@ -44,6 +52,21 @@ export default function Summary() {
         </View>
 
         <ScrollView style={styles.sheet} contentContainerStyle={{ padding: 20, paddingBottom: 140 }}>
+          {!isHourly && route?.polyline && (
+            <View style={{ marginBottom: 16 }}>
+              <RouteMap polyline={route.polyline} height={200} />
+              <View style={styles.routeStats}>
+                <View style={styles.routeStat}>
+                  <Ionicons name="speedometer-outline" size={16} color={theme.colors.primary} />
+                  <Text style={styles.routeStatText}>{route.distance_km.toFixed(1)} km</Text>
+                </View>
+                <View style={styles.routeStat}>
+                  <Ionicons name="time-outline" size={16} color={theme.colors.primary} />
+                  <Text style={styles.routeStatText}>{Math.floor(route.duration_min / 60)}h {route.duration_min % 60}m drive</Text>
+                </View>
+              </View>
+            </View>
+          )}
           <Text style={styles.sectionT}>Trip Summary</Text>
           <View style={styles.routeCard}>
             <View style={styles.routeRow}>
@@ -107,7 +130,7 @@ export default function Summary() {
             disabled={!est}
             onPress={() => router.push({
               pathname: '/booking/payment',
-              params: { ...p, total: String(est.total_fare), advance30: String(est.advance_30) },
+              params: { ...p, total: String(est.total_fare), advance30: String(est.advance_30), distance_km: String(est.distance_km || 0), polyline: route?.polyline || '' },
             })}
           >
             <Text style={styles.ctaText}>Confirm & Pay</Text>
@@ -152,4 +175,7 @@ const styles = StyleSheet.create({
   bottom: { padding: 16, backgroundColor: theme.colors.card },
   cta: { backgroundColor: theme.colors.primary, height: 58, borderRadius: theme.radius.pill, alignItems: 'center', justifyContent: 'center' },
   ctaText: { color: theme.colors.inverse, fontSize: 18, fontWeight: '900' },
+  routeStats: { flexDirection: 'row', gap: 16, marginTop: 10, paddingHorizontal: 4 },
+  routeStat: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: theme.radius.pill, backgroundColor: theme.colors.primarySoft },
+  routeStatText: { color: theme.colors.primary, fontWeight: '800', fontSize: 13 },
 });

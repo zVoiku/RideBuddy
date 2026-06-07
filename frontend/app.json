@@ -9,14 +9,29 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "config": {
+        "googleMapsApiKey": "AIzaSyAJlBpt0dT8EWjNlNHQgOIstA3FRkVQExg"
+      },
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Show your live trip route on the map"
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyAJlBpt0dT8EWjNlNHQgOIstA3FRkVQExg"
+        }
+      }
     },
     "web": {
       "bundler": "metro",

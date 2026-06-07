@@ -152,6 +152,10 @@ class BookingIn(BaseModel):
     one_way: bool = True
     pickup_address: str
     drop_address: Optional[str] = None
+    pickup_lat: Optional[float] = None
+    pickup_lng: Optional[float] = None
+    drop_lat: Optional[float] = None
+    drop_lng: Optional[float] = None
     distance_km: float = 0
     duration_hours: float = 0
     days: int = 0
@@ -357,9 +361,11 @@ async def create_booking(body: BookingIn, user=Depends(get_current_user)):
     paid = 0.0
     if body.payment_method != "cash":
         paid = round(total * 0.30, 2) if body.pay_partial else total
+    # Drop None values so Booking model defaults (e.g. pickup_lat=Mumbai) kick in only when not supplied
+    body_data = {k: v for k, v in body.dict().items() if v is not None}
     booking = Booking(
         user_id=user["id"],
-        **body.dict(),
+        **body_data,
         base_fare=base,
         discount=discount,
         total_fare=total,

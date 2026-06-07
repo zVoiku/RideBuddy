@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
 import { theme } from '../../src/theme';
+import LiveMap from '../../src/LiveMap';
 
 function fmtDate(iso?: string) {
   if (!iso) return '';
@@ -13,7 +14,7 @@ function fmtDate(iso?: string) {
 }
 
 export default function BookingDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, polyline } = useLocalSearchParams<{ id: string; polyline?: string }>();
   const router = useRouter();
   const [b, setB] = useState<any>(null);
   const [showMap, setShowMap] = useState(false);
@@ -63,7 +64,7 @@ export default function BookingDetail() {
     <View style={styles.c}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={styles.head}>
-          <TouchableOpacity testID="detail-back" onPress={() => router.replace('/(tabs)/trips')} style={styles.back}>
+          <TouchableOpacity testID="detail-back" onPress={() => router.replace('/bookings')} style={styles.back}>
             <Ionicons name="arrow-back" size={22} color={theme.colors.inverse} />
           </TouchableOpacity>
           <Text style={styles.title}>{onTrip ? 'On Trip' : 'Booking Details'}</Text>
@@ -241,9 +242,7 @@ export default function BookingDetail() {
 
       {/* Live Trip Map modal */}
       <Modal visible={showMap} animationType="slide" onRequestClose={() => setShowMap(false)}>
-        <View style={{ flex: 1, backgroundColor: theme.colors.primaryDark }}>
-          <Image source={{ uri: 'https://images.unsplash.com/photo-1524661135-423995f22d0b?w=1200' }} style={StyleSheet.absoluteFillObject as any} />
-          <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(14,155,155,0.18)' }} />
+        <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
           <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
             <View style={styles.mapHead}>
               <View style={styles.mapChip}>
@@ -251,8 +250,14 @@ export default function BookingDetail() {
                 <Text style={styles.mapChipText}>Live · {d?.eta_minutes ?? 5} min to destination</Text>
               </View>
             </View>
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-              <View style={styles.carMarker}><Ionicons name="car-sport" size={28} color={theme.colors.inverse} /></View>
+            <View style={{ flex: 1, padding: 16, justifyContent: 'center' }}>
+              <LiveMap
+                polyline={polyline as string}
+                pickup={b.pickup_lat && b.pickup_lng ? { lat: b.pickup_lat, lng: b.pickup_lng, label: b.pickup_address?.split(',')[0] } : undefined}
+                drop={b.drop_lat && b.drop_lng ? { lat: b.drop_lat, lng: b.drop_lng, label: b.drop_address?.split(',')[0] } : undefined}
+                simulate={onTrip}
+                height={460}
+              />
             </View>
             <View style={styles.mapFooter}>
               <Text style={{ fontWeight: '900', fontSize: 18, color: theme.colors.textPrimary }}>{d?.name}</Text>

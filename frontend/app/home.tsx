@@ -3,9 +3,9 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Modal,
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { api } from '../../src/api';
-import { theme } from '../../src/theme';
-import CityPicker from '../../src/CityPicker';
+import { api, clearToken } from '../src/api';
+import { theme } from '../src/theme';
+import CityPicker from '../src/CityPicker';
 
 type DateField = 'pickup' | 'return';
 type TripMode = 'point_to_point' | 'hourly';
@@ -23,14 +23,15 @@ function fmtTime(d: Date) {
 export default function Home() {
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
-  // Drawer state kept but unused (now via tabs)
-  const drawer = false;
-  const setDrawer = (_: boolean) => {};
+  const [cars, setCars] = useState<any[]>([]);
+  const [drawer, setDrawer] = useState(false);
   const [recent, setRecent] = useState<any[]>([]);
   const [tripMode, setTripMode] = useState<TripMode>('point_to_point');
   const [oneWay, setOneWay] = useState(true);
   const [pickupAddr, setPickupAddr] = useState('Mumbai, Maharashtra');
   const [dropAddr, setDropAddr] = useState('Delhi, Delhi');
+  const [pickupCoord, setPickupCoord] = useState<{ lat: number; lng: number } | null>({ lat: 19.076, lng: 72.8777 });
+  const [dropCoord, setDropCoord] = useState<{ lat: number; lng: number } | null>({ lat: 28.6139, lng: 77.209 });
   const [hours, setHours] = useState('4');
   const today = new Date(); today.setHours(today.getHours() + 1, 30, 0, 0);
   const ret = new Date(today); ret.setDate(ret.getDate() + 5);
@@ -44,6 +45,7 @@ export default function Home() {
     try {
       const u = await api.me(); setUser(u);
       const b = await api.listBookings(); setRecent(b.slice(0, 2));
+      const c = await api.listCars(); setCars(c);
     } catch {}
   };
   useFocusEffect(useCallback(() => { load(); }, []));
@@ -61,6 +63,10 @@ export default function Home() {
         trip_mode: tripMode,
         one_way: oneWay ? '1' : '0',
         pickup_address: pickupAddr, drop_address: tripMode === 'hourly' ? '' : dropAddr,
+        pickup_lat: String(pickupCoord?.lat || ''),
+        pickup_lng: String(pickupCoord?.lng || ''),
+        drop_lat: String(dropCoord?.lat || ''),
+        drop_lng: String(dropCoord?.lng || ''),
         scheduled_at: pickupDate.toISOString(),
         return_at: tripMode === 'point_to_point' && !oneWay && returnDate ? returnDate.toISOString() : '',
         days: String(days),
@@ -70,20 +76,29 @@ export default function Home() {
     });
   };
 
-  const logout = async () => {};
+  const logout = () => {
+    setDrawer(false);
+    Alert.alert('Log out', 'Are you sure?', [
+      { text: 'Cancel' },
+      { text: 'Log out', style: 'destructive', onPress: async () => { await clearToken(); router.replace('/login'); } },
+    ]);
+  };
 
   return (
     <View style={styles.c}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={styles.top}>
+          <TouchableOpacity testID="menu-btn" onPress={() => setDrawer(true)} style={styles.menuBtn}>
+            <Ionicons name="menu" size={26} color={theme.colors.inverse} />
+          </TouchableOpacity>
           <Text style={styles.title}>Reserve a ride</Text>
+          <View style={{ width: 44 }} />
         </View>
 
         <View style={styles.sheet}>
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 130 }} showsVerticalScrollIndicator={false}>
 
-              {/* Trip Mode Segmented */}
               <View style={styles.segment}>
                 {(['point_to_point', 'hourly'] as TripMode[]).map((t) => (
                   <TouchableOpacity key={t} testID={`mode-${t}`} style={[styles.seg, tripMode === t && styles.segActive]} onPress={() => setTripMode(t)}>
@@ -105,7 +120,6 @@ export default function Home() {
                 </View>
               )}
 
-              {/* Pickup City */}
               <TouchableOpacity testID="pickup-btn" style={[styles.locCard, { marginTop: 16 }]} onPress={() => setCityPicker('pickup')}>
                 <Text style={styles.locLbl}>Pickup</Text>
                 <View style={styles.locRow}>
@@ -164,7 +178,6 @@ export default function Home() {
                 </TouchableOpacity>
               )}
 
-              {/* Owner-Driver Intersect Toggle */}
               <View style={styles.intersectCard}>
                 <View style={{ flex: 1, paddingRight: 12 }}>
                   <Text style={styles.intersectTitle}>Driver pickup at my location</Text>
@@ -175,7 +188,7 @@ export default function Home() {
 
               <View style={styles.recentHead}>
                 <Text style={styles.recentTitle}>Recent Bookings</Text>
-                <TouchableOpacity onPress={() => router.push('/(tabs)/trips')}><Text style={styles.seeAll}>See All</Text></TouchableOpacity>
+                <TouchableOpacity onPress={() => router.push('/bookings')}><Text style={styles.seeAll}>See All</Text></TouchableOpacity>
               </View>
               {recent.length === 0 ? (
                 <Text style={styles.empty}>No bookings yet — your first trip awaits!</Text>
@@ -200,23 +213,21 @@ export default function Home() {
         </View>
       </SafeAreaView>
 
-      {/* City Pickers */}
       <CityPicker
         visible={cityPicker === 'pickup'}
-        title="Pickup City"
+        title="Pickup Location"
         selected={pickupAddr}
         onClose={() => setCityPicker(null)}
-        onSelect={setPickupAddr}
+        onSelect={(p) => { setPickupAddr(p.description); setPickupCoord({ lat: p.lat, lng: p.lng }); }}
       />
       <CityPicker
         visible={cityPicker === 'drop'}
-        title="Destination City"
+        title="Destination"
         selected={dropAddr}
         onClose={() => setCityPicker(null)}
-        onSelect={setDropAddr}
+        onSelect={(p) => { setDropAddr(p.description); setDropCoord({ lat: p.lat, lng: p.lng }); }}
       />
 
-      {/* Date Picker Modal */}
       <DateTimePicker
         visible={!!picker}
         initial={picker === 'pickup' ? pickupDate : (returnDate || new Date())}
@@ -228,9 +239,10 @@ export default function Home() {
         }}
       />
 
-      {/* Drawer */}
+      {/* Hamburger Drawer */}
       <Modal visible={drawer} transparent animationType="fade" onRequestClose={() => setDrawer(false)}>
         <View style={styles.drawerOverlay}>
+          <TouchableOpacity activeOpacity={1} style={{ flex: 1 }} onPress={() => setDrawer(false)} />
           <View style={styles.drawer}>
             <View style={styles.drawerHead}>
               <Text style={styles.drawerTitle}>Menu</Text>
@@ -239,20 +251,34 @@ export default function Home() {
               </TouchableOpacity>
             </View>
             <View style={styles.drawerProfile}>
-              <View style={styles.avatar}><Ionicons name="person" size={36} color={theme.colors.textSecondary} /></View>
-              <View>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarTxt}>{(user?.name || user?.phone || 'U').slice(0, 1).toUpperCase()}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.dName}>{user?.name || 'Rider'}</Text>
                 <Text style={styles.dPhone}>{user?.phone}</Text>
-                {user?.email && <Text style={styles.dPhone}>{user.email}</Text>}
+                {user?.email && <Text style={styles.dPhone} numberOfLines={1}>{user.email}</Text>}
               </View>
             </View>
             <TouchableOpacity testID="menu-bookings" style={styles.drawerItem} onPress={() => { setDrawer(false); router.push('/bookings'); }}>
-              <Ionicons name="list" size={22} color={theme.colors.primary} />
+              <View style={styles.drawerIcon}><Ionicons name="list" size={20} color={theme.colors.primary} /></View>
               <Text style={styles.drawerItemText}>My Bookings</Text>
+              <Ionicons name="chevron-forward" size={18} color={theme.colors.textTertiary} />
+            </TouchableOpacity>
+            <TouchableOpacity testID="menu-account" style={styles.drawerItem} onPress={() => { setDrawer(false); router.push('/account'); }}>
+              <View style={styles.drawerIcon}><Ionicons name="person-circle-outline" size={20} color={theme.colors.primary} /></View>
+              <Text style={styles.drawerItemText}>Profile & Garage</Text>
+              <Text style={styles.carBadge}>{cars.length}</Text>
+              <Ionicons name="chevron-forward" size={18} color={theme.colors.textTertiary} />
+            </TouchableOpacity>
+            <TouchableOpacity testID="menu-add-car" style={styles.drawerItem} onPress={() => { setDrawer(false); router.push('/onboarding/car-make'); }}>
+              <View style={styles.drawerIcon}><Ionicons name="add-circle-outline" size={20} color={theme.colors.primary} /></View>
+              <Text style={styles.drawerItemText}>Add a Car</Text>
+              <Ionicons name="chevron-forward" size={18} color={theme.colors.textTertiary} />
             </TouchableOpacity>
             <View style={{ flex: 1 }} />
             <TouchableOpacity testID="menu-logout" style={styles.logoutBtn} onPress={logout}>
-              <Ionicons name="log-out-outline" size={22} color={theme.colors.error} />
+              <Ionicons name="log-out-outline" size={20} color={theme.colors.error} />
               <Text style={styles.logoutText}>Logout</Text>
             </TouchableOpacity>
           </View>
@@ -398,17 +424,21 @@ const styles = StyleSheet.create({
   cta: { backgroundColor: theme.colors.primary, height: 56, borderRadius: theme.radius.pill, alignItems: 'center', justifyContent: 'center' },
   ctaDisabled: { backgroundColor: theme.colors.softCard },
   ctaText: { color: theme.colors.inverse, fontSize: 17, fontWeight: '800' },
-  drawerOverlay: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.35)' },
-  drawer: { width: '78%', backgroundColor: theme.colors.card, paddingBottom: 40, marginLeft: 'auto' },
+  // Drawer
+  drawerOverlay: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.45)' },
+  drawer: { width: '82%', maxWidth: 360, backgroundColor: theme.colors.card, paddingBottom: 40 },
   drawerHead: { backgroundColor: theme.colors.primary, padding: 18, paddingTop: 56, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   drawerTitle: { color: theme.colors.inverse, fontSize: 24, fontWeight: '900' },
   closeBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
   drawerProfile: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 20, backgroundColor: theme.colors.primary },
-  avatar: { width: 60, height: 60, borderRadius: 30, backgroundColor: theme.colors.card, alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center' },
+  avatarTxt: { fontSize: 24, fontWeight: '900', color: theme.colors.primary },
   dName: { color: theme.colors.inverse, fontSize: 18, fontWeight: '900' },
   dPhone: { color: 'rgba(255,255,255,0.85)', marginTop: 2 },
-  drawerItem: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 20 },
-  drawerItemText: { fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary },
+  drawerItem: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18, borderBottomWidth: 0.5, borderBottomColor: theme.colors.softCard },
+  drawerIcon: { width: 38, height: 38, borderRadius: 10, backgroundColor: theme.colors.primarySoft, alignItems: 'center', justifyContent: 'center' },
+  drawerItemText: { flex: 1, fontSize: 16, fontWeight: '700', color: theme.colors.textPrimary },
+  carBadge: { backgroundColor: theme.colors.primarySoft, color: theme.colors.primary, fontWeight: '900', fontSize: 12, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, overflow: 'hidden' },
   logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, margin: 16, padding: 16, borderRadius: theme.radius.md, backgroundColor: theme.colors.softCard },
   logoutText: { color: theme.colors.error, fontWeight: '900', fontSize: 16 },
 });

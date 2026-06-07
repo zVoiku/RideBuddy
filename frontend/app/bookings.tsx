@@ -3,8 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl } 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { api } from '../../src/api';
-import { theme } from '../../src/theme';
+import { api } from '../src/api';
+import { theme } from '../src/theme';
 
 const STATUS_PILL: Record<string, { bg: string; fg: string; label: string; spinner?: boolean }> = {
   searching: { bg: '#FFFFFF', fg: theme.colors.primary, label: 'Finding Partner', spinner: true },
@@ -32,7 +32,7 @@ export default function Bookings() {
     <View style={styles.c}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
         <View style={styles.head}>
-          <TouchableOpacity testID="bookings-back" onPress={() => router.back()} style={styles.back}>
+          <TouchableOpacity testID="bookings-back" onPress={() => router.canGoBack() ? router.back() : router.replace('/home')} style={styles.back}>
             <Ionicons name="arrow-back" size={22} color={theme.colors.inverse} />
           </TouchableOpacity>
           <Text style={styles.title}>My Bookings</Text>

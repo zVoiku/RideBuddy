@@ -25,7 +25,11 @@ export default function Payment() {
         one_way: p.one_way === '1' || p.trip_mode === 'hourly',
         pickup_address: p.pickup_address,
         drop_address: p.drop_address || undefined,
-        distance_km: 0,
+        pickup_lat: p.pickup_lat ? parseFloat(p.pickup_lat) : undefined,
+        pickup_lng: p.pickup_lng ? parseFloat(p.pickup_lng) : undefined,
+        drop_lat: p.drop_lat ? parseFloat(p.drop_lat) : undefined,
+        drop_lng: p.drop_lng ? parseFloat(p.drop_lng) : undefined,
+        distance_km: parseFloat(p.distance_km || '0'),
         duration_hours: parseFloat(p.duration_hours || '0'),
         days: parseInt(p.days || '0'),
         schedule_now: false,
@@ -36,7 +40,7 @@ export default function Payment() {
         payment_method: 'upi',
         pay_partial: partial,
       });
-      router.replace({ pathname: '/booking/finding', params: { id: b.id } });
+      router.replace({ pathname: '/booking/finding', params: { id: b.id, polyline: p.polyline || '' } });
     } catch (e: any) { setBusy(false); Alert.alert('Error', e.message); }
   };
 

@@ -41,7 +41,7 @@ export default function OtpScreen() {
       const u = res.user;
     if (!u.name) { router.replace('/onboarding/profile'); return; }
       const cars = await api.listCars();
-      router.replace(cars.length === 0 ? '/onboarding/car-make' : '/(tabs)/home');
+      router.replace(cars.length === 0 ? '/onboarding/car-make' : '/home');
     } catch (e: any) { Alert.alert('Error', e.message); }
     finally { setLoading(false); }
   };

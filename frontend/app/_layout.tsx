@@ -35,7 +35,9 @@ export default function RootLayout() {
           <Stack.Screen name="onboarding/profile" />
           <Stack.Screen name="onboarding/car-make" />
           <Stack.Screen name="onboarding/car-model" />
-          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="home" />
+          <Stack.Screen name="bookings" />
+          <Stack.Screen name="account" />
           <Stack.Screen name="booking/summary" />
           <Stack.Screen name="booking/payment" />
           <Stack.Screen name="booking/finding" />

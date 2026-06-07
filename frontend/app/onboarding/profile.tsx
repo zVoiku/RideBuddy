@@ -26,7 +26,7 @@ export default function OnboardingProfile() {
       setSaving(true);
       await api.updateMe({ name: name.trim(), email: email.trim() || undefined });
       const cars = await api.listCars();
-      router.replace(cars.length === 0 ? '/onboarding/car-make' : '/(tabs)/home');
+      router.replace(cars.length === 0 ? '/onboarding/car-make' : '/home');
     } catch (e: any) {
       Alert.alert('Error', e.message);
     } finally {
@@ -42,7 +42,7 @@ export default function OnboardingProfile() {
             <Ionicons name="person" size={42} color={theme.colors.inverse} />
           </View>
           <Text style={styles.h1}>Tell us about yourself</Text>
-          <Text style={styles.sub}>We'll personalise your rides and invoices</Text>
+          <Text style={styles.sub}>We&apos;ll personalise your rides and invoices</Text>
 
           <View style={styles.field}>
             <Text style={styles.lbl}>Full Name</Text>
