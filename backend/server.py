@@ -30,7 +30,8 @@ JWT_ALGO = "HS256"
 TWILIO_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
 TWILIO_FROM = os.environ.get('TWILIO_FROM_NUMBER')
-TWILIO_VERIFIED = os.environ.get('TWILIO_VERIFIED_NUMBER')
+TWILIO_VERIFIED_RAW = os.environ.get('TWILIO_VERIFIED_NUMBERS') or os.environ.get('TWILIO_VERIFIED_NUMBER') or ''
+TWILIO_VERIFIED = {n.strip() for n in TWILIO_VERIFIED_RAW.split(',') if n.strip()}
 twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN) if (TWILIO_SID and TWILIO_TOKEN) else None
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -252,7 +253,7 @@ async def send_otp(body: SendOtpIn):
     sent_via = "mock"
     error_msg = None
     # Real SMS only when Twilio configured AND phone matches verified trial number
-    if twilio_client and TWILIO_FROM and phone == TWILIO_VERIFIED:
+    if twilio_client and TWILIO_FROM and phone in TWILIO_VERIFIED:
         try:
             twilio_client.messages.create(
                 body=f"Your RideBuddy verification code is {code}. Valid for 5 minutes.",
@@ -278,8 +279,8 @@ async def verify_otp(body: VerifyOtpIn):
     if not (body.otp.isdigit() and len(body.otp) == 6):
         raise HTTPException(400, "OTP must be 6 digits")
     record = await db.otps.find_one({"phone": phone}, {"_id": 0})
-    # For real Twilio SMS to the verified number, strict check
-    if twilio_client and phone == TWILIO_VERIFIED:
+    # For real Twilio SMS to a whitelisted number, strict check
+    if twilio_client and phone in TWILIO_VERIFIED:
         if not record or record.get("code") != body.otp:
             raise HTTPException(400, "Invalid OTP")
         expires = datetime.fromisoformat(record["expires_at"])
