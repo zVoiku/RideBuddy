@@ -20,7 +20,14 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+# In-memory fallback: when USE_INMEMORY_DB is set we use mongomock-motor instead
+# of connecting to a real mongod. Useful in sandboxes where a MongoDB server is
+# unavailable. Defaults to a real connection via MONGO_URL.
+if os.environ.get('USE_INMEMORY_DB', '').lower() in ('1', 'true', 'yes'):
+    from mongomock_motor import AsyncMongoMockClient
+    client = AsyncMongoMockClient()
+else:
+    client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 JWT_SECRET = "ridebuddy-secret-key-dev-please-rotate-in-prod-32chars+"
@@ -529,4 +536,5 @@ app.add_middleware(
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    client.close()
+    if hasattr(client, "close"):
+        client.close()

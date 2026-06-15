@@ -75,6 +75,10 @@ agenthub/agents/youtube/db
 
 # Build caches
 .cache/
+.metro-cache/
+
+# Local screenshot output
+screenshots/
 
 memory/test_credentials.md
 
