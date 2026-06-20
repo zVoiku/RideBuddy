@@ -1,24 +1,26 @@
 # Lean, runnable subset of backend dependencies for local / sandbox development.
 #
 # The full backend/requirements.txt mirrors Emergent's build environment and
-# includes packages that are NOT published on public PyPI (e.g.
-# emergentintegrations), plus many libraries the app never imports. server.py
-# only needs the packages below. Install with:
+# includes packages that are NOT on public PyPI (e.g. emergentintegrations) plus
+# many libraries the app never imports. server.py only needs the packages below.
+#
+# Version *ranges* (not exact pins) so pip selects interpreter-compatible builds.
+# This installs on Python 3.9+ (3.11+ recommended). Install with:
 #   python3 -m venv backend/.venv
 #   backend/.venv/bin/pip install -r backend/requirements-dev.txt
 
-fastapi==0.110.1
-uvicorn==0.25.0
-motor==3.3.1
-pymongo==4.5.0
-pydantic==2.13.4
-python-dotenv==1.2.2
-PyJWT==2.12.1
-twilio==9.10.9
+fastapi>=0.110,<0.116
+uvicorn>=0.25,<0.32
+motor>=3.3,<3.6
+pymongo>=4.5,<4.9
+pydantic>=2.7,<3
+python-dotenv>=1.0,<2
+PyJWT>=2.8,<3
+twilio>=9.0,<10
 
 # In-memory MongoDB shim — used when USE_INMEMORY_DB=true (no real mongod needed)
-mongomock-motor==0.0.36
+mongomock-motor>=0.0.36
 
 # Test dependencies (backend/tests are integration tests against a running server)
-pytest==9.0.3
-requests
+pytest>=8.0
+requests>=2.31
