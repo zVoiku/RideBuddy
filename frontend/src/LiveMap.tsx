@@ -5,7 +5,7 @@
 // dev/standalone build, and in Expo Go we fall back to a Google Static Maps image
 // (real map tiles + route + pins) — or the SVG RouteMap if no API key is set.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, Image, Platform } from 'react-native';
+import { View, StyleSheet, Image } from 'react-native';
 import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from './theme';
@@ -123,7 +123,7 @@ export default function LiveMap({ polyline, pickup, drop, driverLocation, simula
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFill}
-        provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+        provider={PROVIDER_GOOGLE}
         initialRegion={region}
         showsCompass={false}
         toolbarEnabled={false}

@@ -11,9 +11,6 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.ridebuddy.app",
-      "config": {
-        "googleMapsApiKey": "AIzaSyAJlBpt0dT8EWjNlNHQgOIstA3FRkVQExg"
-      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Show your live trip route on the map"
       }
@@ -28,12 +25,7 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION"
-      ],
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyAJlBpt0dT8EWjNlNHQgOIstA3FRkVQExg"
-        }
-      }
+      ]
     },
     "web": {
       "bundler": "metro",
