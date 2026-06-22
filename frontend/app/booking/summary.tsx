@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, Modal } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
@@ -15,6 +15,7 @@ function fmt(d: Date) {
 export default function Summary() {
   const p = useLocalSearchParams<Record<string, string>>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [est, setEst] = useState<any>(null);
   const pickup = p.scheduled_at ? new Date(p.scheduled_at) : new Date();
   const ret = p.return_at ? new Date(p.return_at) : null;
@@ -153,7 +154,7 @@ export default function Summary() {
       <Modal visible={showMap} animationType="slide" onRequestClose={() => setShowMap(false)}>
         <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
           <LiveMap polyline={route?.polyline} pickup={pickupPt} drop={dropPt} simulate={false} interactive height="100%" />
-          <SafeAreaView style={styles.mapBar} edges={['top']} pointerEvents="box-none">
+          <View style={[styles.mapBar, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
             <TouchableOpacity testID="summary-map-close" onPress={() => setShowMap(false)} style={styles.mapClose}>
               <Ionicons name="close" size={26} color={theme.colors.textPrimary} />
             </TouchableOpacity>
@@ -162,7 +163,7 @@ export default function Summary() {
                 <Text style={styles.mapTitleText} numberOfLines={1}>{pickupPt?.label} → {dropPt?.label}</Text>
               </View>
             )}
-          </SafeAreaView>
+          </View>
         </View>
       </Modal>
     </View>
@@ -209,7 +210,7 @@ const styles = StyleSheet.create({
   mapPreview: { borderRadius: theme.radius.lg, overflow: 'hidden', position: 'relative' },
   expandBadge: { position: 'absolute', right: 10, bottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: theme.radius.pill },
   expandText: { color: '#fff', fontWeight: '700', fontSize: 12 },
-  mapBar: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingTop: 12 },
+  mapBar: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12 },
   mapClose: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
   mapTitle: { flex: 1, backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10, marginRight: 4 },
   mapTitleText: { fontWeight: '800', color: theme.colors.textPrimary, fontSize: 14 },
