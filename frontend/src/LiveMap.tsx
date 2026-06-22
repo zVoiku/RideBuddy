@@ -34,10 +34,11 @@ interface Props {
   drop?: { lat: number; lng: number; label?: string };
   driverLocation?: { lat: number; lng: number };
   simulate?: boolean; // animate the car along the polyline
+  interactive?: boolean; // enable pan/zoom + map controls (false = static preview)
   height?: number | string;
 }
 
-export default function LiveMap({ polyline, pickup, drop, driverLocation, simulate = true, height = '100%' as any }: Props) {
+export default function LiveMap({ polyline, pickup, drop, driverLocation, simulate = true, interactive = true, height = '100%' as any }: Props) {
   const route = useMemo(() => (polyline ? decodePolyline(polyline) : []), [polyline]);
   const [idx, setIdx] = useState(0);
   const mapRef = useRef<any>(null);
@@ -125,8 +126,15 @@ export default function LiveMap({ polyline, pickup, drop, driverLocation, simula
         style={StyleSheet.absoluteFill}
         provider={PROVIDER_GOOGLE}
         initialRegion={region}
-        showsCompass={false}
-        toolbarEnabled={false}
+        showsCompass={interactive}
+        toolbarEnabled={interactive}
+        zoomControlEnabled={interactive}
+        zoomEnabled={interactive}
+        scrollEnabled={interactive}
+        rotateEnabled={interactive}
+        pitchEnabled={interactive}
+        showsUserLocation={interactive}
+        showsMyLocationButton={interactive}
       >
         {coords.length > 1 && (
           <MapPolyline
