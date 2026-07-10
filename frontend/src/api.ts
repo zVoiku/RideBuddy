@@ -30,6 +30,9 @@ export const api = {
   deleteCar: (id: string) => request('DELETE', `/users/me/cars/${id}`),
   estimate: (data: any) => request('POST', '/bookings/estimate', data),
   createBooking: (data: any) => request('POST', '/bookings', data),
+  createOrder: (amount: number) => request('POST', '/payments/create-order', { amount }),
+  verifyPayment: (data: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) =>
+    request('POST', '/payments/verify', data),
   listBookings: () => request('GET', '/bookings'),
   getBooking: (id: string) => request('GET', `/bookings/${id}`),
   verifyStart: (id: string, code: string) => request('POST', `/bookings/${id}/verify-start`, { code }),

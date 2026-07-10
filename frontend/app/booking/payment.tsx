@@ -5,6 +5,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
 import { theme } from '../../src/theme';
+import RazorpayCheckout from '../../src/RazorpayCheckout';
 
 export default function Payment() {
   const p = useLocalSearchParams<Record<string, string>>();
@@ -13,35 +14,57 @@ export default function Payment() {
   const adv = parseFloat(p.advance30 || '0');
   const [partial, setPartial] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [order, setOrder] = useState<any>(null);
+  const [showCheckout, setShowCheckout] = useState(false);
 
   const payable = partial ? adv : total;
   const remaining = total - payable;
 
+  const finalizeBooking = async () => {
+    const b = await api.createBooking({
+      trip_type: p.trip_mode === 'hourly' ? 'hourly' : 'point_to_point',
+      one_way: p.one_way === '1' || p.trip_mode === 'hourly',
+      pickup_address: p.pickup_address,
+      drop_address: p.drop_address || undefined,
+      pickup_lat: p.pickup_lat ? parseFloat(p.pickup_lat) : undefined,
+      pickup_lng: p.pickup_lng ? parseFloat(p.pickup_lng) : undefined,
+      drop_lat: p.drop_lat ? parseFloat(p.drop_lat) : undefined,
+      drop_lng: p.drop_lng ? parseFloat(p.drop_lng) : undefined,
+      distance_km: parseFloat(p.distance_km || '0'),
+      duration_hours: parseFloat(p.duration_hours || '0'),
+      days: parseInt(p.days || '0'),
+      schedule_now: false,
+      scheduled_at: p.scheduled_at,
+      return_at: p.return_at || undefined,
+      intersect_at_owner: p.intersect_at_owner === '1',
+      transmission: 'Automatic',
+      payment_method: 'upi',
+      pay_partial: partial,
+    });
+    router.replace({ pathname: '/booking/finding', params: { id: b.id, polyline: p.polyline || '' } });
+  };
+
   const submit = async () => {
     try {
       setBusy(true);
-      const b = await api.createBooking({
-        trip_type: p.trip_mode === 'hourly' ? 'hourly' : 'point_to_point',
-        one_way: p.one_way === '1' || p.trip_mode === 'hourly',
-        pickup_address: p.pickup_address,
-        drop_address: p.drop_address || undefined,
-        pickup_lat: p.pickup_lat ? parseFloat(p.pickup_lat) : undefined,
-        pickup_lng: p.pickup_lng ? parseFloat(p.pickup_lng) : undefined,
-        drop_lat: p.drop_lat ? parseFloat(p.drop_lat) : undefined,
-        drop_lng: p.drop_lng ? parseFloat(p.drop_lng) : undefined,
-        distance_km: parseFloat(p.distance_km || '0'),
-        duration_hours: parseFloat(p.duration_hours || '0'),
-        days: parseInt(p.days || '0'),
-        schedule_now: false,
-        scheduled_at: p.scheduled_at,
-        return_at: p.return_at || undefined,
-        intersect_at_owner: p.intersect_at_owner === '1',
-        transmission: 'Automatic',
-        payment_method: 'upi',
-        pay_partial: partial,
-      });
-      router.replace({ pathname: '/booking/finding', params: { id: b.id, polyline: p.polyline || '' } });
+      const ord = await api.createOrder(payable);
+      if (ord.mock) {
+        // Backend has no Razorpay keys configured — skip checkout and book directly.
+        await finalizeBooking();
+      } else {
+        setOrder(ord);
+        setShowCheckout(true);
+      }
     } catch (e: any) { setBusy(false); Alert.alert('Error', e.message); }
+  };
+
+  const onPaid = async (r: any) => {
+    setShowCheckout(false);
+    try {
+      const v = await api.verifyPayment(r);
+      if (!v.verified) throw new Error('Payment could not be verified');
+      await finalizeBooking();
+    } catch (e: any) { setBusy(false); Alert.alert('Payment failed', e.message); }
   };
 
   return (
@@ -97,6 +120,14 @@ export default function Payment() {
           </TouchableOpacity>
         </View>
       </SafeAreaView>
+
+      <RazorpayCheckout
+        visible={showCheckout}
+        order={order}
+        onSuccess={onPaid}
+        onDismiss={() => { setShowCheckout(false); setBusy(false); }}
+        onFail={(m) => { setShowCheckout(false); setBusy(false); Alert.alert('Payment failed', m); }}
+      />
     </View>
   );
 }

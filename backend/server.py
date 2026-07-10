@@ -44,6 +44,19 @@ twilio_client = TwilioClient(TWILIO_SID, TWILIO_TOKEN) if (TWILIO_SID and TWILIO
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Razorpay config — real gateway when keys are set, otherwise a mock flow so the
+# app keeps working without credentials.
+RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID')
+RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET')
+razorpay_client = None
+if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET:
+    try:
+        import razorpay
+        razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+        logger.info("Razorpay payment gateway enabled")
+    except Exception as e:
+        logger.warning(f"Razorpay disabled ({e}); falling back to mock payments")
+
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
@@ -382,6 +395,62 @@ async def create_booking(body: BookingIn, user=Depends(get_current_user)):
     await db.bookings.insert_one(booking.dict())
     asyncio.create_task(auto_assign_driver(booking.id))
     return booking.dict()
+
+
+# ---------------- Payments (Razorpay) ----------------
+class CreateOrderIn(BaseModel):
+    amount: float  # amount in rupees
+
+
+class VerifyPaymentIn(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+@api_router.post("/payments/create-order")
+async def create_payment_order(body: CreateOrderIn, user=Depends(get_current_user)):
+    amount_paise = int(round(body.amount * 100))
+    if amount_paise <= 0:
+        raise HTTPException(400, "Invalid amount")
+    if razorpay_client:
+        order = razorpay_client.order.create({
+            "amount": amount_paise,
+            "currency": "INR",
+            "receipt": f"rb_{uuid.uuid4().hex[:12]}",
+            "notes": {"user_id": user["id"]},
+        })
+        return {
+            "mock": False,
+            "order_id": order["id"],
+            "key_id": RAZORPAY_KEY_ID,
+            "amount": amount_paise,
+            "currency": "INR",
+        }
+    # No credentials configured — return a mock order so the app still completes.
+    return {
+        "mock": True,
+        "order_id": f"mock_{uuid.uuid4().hex[:12]}",
+        "key_id": "",
+        "amount": amount_paise,
+        "currency": "INR",
+    }
+
+
+@api_router.post("/payments/verify")
+async def verify_payment(body: VerifyPaymentIn, user=Depends(get_current_user)):
+    if razorpay_client:
+        try:
+            razorpay_client.utility.verify_payment_signature({
+                "razorpay_order_id": body.razorpay_order_id,
+                "razorpay_payment_id": body.razorpay_payment_id,
+                "razorpay_signature": body.razorpay_signature,
+            })
+        except Exception:
+            raise HTTPException(400, "Payment signature verification failed")
+        return {"verified": True}
+    # Mock mode — nothing to verify.
+    return {"verified": True, "mock": True}
 
 
 async def _hydrate_booking(b: dict) -> dict:

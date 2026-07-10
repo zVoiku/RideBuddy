@@ -18,6 +18,9 @@ python-dotenv>=1.0,<2
 PyJWT>=2.8,<3
 twilio>=9.0,<10
 
+# Payments (Razorpay) — optional; the app mocks payments when keys aren't set
+razorpay>=1.3,<2
+
 # In-memory MongoDB shim — used when USE_INMEMORY_DB=true (no real mongod needed)
 mongomock-motor>=0.0.36
 
