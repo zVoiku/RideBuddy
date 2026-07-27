@@ -99,6 +99,38 @@ class Driver(BaseModel):
     eta_minutes: int = 5
 
 
+class Partner(BaseModel):
+    """A driver/partner account ("Buddy").
+
+    Supersedes the seed-only `Driver` record: a Partner is a real, loginable
+    account with credentials, verification state and onboarding stage. It keeps
+    every field the client app's driver card renders (photo, rating, trips,
+    aadhaar_verified, police_verified) so booking hydration is unchanged.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    phone: str                                   # login identity, 10-digit local
+    name: Optional[str] = None
+    email: Optional[str] = None
+    licence: Optional[str] = None
+    photo: Optional[str] = None
+    rating: float = 0.0
+    trips: int = 0
+    # Verification — hardcoded true for now (documents flow deferred, see §12)
+    aadhaar_verified: bool = True
+    police_verified: bool = True
+    transmissions: List[str] = ["Manual", "Automatic"]
+    # active   = admin-enabled (Ops can deactivate a partner)
+    # available= the partner's own online/offline toggle
+    active: bool = True
+    available: bool = True
+    eta_minutes: int = 5
+    onboarding: bool = False
+    stage: Optional[Literal["applied", "verification", "verified"]] = None
+    is_new: bool = True
+    joined: str = Field(default_factory=lambda: datetime.now(timezone.utc).date().isoformat())
+    created_at: str = Field(default_factory=now_iso)
+
+
 class Booking(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str
@@ -125,15 +157,22 @@ class Booking(BaseModel):
     payment_method: Literal["upi", "card", "cash"] = "upi"
     pay_partial: bool = False  # 30% advance
     paid_amount: float = 0
+    # en_route ("Left for Pickup") sits between assigned and arrived: the partner
+    # has set off but has not yet reached the owner. Set from the driver app only.
     status: Literal[
-        "pending", "searching", "assigned", "arrived", "in_progress", "completed", "cancelled"
+        "pending", "searching", "assigned", "en_route", "arrived",
+        "in_progress", "completed", "cancelled"
     ] = "pending"
     driver_id: Optional[str] = None
     start_code: Optional[str] = None
     end_code: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
+    left_at: Optional[str] = None
+    arrived_at: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
+    rating: Optional[int] = None
+    comment: Optional[str] = None
 
 
 # ---------------- Schemas ----------------
@@ -194,23 +233,52 @@ class CodeIn(BaseModel):
 
 
 # ---------------- Helpers ----------------
-def make_token(user_id: str) -> str:
-    payload = {"sub": user_id, "exp": datetime.now(timezone.utc) + timedelta(days=30)}
+def make_token(user_id: str, role: str = "user") -> str:
+    """Issue a JWT carrying the caller's role.
+
+    One auth system serves every surface: "user" (the client app), "driver" (the
+    partner app) and — when the Ops console lands — "ops". Tokens minted before
+    roles existed have no `role` claim and are read as "user".
+    """
+    payload = {
+        "sub": user_id,
+        "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+    }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
 
 
-async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
+def _decode(authorization: Optional[str]) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing auth")
     token = authorization.split(" ", 1)[1]
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
     except jwt.PyJWTError:
         raise HTTPException(401, "Invalid token")
+
+
+async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
+    payload = _decode(authorization)
+    # Legacy tokens predate the role claim; absence means the client app.
+    if payload.get("role", "user") != "user":
+        raise HTTPException(403, "This endpoint is for the client app")
     user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
     if not user:
         raise HTTPException(401, "User not found")
     return user
+
+
+async def get_current_driver(authorization: Optional[str] = Header(None)) -> dict:
+    payload = _decode(authorization)
+    if payload.get("role") != "driver":
+        raise HTTPException(403, "This endpoint is for the partner app")
+    partner = await db.partners.find_one({"id": payload["sub"]}, {"_id": 0})
+    if not partner:
+        raise HTTPException(401, "Partner not found")
+    if not partner.get("active", True):
+        raise HTTPException(403, "This partner account has been deactivated")
+    return partner
 
 
 def compute_fare(trip_type: str, one_way: bool, distance_km: float, duration_hours: float, is_new_user: bool, days: int = 0):
@@ -233,29 +301,67 @@ def gen_code() -> str:
     return "".join(random.choices(string.digits, k=4))
 
 
-async def auto_assign_driver(booking_id: str):
-    """Background: after a delay, find an available driver matching transmission."""
-    await asyncio.sleep(3)
-    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    if not booking or booking["status"] != "searching":
-        return
-    driver = await db.drivers.find_one(
-        {"available": True, "transmissions": booking["transmission"]},
-        {"_id": 0},
-    )
-    if not driver:
-        return
-    await db.bookings.update_one(
-        {"id": booking_id},
+# Partners keep 80% of the trip fare; the platform commission is 20%. Rounded to
+# the nearest ₹10 so the figure the partner sees is always a clean number.
+COMMISSION_RATE = 0.20
+
+
+def partner_earnings(booking: dict) -> float:
+    fare = booking.get("total_fare") or 0
+    return float(round(fare * (1 - COMMISSION_RATE) / 10) * 10)
+
+
+def mask_name(name: Optional[str]) -> str:
+    """Partners only ever see the owner's first name + last initial.
+
+    Full names and phone numbers stay server-side — a partner has no need for
+    them and the design masks them on every screen.
+    """
+    parts = (name or "").strip().split()
+    if not parts:
+        return "Customer"
+    if len(parts) == 1:
+        return parts[0]
+    return f"{parts[0]} {parts[-1][0]}."
+
+
+async def assign_partner(booking_id: str, partner_id: str) -> bool:
+    """Assign a partner to a booking and mint the handshake codes.
+
+    Ops owns assignment in the product design. Until the Ops console ships,
+    `auto_assign_driver` calls this on a timer so bookings made in the client
+    app still reach a partner. The conditional update keeps it single-winner.
+    """
+    res = await db.bookings.update_one(
+        {"id": booking_id, "driver_id": None},
         {
             "$set": {
-                "driver_id": driver["id"],
+                "driver_id": partner_id,
                 "status": "assigned",
                 "start_code": gen_code(),
                 "end_code": gen_code(),
             }
         },
     )
+    return res.modified_count > 0
+
+
+async def auto_assign_driver(booking_id: str):
+    """Background: after a delay, assign an available partner matching transmission.
+
+    Interim stand-in for the Ops console's assignment step.
+    """
+    await asyncio.sleep(3)
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking or booking["status"] != "searching":
+        return
+    partner = await db.partners.find_one(
+        {"available": True, "active": True, "transmissions": booking["transmission"]},
+        {"_id": 0},
+    )
+    if not partner:
+        return
+    await assign_partner(booking_id, partner["id"])
 
 
 # ---------------- Routes ----------------
@@ -455,7 +561,10 @@ async def verify_payment(body: VerifyPaymentIn, user=Depends(get_current_user)):
 
 async def _hydrate_booking(b: dict) -> dict:
     if b.get("driver_id"):
-        drv = await db.drivers.find_one({"id": b["driver_id"]}, {"_id": 0})
+        drv = await db.partners.find_one({"id": b["driver_id"]}, {"_id": 0})
+        if drv:
+            # The owner never sees the partner's login/onboarding internals.
+            drv = {k: v for k, v in drv.items() if k not in ("is_new", "stage", "onboarding", "active")}
         b["driver"] = drv
     return b
 
@@ -534,11 +643,382 @@ async def simulate_arrived(booking_id: str, user=Depends(get_current_user)):
 
 @api_router.get("/drivers")
 async def list_drivers():
-    drivers = await db.drivers.find({}, {"_id": 0}).to_list(50)
+    drivers = await db.partners.find(
+        {"active": True, "onboarding": False},
+        {"_id": 0, "is_new": 0, "stage": 0},
+    ).to_list(50)
     return drivers
 
 
+# ==================== Partner / Driver app ====================
+# Auth mirrors the client flow (phone + OTP) but mints a role="driver" token and
+# resolves against the `partners` collection. `get_current_driver` rejects client
+# tokens, and `get_current_user` rejects partner tokens, so the two surfaces can
+# never reach into each other.
+
+class DriverUpdateIn(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    licence: Optional[str] = None
+
+
+class AvailabilityIn(BaseModel):
+    available: bool
+
+
+@api_router.post("/driver/auth/send-otp")
+async def driver_send_otp(body: SendOtpIn):
+    # Same OTP store and Twilio rules as the client app.
+    return await send_otp(body)
+
+
+@api_router.post("/driver/auth/verify-otp")
+async def driver_verify_otp(body: VerifyOtpIn):
+    phone = body.phone.strip()
+    if not (body.otp.isdigit() and len(body.otp) == 6):
+        raise HTTPException(400, "OTP must be 6 digits")
+    record = await db.otps.find_one({"phone": phone}, {"_id": 0})
+    if twilio_client and phone in TWILIO_VERIFIED:
+        if not record or record.get("code") != body.otp:
+            raise HTTPException(400, "Invalid OTP")
+        if datetime.now(timezone.utc) > datetime.fromisoformat(record["expires_at"]):
+            raise HTTPException(400, "OTP expired, please request a new one")
+        await db.otps.update_one({"phone": phone}, {"$set": {"verified": True}})
+    # else: mock mode — any 6-digit code passes.
+
+    existing = await db.partners.find_one({"phone": phone}, {"_id": 0})
+    if existing:
+        if not existing.get("active", True):
+            raise HTTPException(403, "This partner account has been deactivated")
+        return {"token": make_token(existing["id"], "driver"), "partner": existing}
+
+    # TODO(onboarding): the design gates login on an Ops-managed whitelist and
+    # shows "This number isn't authorised. Contact the admin." Self-signup is
+    # enabled for now so any number can be tested on-device; replace this with a
+    # whitelist lookup + document verification when Ops onboarding ships.
+    partner = Partner(phone=phone)
+    await db.partners.insert_one(partner.dict())
+    return {"token": make_token(partner.id, "driver"), "partner": partner.dict()}
+
+
+@api_router.get("/driver/me")
+async def driver_me(partner=Depends(get_current_driver)):
+    return partner
+
+
+@api_router.put("/driver/me")
+async def driver_update_me(body: DriverUpdateIn, partner=Depends(get_current_driver)):
+    updates = {k: v for k, v in body.dict().items() if v is not None}
+    if updates:
+        await db.partners.update_one({"id": partner["id"]}, {"$set": {**updates, "is_new": False}})
+    return await db.partners.find_one({"id": partner["id"]}, {"_id": 0})
+
+
+@api_router.patch("/driver/availability")
+async def driver_availability(body: AvailabilityIn, partner=Depends(get_current_driver)):
+    """Online/offline toggle. Going offline never releases an accepted trip —
+    the partner stays responsible for work already assigned to them."""
+    await db.partners.update_one({"id": partner["id"]}, {"$set": {"available": body.available}})
+    return {"available": body.available}
+
+
+async def _driver_view(b: dict) -> dict:
+    """Project a booking into what a partner is allowed to see.
+
+    Drops the owner's identity (masked to "Vikram S."), swaps the fare for the
+    partner's own earnings, and — for round trips — withholds the exact drop
+    address until the day of travel, matching the design.
+    """
+    owner = await db.users.find_one({"id": b["user_id"]}, {"_id": 0})
+    car = await db.cars.find_one({"id": b["car_id"]}, {"_id": 0}) if b.get("car_id") else None
+    round_trip = not b.get("one_way", True)
+    return {
+        "id": b["id"],
+        "status": b["status"],
+        "customer": mask_name((owner or {}).get("name")),
+        "trip_type": b["trip_type"],
+        "one_way": b.get("one_way", True),
+        "round_trip": round_trip,
+        "pickup_address": b.get("pickup_address"),
+        # Round trips share only the drop city up front; the exact address is
+        # handed over on the day.
+        "drop_address": None if round_trip else b.get("drop_address"),
+        "drop_area": b.get("drop_address"),
+        "pickup_lat": b.get("pickup_lat"),
+        "pickup_lng": b.get("pickup_lng"),
+        "drop_lat": b.get("drop_lat"),
+        "drop_lng": b.get("drop_lng"),
+        "distance_km": b.get("distance_km"),
+        "duration_hours": b.get("duration_hours"),
+        "days": b.get("days"),
+        "transmission": b.get("transmission"),
+        "car": f"{car['make']} {car['model']}" if car else None,
+        "make": car["make"] if car else None,
+        "model": car["model"] if car else None,
+        "scheduled_at": b.get("scheduled_at"),
+        "return_at": b.get("return_at"),
+        "schedule_now": b.get("schedule_now", True),
+        "intersect_at_owner": b.get("intersect_at_owner", True),
+        "earnings": partner_earnings(b),
+        # The partner is shown the start code only after the owner reads it out —
+        # it is never sent to the partner app.
+        "created_at": b.get("created_at"),
+        "left_at": b.get("left_at"),
+        "arrived_at": b.get("arrived_at"),
+        "started_at": b.get("started_at"),
+        "completed_at": b.get("completed_at"),
+        "rating": b.get("rating"),
+        "comment": b.get("comment"),
+    }
+
+
+@api_router.get("/driver/trips")
+async def driver_trips(partner=Depends(get_current_driver)):
+    """Every trip assigned to this partner, newest pickup first.
+
+    There is no open pool: assignment is Ops-owned, so a partner only ever sees
+    work that is already theirs.
+    """
+    items = await db.bookings.find(
+        {"driver_id": partner["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    return [await _driver_view(b) for b in items]
+
+
+@api_router.get("/driver/trips/{booking_id}")
+async def driver_trip(booking_id: str, partner=Depends(get_current_driver)):
+    b = await db.bookings.find_one({"id": booking_id, "driver_id": partner["id"]}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Trip not found")
+    return await _driver_view(b)
+
+
+async def _advance(booking_id: str, partner_id: str, allowed_from: List[str], to: str, stamp: str):
+    b = await db.bookings.find_one({"id": booking_id, "driver_id": partner_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Trip not found")
+    if b["status"] not in allowed_from:
+        raise HTTPException(400, f"Cannot move a trip from {b['status']} to {to}")
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"status": to, stamp: now_iso()}})
+    return await _driver_view(await db.bookings.find_one({"id": booking_id}, {"_id": 0}))
+
+
+@api_router.post("/driver/trips/{booking_id}/left-for-pickup")
+async def driver_left_for_pickup(booking_id: str, partner=Depends(get_current_driver)):
+    return await _advance(booking_id, partner["id"], ["assigned"], "en_route", "left_at")
+
+
+@api_router.post("/driver/trips/{booking_id}/arrived")
+async def driver_arrived(booking_id: str, partner=Depends(get_current_driver)):
+    return await _advance(booking_id, partner["id"], ["assigned", "en_route"], "arrived", "arrived_at")
+
+
+@api_router.post("/driver/trips/{booking_id}/verify-start")
+async def driver_verify_start(booking_id: str, body: CodeIn, partner=Depends(get_current_driver)):
+    """The partner types the 4-digit code the owner reads out to them.
+
+    The owner's app displays the code; this endpoint is the partner-side half of
+    that handshake. Ending the trip stays with the owner (`/bookings/{id}/verify-end`).
+    """
+    b = await db.bookings.find_one({"id": booking_id, "driver_id": partner["id"]}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Trip not found")
+    if b["status"] not in ("assigned", "en_route", "arrived"):
+        raise HTTPException(400, "Not ready to start")
+    if body.code != b.get("start_code"):
+        raise HTTPException(400, "Incorrect code. Ask the customer to check their app.")
+    await db.bookings.update_one(
+        {"id": booking_id}, {"$set": {"status": "in_progress", "started_at": now_iso()}}
+    )
+    return await _driver_view(await db.bookings.find_one({"id": booking_id}, {"_id": 0}))
+
+
+@api_router.post("/driver/trips/{booking_id}/cancel")
+async def driver_cancel(booking_id: str, partner=Depends(get_current_driver)):
+    """Drop an assigned trip. It returns to the pool for Ops to reassign, and
+    this partner is blocked from being auto-assigned to it again."""
+    b = await db.bookings.find_one({"id": booking_id, "driver_id": partner["id"]}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Trip not found")
+    if b["status"] in ("in_progress", "completed", "cancelled"):
+        raise HTTPException(400, "This trip can no longer be dropped")
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {
+            "$set": {"driver_id": None, "status": "searching", "start_code": None, "end_code": None},
+            "$addToSet": {"declined_by": partner["id"]},
+        },
+    )
+    return {"dropped": True}
+
+
+@api_router.get("/driver/earnings")
+async def driver_earnings(partner=Depends(get_current_driver)):
+    """Real earnings computed from completed trips, plus per-trip rows so the
+    app can bucket them into week/month/quarter/year itself."""
+    items = await db.bookings.find(
+        {"driver_id": partner["id"], "status": "completed"}, {"_id": 0}
+    ).sort("completed_at", -1).to_list(500)
+    trips = [
+        {
+            "id": b["id"],
+            "earnings": partner_earnings(b),
+            "fare": b.get("total_fare", 0),
+            "completed_at": b.get("completed_at"),
+            "pickup_address": b.get("pickup_address"),
+            "drop_address": b.get("drop_address"),
+            "rating": b.get("rating"),
+        }
+        for b in items
+    ]
+    return {
+        "lifetime": round(sum(t["earnings"] for t in trips), 2),
+        "trips_completed": len(trips),
+        "commission_rate": COMMISSION_RATE,
+        "trips": trips,
+    }
+
+
 # ---------------- Seeding ----------------
+# Partners are re-seeded on every startup (upsert by phone) so partner login
+# always works, including after an in-memory DB restart.
+SEED_PARTNERS = [
+    {
+        "phone": "+919876543210", "name": "Rajesh Singh", "licence": "PB-0220190034521",
+        "rating": 4.9, "trips": 128, "joined": "2025-11-02", "is_new": False,
+        "photo": "https://images.unsplash.com/photo-1718434127037-efa9c3043f7f?w=300",
+    },
+    {
+        "phone": "+919814203356", "name": "Harpreet Kaur", "licence": "PB-0820180012204",
+        "rating": 4.8, "trips": 96, "joined": "2025-12-14", "is_new": False,
+        "photo": "https://images.unsplash.com/photo-1607990281513-2c110a25bd8c?w=300",
+    },
+    {
+        "phone": "+919988123047", "name": "Manpreet Gill", "licence": "PB-1020190077310",
+        "rating": 4.7, "trips": 74, "joined": "2026-01-09", "is_new": False,
+        "photo": "https://images.unsplash.com/photo-1633332755192-727a05c4013d?w=300",
+    },
+    {
+        "phone": "+919418876620", "name": "Vikas Thakur", "licence": "HP-0420170045129",
+        "rating": 4.9, "trips": 152, "joined": "2025-10-21", "is_new": False,
+        "photo": "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=300",
+    },
+    {
+        "phone": "+919736650912", "name": "Sunil Verma", "licence": "HP-0720200033418",
+        "rating": 4.6, "trips": 41, "joined": "2026-02-18", "is_new": False,
+        "photo": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=300",
+    },
+]
+
+# Mock owners + their cars, so seeded trips render a real customer and vehicle.
+SEED_OWNERS = [
+    {"name": "Vikram Saini", "phone": "+919814552210", "make": "Maruti Suzuki", "model": "Swift Dzire", "transmission": "Manual"},
+    {"name": "Aarti Mehta", "phone": "+919988012245", "make": "Hyundai", "model": "Creta", "transmission": "Automatic"},
+    {"name": "Karthik Nair", "phone": "+919845512300", "make": "Hyundai", "model": "Creta", "transmission": "Automatic"},
+    {"name": "Nisha Rao", "phone": "+919876004412", "make": "Hyundai", "model": "Verna", "transmission": "Automatic"},
+    {"name": "Sandeep Kohli", "phone": "+919023440561", "make": "Tata", "model": "Harrier", "transmission": "Automatic"},
+    {"name": "Kavya Nair", "phone": "+919417001288", "make": "Maruti Suzuki", "model": "Ertiga", "transmission": "Manual"},
+    {"name": "Imran Sheikh", "phone": "+919888110234", "make": "Honda", "model": "City", "transmission": "Automatic"},
+    {"name": "Arjun Reddy", "phone": "+919216770340", "make": "Toyota", "model": "Innova Crysta", "transmission": "Manual"},
+]
+
+# Chandigarh tri-city → Himachal hill routes, matching the design's demo region.
+PLACES = {
+    "Chandigarh": (30.7415, 76.7836, "Sector 17 Plaza, Chandigarh"),
+    "Mohali": (30.7140, 76.6960, "Phase 9, Sector 63, Mohali"),
+    "Panchkula": (30.6890, 76.8540, "Sector 9 Market, Panchkula"),
+    "Shimla": (31.1033, 77.1722, "The Ridge, Shimla"),
+    "Kasauli": (30.8980, 76.9655, "Mall Road, Kasauli"),
+    "Manali": (32.2580, 77.1810, "Old Manali"),
+    "Dharamshala": (32.2400, 76.3200, "McLeod Ganj, Dharamshala"),
+}
+
+# (owner_idx, from, to, one_way, days, status, day_offset, fare, distance, rating, comment)
+# day_offset is relative to server start, so the demo never goes stale.
+SEED_TRIPS = [
+    (2, "Chandigarh", "Kasauli", True, 0, "in_progress", 0, 3200, 62, None, None),
+    (0, "Mohali", "Kasauli", True, 0, "assigned", 1, 3200, 68, None, None),
+    (1, "Chandigarh", "Shimla", False, 3, "assigned", 2, 6800, 113, None, None),
+    (3, "Mohali", "Kasauli", True, 0, "completed", -40, 3300, 68, 5, "Smooth, careful drive up."),
+    (4, "Chandigarh", "Shimla", False, 3, "completed", -54, 7200, 113, 4, None),
+    (5, "Panchkula", "Manali", False, 3, "completed", -74, 10800, 290, 5, "Knows the hill roads well."),
+    (6, "Chandigarh", "Kasauli", True, 0, "completed", -96, 3100, 62, 5, None),
+    (7, "Chandigarh", "Manali", False, 4, "completed", -137, 12400, 305, 5, "Excellent across all four days."),
+    (3, "Panchkula", "Shimla", True, 0, "completed", -160, 4400, 118, 4, None),
+    (4, "Chandigarh", "Dharamshala", True, 0, "completed", -188, 4600, 240, 5, None),
+]
+
+
+async def seed_partner_demo_data():
+    """Seed partners, mock owners/cars and the trips already assigned to them.
+
+    Without this the partner app opens on an empty Home: assignment is Ops-owned
+    and the Ops console does not exist yet.
+    """
+    for p in SEED_PARTNERS:
+        existing = await db.partners.find_one({"phone": p["phone"]}, {"_id": 0})
+        if not existing:
+            await db.partners.insert_one(Partner(**p).dict())
+
+    demo = await db.partners.find_one({"phone": SEED_PARTNERS[0]["phone"]}, {"_id": 0})
+    if not demo:
+        return
+    if await db.bookings.count_documents({"driver_id": demo["id"]}) > 0:
+        return  # already seeded
+
+    owner_ids = []
+    for o in SEED_OWNERS:
+        user = await db.users.find_one({"phone": o["phone"]}, {"_id": 0})
+        if not user:
+            user = User(phone=o["phone"], name=o["name"], is_new=False).dict()
+            await db.users.insert_one(user)
+            car = Car(
+                user_id=user["id"], make=o["make"], model=o["model"],
+                transmission=o["transmission"], plate="CH01AB" + str(random.randint(1000, 9999)),
+            )
+            await db.cars.insert_one(car.dict())
+        owner_ids.append(user["id"])
+
+    now = datetime.now(timezone.utc)
+    for (oi, src, dst, one_way, days, status, offset, fare, dist, rating, comment) in SEED_TRIPS:
+        p_lat, p_lng, p_addr = PLACES[src]
+        d_lat, d_lng, d_addr = PLACES[dst]
+        owner = await db.users.find_one({"id": owner_ids[oi]}, {"_id": 0})
+        car = await db.cars.find_one({"user_id": owner_ids[oi]}, {"_id": 0})
+        out = now + timedelta(days=offset)
+        completed = status == "completed"
+        booking = Booking(
+            user_id=owner_ids[oi],
+            trip_type="point_to_point",
+            one_way=one_way,
+            days=days,
+            pickup_address=p_addr,
+            drop_address=d_addr,
+            pickup_lat=p_lat, pickup_lng=p_lng,
+            drop_lat=d_lat, drop_lng=d_lng,
+            distance_km=dist,
+            schedule_now=False,
+            scheduled_at=out.isoformat(),
+            return_at=(out + timedelta(days=days)).isoformat() if days else None,
+            transmission=(car or {}).get("transmission", "Automatic"),
+            car_id=(car or {}).get("id"),
+            base_fare=fare, discount=0, total_fare=fare,
+            payment_method="upi",
+            paid_amount=fare if completed else round(fare * 0.30, 2),
+            status=status,
+            driver_id=demo["id"],
+            start_code=gen_code(),
+            end_code=gen_code(),
+            created_at=(out - timedelta(days=2)).isoformat(),
+            started_at=out.isoformat() if status in ("in_progress", "completed") else None,
+            completed_at=(out + timedelta(days=days, hours=6)).isoformat() if completed else None,
+            rating=rating,
+            comment=comment,
+        )
+        await db.bookings.insert_one(booking.dict())
+    logger.info("Seeded %d partners and %d demo trips", len(SEED_PARTNERS), len(SEED_TRIPS))
+
+
 SEED_DRIVERS = [
     {
         "name": "Rajesh Kumar",
@@ -585,12 +1065,23 @@ SEED_DRIVERS = [
 
 @app.on_event("startup")
 async def seed_drivers():
-    count = await db.drivers.count_documents({})
-    if count == 0:
-        for d in SEED_DRIVERS:
-            drv = Driver(**d)
-            await db.drivers.insert_one(drv.dict())
-        logger.info("Seeded %d drivers", len(SEED_DRIVERS))
+    """Seed the partner roster.
+
+    The original five seed drivers become mock partner accounts so bookings that
+    already reference them still hydrate; the design's roster is added alongside.
+    Partners are the single source of truth — the legacy `drivers` collection is
+    no longer read.
+    """
+    for d in SEED_DRIVERS:
+        if not await db.partners.find_one({"phone": d["phone"]}):
+            await db.partners.insert_one(
+                Partner(
+                    phone=d["phone"], name=d["name"], rating=d["rating"], trips=d["trips"],
+                    photo=d["photo"], eta_minutes=d["eta_minutes"], is_new=False,
+                    licence="MH-0120190000000",
+                ).dict()
+            )
+    await seed_partner_demo_data()
 
 
 app.include_router(api_router)
