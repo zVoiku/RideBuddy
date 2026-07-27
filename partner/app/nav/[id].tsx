@@ -148,13 +148,15 @@ export default function NavMode() {
         </View>
 
         <View style={{ paddingHorizontal: theme.spacing.lg }}>
+          {/* The map always draws the whole route; `ph.place` is the current
+              leg's target and belongs to the ETA card below, not here. */}
           <TripMap
             pickupLat={trip.pickup_lat}
             pickupLng={trip.pickup_lng}
             dropLat={trip.drop_lat}
             dropLng={trip.drop_lng}
             pickupLabel={trip.pickup_address}
-            dropLabel={ph.place || undefined}
+            dropLabel={trip.round_trip ? `${to} (drop area)` : trip.drop_address || to}
             height={284}
           />
         </View>
