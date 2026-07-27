@@ -939,13 +939,16 @@ SEED_TRIPS = [
     (2, "Chandigarh", "Kasauli", True, 0, "in_progress", 0, 3200, 62, None, None),
     (0, "Mohali", "Kasauli", True, 0, "assigned", 1, 3200, 68, None, None),
     (1, "Chandigarh", "Shimla", False, 3, "assigned", 2, 6800, 113, None, None),
-    (3, "Mohali", "Kasauli", True, 0, "completed", -40, 3300, 68, 5, "Smooth, careful drive up."),
-    (4, "Chandigarh", "Shimla", False, 3, "completed", -54, 7200, 113, 4, None),
-    (5, "Panchkula", "Manali", False, 3, "completed", -74, 10800, 290, 5, "Knows the hill roads well."),
-    (6, "Chandigarh", "Kasauli", True, 0, "completed", -96, 3100, 62, 5, None),
-    (7, "Chandigarh", "Manali", False, 4, "completed", -137, 12400, 305, 5, "Excellent across all four days."),
-    (3, "Panchkula", "Shimla", True, 0, "completed", -160, 4400, 118, 4, None),
-    (4, "Chandigarh", "Dharamshala", True, 0, "completed", -188, 4600, 240, 5, None),
+    # Completed history is spread from a couple of days ago out to ~6 months so
+    # the Earnings screen has content in every period filter (week → annual).
+    (3, "Mohali", "Kasauli", True, 0, "completed", -2, 3300, 68, 5, "Smooth, careful drive up."),
+    (6, "Chandigarh", "Kasauli", True, 0, "completed", -4, 3100, 62, 5, None),
+    (4, "Chandigarh", "Shimla", False, 2, "completed", -9, 7200, 113, 4, None),
+    (5, "Panchkula", "Manali", False, 3, "completed", -17, 10800, 290, 5, "Knows the hill roads well."),
+    (7, "Chandigarh", "Manali", False, 4, "completed", -34, 12400, 305, 5, "Excellent across all four days."),
+    (3, "Panchkula", "Shimla", True, 0, "completed", -58, 4400, 118, 4, None),
+    (4, "Chandigarh", "Dharamshala", True, 0, "completed", -96, 4600, 240, 5, None),
+    (6, "Mohali", "Dharamshala", False, 2, "completed", -142, 9200, 245, 4, None),
 ]
 
 

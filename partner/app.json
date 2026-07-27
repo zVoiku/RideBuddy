@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "RideBuddy Partner",
+    "slug": "ridebuddy-partner",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "ridebuddypartner",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.ridebuddy.partner",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "RideBuddy Partner uses your location to show the route to your pickup and drop points."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#4A5C2F"
+      },
+      "package": "com.ridebuddy.partner",
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#4A5C2F",
+          "image": "./assets/images/splash-image.png",
+          "imageWidth": 200
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
