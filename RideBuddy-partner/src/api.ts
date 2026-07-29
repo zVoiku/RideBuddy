@@ -80,7 +80,7 @@ async function authHeaders() {
 }
 
 async function request(method: string, path: string, body?: any) {
-  if (!BASE) throw new Error('EXPO_PUBLIC_BACKEND_URL is not set — check partner/.env');
+  if (!BASE) throw new Error('EXPO_PUBLIC_BACKEND_URL is not set — check RideBuddy-partner/.env');
   const headers: any = { 'Content-Type': 'application/json', ...(await authHeaders()) };
   const res = await fetch(`${BASE}/api${path}`, {
     method,

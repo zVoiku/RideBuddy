@@ -5,6 +5,8 @@ web-build/
 .metro-cache/
 *.log
 .env
+# The repo root ignores `.env.*`; this template must still be committed.
+!.env.example
 ios/
 android/
 

@@ -2,8 +2,11 @@
 
 Cross-platform app for car owners to hire drivers to drive their own car.
 
-- **Frontend:** React Native + Expo (Expo Router, SDK 54) in `frontend/`
-- **Backend:** FastAPI + MongoDB (Motor) in `backend/`
+- **Frontend:** React Native + Expo (Expo Router, SDK 54) in `frontend/` — the
+  customer app (car owners booking a driver)
+- **Partner app:** React Native + Expo (SDK 54) in `RideBuddy-partner/` — the
+  driver-facing app ("Buddies"), talking to the same backend via `/api/driver/*`
+- **Backend:** FastAPI + MongoDB (Motor) in `backend/` — serves both apps
 - **Mocked for MVP:** OTP (real Twilio optional), payments, maps/driver matching
 - Active development branch: `claude/epic-johnson-fo6eu5`
 
@@ -15,12 +18,20 @@ backend/
   requirements.txt     Full Emergent env (NOT all installable on public PyPI)
   requirements-dev.txt Lean, runnable subset actually used by server.py
   tests/test_ridebuddy.py  Integration tests (hit a running server)
+  tests/test_driver.py     Integration tests for the /api/driver/* surface
 frontend/
   app/                 Expo Router screens (login, otp, onboarding, home, booking/*)
   src/                 api client, theme, maps helpers, LiveMap (native) + LiveMap.web
+RideBuddy-partner/     Driver app — self-contained Expo project, own package.json
+  app/                 login, otp, (tabs)/*, trip/[id], nav/[id]
+  src/                 api client, theme tokens, TripMap (native) + TripMap.web
+  README.md            Lifecycle, privacy rules, and on-device run instructions
 scripts/capture.js     Playwright script: screenshots the whole flow (web build)
 .claude/               SessionStart hook that installs deps + scaffolds .env
 ```
+
+The partner app is a separate npm project: run `npm install` inside
+`RideBuddy-partner/` (the SessionStart hook only installs `frontend/` + `backend/`).
 
 ## Environment variables
 
@@ -34,6 +45,10 @@ Not committed (git-ignored). The SessionStart hook scaffolds safe defaults.
 
 `frontend/.env`
 - `EXPO_PUBLIC_BACKEND_URL` — backend base URL (default `http://localhost:8001`)
+
+`RideBuddy-partner/.env` (template committed as `.env.example`)
+- `EXPO_PUBLIC_BACKEND_URL` — must be a LAN IP, not `localhost`, when running on a phone
+- `EXPO_PUBLIC_GOOGLE_MAPS_KEY` — optional; blank ⇒ the map renders blank on device
 
 ## Run locally
 
@@ -63,10 +78,12 @@ on web `LiveMap.web.tsx` shows a placeholder (by design).
 ## Tests & lint
 
 ```bash
-# Backend integration tests need a running server:
+# Backend integration tests need a running server (covers both apps' surfaces):
 EXPO_PUBLIC_BACKEND_URL=http://localhost:8001 backend/.venv/bin/pytest backend/tests -q
 # Frontend lint:
 cd frontend && npx expo lint
+# Partner app typecheck:
+cd RideBuddy-partner && npx tsc --noEmit
 ```
 
 ## Sandbox network notes
