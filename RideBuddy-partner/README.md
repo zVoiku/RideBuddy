@@ -90,3 +90,28 @@ a fresh partner account with no trips.
 - The in-memory dev DB resets on every backend restart — sign out and back in.
 - `web` runs for a quick look, but `react-native-maps` has no web build, so the
   map falls back to a schematic route card there.
+
+## Troubleshooting
+
+**`Unable to resolve module <name> from node_modules/…`** — the install is
+incomplete, not the manifest. `npm install` leaves this behind if it is
+interrupted. Reinstall from the lockfile:
+
+```bash
+rm -rf node_modules && npm ci
+npx expo start --dev-client --clear
+```
+
+Note that `node_modules` is untracked, so it does **not** follow a `git mv`: if
+this folder was renamed under you, the old path kept the modules and this one
+needs its own install.
+
+**`No script URL provided … unsanitizedScriptURLString = (null)`** — the app
+launched without a Metro server to pull JS from. Either Metro isn't running
+(`npx expo start --dev-client`), or it's on a host the phone can't reach. Check
+`EXPO_PUBLIC_BACKEND_URL` is a LAN IP rather than `localhost`, that both devices
+are on the same Wi-Fi, and that macOS firewall isn't blocking node.
+
+**Bundling is slow on a dev machine** — it shouldn't be; Metro uses all cores by
+default here. `METRO_MAX_WORKERS` caps it, and is only meant for memory-starved
+CI/sandbox environments.
