@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, Modal } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
 import { theme } from '../../src/theme';
 import { getDirections } from '../../src/maps';
-import RouteMap from '../../src/RouteMap';
+import LiveMap from '../../src/LiveMap';
 
 function fmt(d: Date) {
   return `${d.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })} at ${d.toLocaleString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
@@ -15,6 +15,7 @@ function fmt(d: Date) {
 export default function Summary() {
   const p = useLocalSearchParams<Record<string, string>>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [est, setEst] = useState<any>(null);
   const pickup = p.scheduled_at ? new Date(p.scheduled_at) : new Date();
   const ret = p.return_at ? new Date(p.return_at) : null;
@@ -22,6 +23,7 @@ export default function Summary() {
   const isHourly = p.trip_mode === 'hourly';
   const hours = parseFloat(p.duration_hours || '0');
   const [route, setRoute] = useState<any>(null);
+  const [showMap, setShowMap] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -41,6 +43,9 @@ export default function Summary() {
     })();
   }, []);
 
+  const pickupPt = p.pickup_lat && p.pickup_lng ? { lat: parseFloat(p.pickup_lat), lng: parseFloat(p.pickup_lng), label: p.pickup_address?.split(',')[0] } : undefined;
+  const dropPt = p.drop_lat && p.drop_lng ? { lat: parseFloat(p.drop_lat), lng: parseFloat(p.drop_lng), label: p.drop_address?.split(',')[0] } : undefined;
+
   return (
     <View style={styles.c}>
       <SafeAreaView style={{ flex: 1 }} edges={['top']}>
@@ -54,7 +59,15 @@ export default function Summary() {
         <ScrollView style={styles.sheet} contentContainerStyle={{ padding: 20, paddingBottom: 140 }}>
           {!isHourly && route?.polyline && (
             <View style={{ marginBottom: 16 }}>
-              <RouteMap polyline={route.polyline} height={200} />
+              <TouchableOpacity activeOpacity={0.9} onPress={() => setShowMap(true)} style={styles.mapPreview}>
+                <View pointerEvents="none">
+                  <LiveMap polyline={route.polyline} pickup={pickupPt} drop={dropPt} simulate={false} interactive={false} height={200} />
+                </View>
+                <View style={styles.expandBadge}>
+                  <Ionicons name="expand" size={15} color="#fff" />
+                  <Text style={styles.expandText}>Tap to expand</Text>
+                </View>
+              </TouchableOpacity>
               <View style={styles.routeStats}>
                 <View style={styles.routeStat}>
                   <Ionicons name="speedometer-outline" size={16} color={theme.colors.primary} />
@@ -137,6 +150,22 @@ export default function Summary() {
           </TouchableOpacity>
         </View>
       </SafeAreaView>
+
+      <Modal visible={showMap} animationType="slide" onRequestClose={() => setShowMap(false)}>
+        <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+          <LiveMap polyline={route?.polyline} pickup={pickupPt} drop={dropPt} simulate={false} interactive height="100%" />
+          <View style={[styles.mapBar, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
+            <TouchableOpacity testID="summary-map-close" onPress={() => setShowMap(false)} style={styles.mapClose}>
+              <Ionicons name="close" size={26} color={theme.colors.textPrimary} />
+            </TouchableOpacity>
+            {(pickupPt?.label || dropPt?.label) && (
+              <View style={styles.mapTitle} pointerEvents="none">
+                <Text style={styles.mapTitleText} numberOfLines={1}>{pickupPt?.label} → {dropPt?.label}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -178,4 +207,11 @@ const styles = StyleSheet.create({
   routeStats: { flexDirection: 'row', gap: 16, marginTop: 10, paddingHorizontal: 4 },
   routeStat: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: theme.radius.pill, backgroundColor: theme.colors.primarySoft },
   routeStatText: { color: theme.colors.primary, fontWeight: '800', fontSize: 13 },
+  mapPreview: { borderRadius: theme.radius.lg, overflow: 'hidden', position: 'relative' },
+  expandBadge: { position: 'absolute', right: 10, bottom: 10, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: theme.radius.pill },
+  expandText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  mapBar: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12 },
+  mapClose: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
+  mapTitle: { flex: 1, backgroundColor: 'rgba(255,255,255,0.95)', borderRadius: theme.radius.pill, paddingHorizontal: 16, paddingVertical: 10, marginRight: 4 },
+  mapTitleText: { fontWeight: '800', color: theme.colors.textPrimary, fontSize: 14 },
 });

@@ -1,31 +1,27 @@
 {
   "expo": {
-    "name": "RideBuddy",
-    "slug": "ridebuddy",
+    "name": "RideBuddy Partner",
+    "slug": "ridebuddy-partner",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "ridebuddy",
-    "userInterfaceStyle": "automatic",
+    "scheme": "ridebuddypartner",
+    "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "com.ridebuddy.app",
+      "supportsTablet": false,
+      "bundleIdentifier": "com.ridebuddy.partner",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Show your live trip route on the map"
+        "NSLocationWhenInUseUsageDescription": "RideBuddy Partner uses your location to show the route to your pickup and drop points."
       }
     },
     "android": {
-      "package": "com.ridebuddy.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000"
+        "backgroundColor": "#4A5C2F"
       },
-      "edgeToEdgeEnabled": true,
-      "permissions": [
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
-      ]
+      "package": "com.ridebuddy.partner",
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
     },
     "web": {
       "bundler": "metro",
@@ -37,13 +33,11 @@
       [
         "expo-splash-screen",
         {
+          "backgroundColor": "#4A5C2F",
           "image": "./assets/images/splash-image.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#000"
+          "imageWidth": 200
         }
-      ],
-      "expo-font"
+      ]
     ],
     "experiments": {
       "typedRoutes": true

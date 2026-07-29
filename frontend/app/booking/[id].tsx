@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Image, Alert, TextInput, Modal, Linking, Keyboard } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
@@ -16,6 +16,7 @@ function fmtDate(iso?: string) {
 export default function BookingDetail() {
   const { id, polyline } = useLocalSearchParams<{ id: string; polyline?: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [b, setB] = useState<any>(null);
   const [showMap, setShowMap] = useState(false);
   const [showCodeEntry, setShowCodeEntry] = useState(false);
@@ -243,7 +244,7 @@ export default function BookingDetail() {
       {/* Live Trip Map modal */}
       <Modal visible={showMap} animationType="slide" onRequestClose={() => setShowMap(false)}>
         <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-          <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+          <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}>
             <View style={styles.mapHead}>
               <View style={styles.mapChip}>
                 <View style={styles.pulse} />
@@ -267,7 +268,7 @@ export default function BookingDetail() {
                 <Text style={styles.mapBottomBackText}>Back to Booking Details</Text>
               </TouchableOpacity>
             </View>
-          </SafeAreaView>
+          </View>
         </View>
       </Modal>
     </View>

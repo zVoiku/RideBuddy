@@ -1,10 +1,32 @@
-// LiveMap (native) — uses react-native-maps with simulated car movement along the route polyline.
+// LiveMap (native) — interactive react-native-maps in a dev/production build.
+//
+// react-native-maps ships native code that is NOT bundled in Expo Go (SDK 54);
+// importing it there throws a TurboModuleRegistry error. So we only load it in a
+// dev/standalone build, and in Expo Go we fall back to a Google Static Maps image
+// (real map tiles + route + pins) — or the SVG RouteMap if no API key is set.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, Platform } from 'react-native';
-import MapView, { Marker, Polyline as MapPolyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import { View, StyleSheet, Image } from 'react-native';
+import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from './theme';
-import { decodePolyline } from './RouteMap';
+import RouteMap, { decodePolyline } from './RouteMap';
+import { staticMapUrl } from './maps';
+
+const isExpoGo =
+  Constants.appOwnership === 'expo' || Constants.executionEnvironment === 'storeClient';
+
+// Only require the native module outside Expo Go (where it would throw on load).
+let Maps: any = null;
+if (!isExpoGo) {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    Maps = require('react-native-maps');
+  } catch {
+    Maps = null;
+  }
+}
+
+const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY || '';
 
 interface Props {
   polyline?: string;
@@ -12,13 +34,14 @@ interface Props {
   drop?: { lat: number; lng: number; label?: string };
   driverLocation?: { lat: number; lng: number };
   simulate?: boolean; // animate the car along the polyline
+  interactive?: boolean; // enable pan/zoom + map controls (false = static preview)
   height?: number | string;
 }
 
-export default function LiveMap({ polyline, pickup, drop, driverLocation, simulate = true, height = '100%' as any }: Props) {
+export default function LiveMap({ polyline, pickup, drop, driverLocation, simulate = true, interactive = true, height = '100%' as any }: Props) {
   const route = useMemo(() => (polyline ? decodePolyline(polyline) : []), [polyline]);
   const [idx, setIdx] = useState(0);
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<any>(null);
 
   // Simulated car position
   const [car, setCar] = useState<{ latitude: number; longitude: number } | null>(
@@ -68,15 +91,50 @@ export default function LiveMap({ polyline, pickup, drop, driverLocation, simula
   // Convert polyline to MapView format
   const coords = useMemo(() => route.map(([la, ln]) => ({ latitude: la, longitude: ln })), [route]);
 
+  // Google Static Map URL for the Expo Go / no-native-maps fallback (fetched once;
+  // we intentionally omit the moving car here to avoid re-fetching every tick).
+  const staticUri = useMemo(
+    () => (GOOGLE_KEY ? staticMapUrl({ pickup, drop, polyline, width: 640, height: 480 }) : ''),
+    [pickup, drop, polyline]
+  );
+
+  // ----- Expo Go / no native maps available -----
+  if (!Maps?.default) {
+    const h = typeof height === 'number' ? height : 380;
+    if (staticUri) {
+      return (
+        <View style={[styles.wrap, { height: h }]}>
+          <Image source={{ uri: staticUri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        </View>
+      );
+    }
+    // No API key configured — show the lightweight SVG route instead of a blank map.
+    return (
+      <View style={[styles.wrap, { height: h }]}>
+        <RouteMap polyline={polyline || ''} height={h} />
+      </View>
+    );
+  }
+
+  // ----- Dev / standalone build: full interactive map -----
+  const { default: MapView, Marker, Polyline: MapPolyline, PROVIDER_GOOGLE } = Maps;
+
   return (
     <View style={[styles.wrap, { height: height as any }]}>
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFill}
-        provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
+        provider={PROVIDER_GOOGLE}
         initialRegion={region}
-        showsCompass={false}
-        toolbarEnabled={false}
+        showsCompass={interactive}
+        toolbarEnabled={interactive}
+        zoomControlEnabled={interactive}
+        zoomEnabled={interactive}
+        scrollEnabled={interactive}
+        rotateEnabled={interactive}
+        pitchEnabled={interactive}
+        showsUserLocation={interactive}
+        showsMyLocationButton={interactive}
       >
         {coords.length > 1 && (
           <MapPolyline
