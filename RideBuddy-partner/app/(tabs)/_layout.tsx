@@ -76,8 +76,19 @@ function ActiveTripBanner() {
   );
 }
 
+/** Unread count over the Messages icon. Caps at 9+ so it never widens the tab. */
+function UnreadBadge({ count }: { count: number }) {
+  if (!count) return null;
+  return (
+    <View style={styles.badge}>
+      <Text style={styles.badgeTxt}>{count > 9 ? '9+' : count}</Text>
+    </View>
+  );
+}
+
 function TabBar({ state, navigation }: any) {
   const insets = useSafeAreaInsets();
+  const { unread } = useRB();
   return (
     <View>
       <ActiveTripBanner />
@@ -100,7 +111,10 @@ function TabBar({ state, navigation }: any) {
               accessibilityLabel={meta.label}
               style={styles.tab}
             >
-              <Icon size={23} color={color} />
+              <View>
+                <Icon size={23} color={color} />
+                {route.name === 'messages' && <UnreadBadge count={unread} />}
+              </View>
               <Text
                 style={[
                   styles.tabLabel,
@@ -147,6 +161,21 @@ const styles = StyleSheet.create({
   },
   tab: { flex: 1, alignItems: 'center', gap: 3, paddingVertical: 6 },
   tabLabel: { fontSize: 10.5 },
+  badge: {
+    position: 'absolute',
+    top: -5,
+    left: 13,
+    minWidth: 17,
+    height: 17,
+    borderRadius: 9,
+    paddingHorizontal: 4,
+    backgroundColor: theme.colors.error,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: theme.colors.surfaceCard,
+  },
+  badgeTxt: { fontFamily: theme.fonts.bodySemi, fontSize: 9.5, color: '#fff' },
   dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: theme.colors.brandPrimary },
 
   banner: {

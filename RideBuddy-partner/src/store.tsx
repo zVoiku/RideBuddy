@@ -15,6 +15,7 @@ type Ctx = {
   error: string | null;
   toast: (ToastSpec & { key: number }) | null;
   activeTrip: Trip | null;
+  unread: number;
   showToast: (t: ToastSpec) => void;
   hideToast: () => void;
   refresh: () => Promise<void>;
@@ -35,6 +36,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<(ToastSpec & { key: number }) | null>(null);
+  const [unread, setUnread] = useState(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const showToast = useCallback((t: ToastSpec) => setToast({ ...t, key: Date.now() }), []);
@@ -45,6 +47,11 @@ export function Provider({ children }: { children: React.ReactNode }) {
       const list = await api.trips();
       setTrips(list);
       setError(null);
+      // Rides on the same poll as trips so the tab badge stays live without a
+      // second timer. A chat failure must not blank the trip list.
+      try {
+        setUnread((await api.chatUnread()).unread);
+      } catch {}
     } catch (e: any) {
       // A dead session (in-memory DB restart) must not spin forever.
       if (/Partner not found|Invalid token|Missing auth/i.test(e?.message || '')) {
@@ -101,6 +108,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
     await clearToken();
     setPartner(null);
     setTrips([]);
+    setUnread(0);
   }, []);
 
   const setAvailability = useCallback(async (v: boolean) => {
@@ -121,7 +129,7 @@ export function Provider({ children }: { children: React.ReactNode }) {
   return (
     <RBContext.Provider
       value={{
-        partner, trips, loading, ready, error, toast, activeTrip,
+        partner, trips, loading, ready, error, toast, activeTrip, unread,
         showToast, hideToast, refresh, signIn, signOut, setAvailability, tripById,
       }}
     >

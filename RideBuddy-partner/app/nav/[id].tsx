@@ -184,9 +184,7 @@ export default function NavMode() {
           <ActionBtn
             icon={<Ico.Message size={17} color={theme.colors.brandPrimary} />}
             label="Message"
-            onPress={() =>
-              showToast({ type: 'info', title: 'In-app chat', body: 'Arriving in the next release.' })
-            }
+            onPress={() => router.push(`/thread/${trip.id}`)}
           />
           <ActionBtn
             icon={<Ico.Clock size={17} color={theme.colors.brandPrimary} />}
@@ -233,9 +231,16 @@ export default function NavMode() {
           {LATE_TEMPLATES.map((t, i) => (
             <Pressable
               key={i}
-              onPress={() => {
+              onPress={async () => {
                 setSheet(null);
-                showToast({ type: 'info', title: 'In-app chat', body: 'Arriving in the next release.' });
+                // These templates are the whole point of the sheet: one tap
+                // should reach the customer, not open a compose screen.
+                try {
+                  await api.chatSend(trip.id, t);
+                  showToast({ type: 'success', title: 'Update sent.', body: t });
+                } catch (e: any) {
+                  showToast({ type: 'error', title: e?.message || 'Could not send that update.' });
+                }
               }}
               style={styles.sheetRow}
               accessibilityRole="button"
