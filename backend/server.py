@@ -173,6 +173,26 @@ class Booking(BaseModel):
     completed_at: Optional[str] = None
     rating: Optional[int] = None
     comment: Optional[str] = None
+    # Chat read marks — the newest message each side has seen. Kept on the
+    # booking because the booking *is* the thread; there is no separate thread
+    # record to create, and a trip without a partner has nobody to talk to.
+    chat_read_user_at: Optional[str] = None
+    chat_read_driver_at: Optional[str] = None
+
+
+class Message(BaseModel):
+    """One chat message on a booking.
+
+    `sender_role` is the authoritative author: the client app and partner app
+    both write here, and a message is rendered as "mine" purely by comparing
+    this against the reader's own role.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    booking_id: str
+    sender_role: Literal["user", "driver"]
+    sender_id: str
+    body: str
+    created_at: str = Field(default_factory=now_iso)
 
 
 # ---------------- Schemas ----------------
@@ -232,6 +252,10 @@ class CodeIn(BaseModel):
     code: str
 
 
+class MessageIn(BaseModel):
+    body: str
+
+
 # ---------------- Helpers ----------------
 def make_token(user_id: str, role: str = "user") -> str:
     """Issue a JWT carrying the caller's role.
@@ -279,6 +303,49 @@ async def get_current_driver(authorization: Optional[str] = Header(None)) -> dic
     if not partner.get("active", True):
         raise HTTPException(403, "This partner account has been deactivated")
     return partner
+
+
+async def get_chat_participant(authorization: Optional[str] = Header(None)) -> dict:
+    """Resolve a caller from *either* app.
+
+    Chat is the first resource both roles touch — every other endpoint belongs
+    to exactly one app, so `get_current_user` and `get_current_driver` reject
+    each other by design. This resolves whoever is calling and says which side
+    they are; proving they belong to a particular thread is `_thread_or_403`.
+    """
+    payload = _decode(authorization)
+    # Legacy tokens predate the role claim; absence means the client app.
+    if payload.get("role", "user") == "driver":
+        partner = await db.partners.find_one({"id": payload["sub"]}, {"_id": 0})
+        if not partner:
+            raise HTTPException(401, "Partner not found")
+        if not partner.get("active", True):
+            raise HTTPException(403, "This partner account has been deactivated")
+        return {"role": "driver", "id": partner["id"], "account": partner}
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(401, "User not found")
+    return {"role": "user", "id": user["id"], "account": user}
+
+
+# A thread stops accepting messages once the trip is over, but stays readable —
+# the design's Messages tab splits exactly this way (Active / Closed).
+CHAT_CLOSED_STATES = ("completed", "cancelled")
+
+
+async def _thread_or_403(booking_id: str, caller: dict) -> dict:
+    """Return the booking only if the caller is one of its two participants."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Trip not found")
+    owner_side = caller["role"] == "user"
+    mine = b["user_id"] if owner_side else b.get("driver_id")
+    if not mine or mine != caller["id"]:
+        raise HTTPException(403, "Not your trip")
+    # An unassigned trip has no counterparty, so there is no thread to open.
+    if not b.get("driver_id"):
+        raise HTTPException(409, "No partner assigned to this trip yet")
+    return b
 
 
 def compute_fare(trip_type: str, one_way: bool, distance_km: float, duration_hours: float, is_new_user: bool, days: int = 0):
@@ -877,6 +944,129 @@ async def driver_earnings(partner=Depends(get_current_driver)):
         "commission_rate": COMMISSION_RATE,
         "trips": trips,
     }
+
+
+# ---------------- Chat ----------------
+# Serves both apps off one set of routes. What differs between them is only who
+# the counterparty is: the owner sees the partner in full (name, photo, phone —
+# they are handing over their car), while the partner sees the masked name and
+# no contact details at all. Chat is therefore the partner's *only* channel to
+# the owner, until owner-initiated number sharing lands.
+
+
+async def _counterparty(b: dict, caller_role: str) -> dict:
+    if caller_role == "user":
+        drv = await db.partners.find_one({"id": b["driver_id"]}, {"_id": 0}) or {}
+        return {
+            "name": drv.get("name") or "Your partner",
+            "photo": drv.get("photo"),
+            "phone": drv.get("phone"),
+            "rating": drv.get("rating"),
+        }
+    owner = await db.users.find_one({"id": b["user_id"]}, {"_id": 0}) or {}
+    # Deliberately no phone/email: see mask_name().
+    return {"name": mask_name(owner.get("name")), "photo": None, "phone": None, "rating": None}
+
+
+async def _unread_count(booking_id: str, b: dict, caller_role: str) -> int:
+    """Messages from the other side newer than this side's read mark."""
+    mark = b.get("chat_read_user_at" if caller_role == "user" else "chat_read_driver_at")
+    q: dict = {"booking_id": booking_id, "sender_role": {"$ne": caller_role}}
+    if mark:
+        q["created_at"] = {"$gt": mark}
+    return await db.messages.count_documents(q)
+
+
+async def _thread_summary(b: dict, caller_role: str) -> dict:
+    last = await db.messages.find(
+        {"booking_id": b["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(1)
+    return {
+        "booking_id": b["id"],
+        "status": b["status"],
+        "closed": b["status"] in CHAT_CLOSED_STATES,
+        "with": await _counterparty(b, caller_role),
+        "pickup_address": b.get("pickup_address"),
+        "drop_address": b.get("drop_address"),
+        "scheduled_at": b.get("scheduled_at"),
+        "last_message": last[0] if last else None,
+        "unread": await _unread_count(b["id"], b, caller_role),
+    }
+
+
+def _threads_query(caller: dict) -> dict:
+    """Bookings the caller is a participant in, and which have a counterparty.
+
+    Written as one dict rather than `{key: id, "driver_id": {"$ne": None}}`:
+    for a driver that key *is* `driver_id`, so the second entry would silently
+    replace the first and match every partner's trips instead of their own.
+    """
+    if caller["role"] == "user":
+        return {"user_id": caller["id"], "driver_id": {"$ne": None}}
+    # A concrete driver_id is non-None by definition.
+    return {"driver_id": caller["id"]}
+
+
+@api_router.get("/chat/threads")
+async def chat_threads(caller=Depends(get_chat_participant)):
+    """Every trip of the caller's that has a partner on it, newest first."""
+    items = await db.bookings.find(
+        _threads_query(caller), {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    return [await _thread_summary(b, caller["role"]) for b in items]
+
+
+@api_router.get("/chat/{booking_id}/messages")
+async def chat_messages(booking_id: str, caller=Depends(get_chat_participant)):
+    b = await _thread_or_403(booking_id, caller)
+    msgs = await db.messages.find(
+        {"booking_id": booking_id}, {"_id": 0}
+    ).sort("created_at", 1).to_list(1000)
+    return {
+        "thread": await _thread_summary(b, caller["role"]),
+        "me": caller["role"],
+        "messages": msgs,
+    }
+
+
+@api_router.post("/chat/{booking_id}/messages")
+async def chat_send(booking_id: str, body: MessageIn, caller=Depends(get_chat_participant)):
+    b = await _thread_or_403(booking_id, caller)
+    if b["status"] in CHAT_CLOSED_STATES:
+        raise HTTPException(409, "This trip is over — the conversation is closed")
+    text = (body.body or "").strip()
+    if not text:
+        raise HTTPException(400, "Message is empty")
+    if len(text) > 2000:
+        raise HTTPException(400, "Message is too long")
+    msg = Message(
+        booking_id=booking_id, sender_role=caller["role"],
+        sender_id=caller["id"], body=text,
+    ).model_dump()
+    await db.messages.insert_one(dict(msg))
+    # Sending is also reading: it clears your own unread count.
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {"$set": {f"chat_read_{caller['role']}_at": msg["created_at"]}},
+    )
+    return msg
+
+
+@api_router.post("/chat/{booking_id}/read")
+async def chat_mark_read(booking_id: str, caller=Depends(get_chat_participant)):
+    await _thread_or_403(booking_id, caller)
+    await db.bookings.update_one(
+        {"id": booking_id}, {"$set": {f"chat_read_{caller['role']}_at": now_iso()}}
+    )
+    return {"ok": True}
+
+
+@api_router.get("/chat/unread")
+async def chat_unread_total(caller=Depends(get_chat_participant)):
+    """One number for the Messages tab badge."""
+    items = await db.bookings.find(_threads_query(caller), {"_id": 0}).to_list(200)
+    total = sum([await _unread_count(b["id"], b, caller["role"]) for b in items])
+    return {"unread": total}
 
 
 # ---------------- Seeding ----------------

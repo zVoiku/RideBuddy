@@ -138,16 +138,23 @@ class TestDriverTrips:
         assert r.status_code == 404
 
 
+@pytest.fixture(scope="module")
+def assigned_trip(session, driver):
+    """One assigned trip, driven through the whole lifecycle by the tests below.
+
+    Module-scoped rather than class-scoped: pytest deprecated class-scoped
+    fixtures declared as instance methods, and the state here has to survive
+    across the ordered lifecycle tests anyway.
+    """
+    trips = session.get(f"{API}/driver/trips", headers=driver["headers"]).json()
+    candidates = [t for t in trips if t["status"] == "assigned"]
+    if not candidates:
+        pytest.skip("no assigned trip available to drive through the lifecycle")
+    return candidates[0]
+
+
 # ---------- Lifecycle ----------
 class TestTripLifecycle:
-    @pytest.fixture(scope="class")
-    def assigned_trip(self, session, driver):
-        trips = session.get(f"{API}/driver/trips", headers=driver["headers"]).json()
-        candidates = [t for t in trips if t["status"] == "assigned"]
-        if not candidates:
-            pytest.skip("no assigned trip available to drive through the lifecycle")
-        return candidates[0]
-
     def test_left_for_pickup_sets_en_route(self, session, driver, assigned_trip):
         r = session.post(f"{API}/driver/trips/{assigned_trip['id']}/left-for-pickup", headers=driver["headers"])
         assert r.status_code == 200
