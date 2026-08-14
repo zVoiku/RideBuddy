@@ -7,15 +7,50 @@ async function authHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+const TIMEOUT_MS = 12000;
+
 async function request(method: string, path: string, body?: any) {
+  if (!BASE) throw new Error('EXPO_PUBLIC_BACKEND_URL is not set — check frontend/.env');
   const headers: any = { 'Content-Type': 'application/json', ...(await authHeaders()) };
-  const res = await fetch(`${BASE}/api${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    });
+  } catch (e: any) {
+    // React Native reports every transport failure as the bare string "Network
+    // request failed" — no URL, no cause. On a device that is almost always a
+    // backend URL the phone cannot route to.
+    if (e?.name === 'AbortError') {
+      throw new Error(`No response from ${BASE} after ${TIMEOUT_MS / 1000}s. On a device, check it is the Mac's LAN IP (not localhost) and that the backend runs with --host 0.0.0.0.`);
+    }
+    throw new Error(`Cannot reach ${BASE} — ${e?.message || 'network request failed'}`);
+  } finally {
+    clearTimeout(timer);
+  }
+
   const txt = await res.text();
-  const data = txt ? JSON.parse(txt) : null;
+  let data: any = null;
+  if (txt) {
+    try {
+      data = JSON.parse(txt);
+    } catch {
+      // Something answered, but it isn't this API — almost always
+      // EXPO_PUBLIC_BACKEND_URL pointing at the Metro dev server rather than
+      // the backend (8001).
+      const snippet = txt.slice(0, 60).replace(/\s+/g, ' ').trim();
+      throw new Error(
+        `${BASE} answered ${res.status} with "${snippet}", which is not the RideBuddy API. Check EXPO_PUBLIC_BACKEND_URL — the backend runs on port 8001.`,
+      );
+    }
+  }
   if (!res.ok) throw new Error(data?.detail || `Request failed ${res.status}`);
   return data;
 }

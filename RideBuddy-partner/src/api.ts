@@ -147,7 +147,21 @@ async function request(method: string, path: string, body?: any) {
   }
 
   const txt = await res.text();
-  const data = txt ? JSON.parse(txt) : null;
+  let data: any = null;
+  if (txt) {
+    try {
+      data = JSON.parse(txt);
+    } catch {
+      // Something answered, but it isn't this API — almost always
+      // EXPO_PUBLIC_BACKEND_URL pointing at the Metro dev server (8081) rather
+      // than the backend (8001). Raw "JSON Parse error: Unexpected character"
+      // gives nothing to act on, so name the address and quote the reply.
+      const snippet = txt.slice(0, 60).replace(/\s+/g, ' ').trim();
+      throw new Error(
+        `${BASE} answered ${res.status} with "${snippet}", which is not the RideBuddy API. Check EXPO_PUBLIC_BACKEND_URL — the backend runs on port 8001.`,
+      );
+    }
+  }
   if (!res.ok) throw new Error(data?.detail || `Request failed ${res.status}`);
   return data;
 }
