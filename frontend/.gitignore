@@ -32,6 +32,12 @@ yarn-error.*
 ios/
 android/
 
+# Metro's on-disk bundler cache. NOTE: ~23k of these are already tracked from
+# earlier auto-commits; this only stops new ones. Untracking the rest needs
+# `git rm -r --cached frontend/.metro-cache`, left as a deliberate decision
+# because it is a very large, unrelated diff.
+.metro-cache/
+
 # macOS
 .DS_Store
 *.pem

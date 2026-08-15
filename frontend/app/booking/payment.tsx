@@ -11,7 +11,11 @@ export default function Payment() {
   const p = useLocalSearchParams<Record<string, string>>();
   const router = useRouter();
   const total = parseFloat(p.total || '0');
-  const adv = parseFloat(p.advance30 || '0');
+  // Rate Table v1.7 §1: 20% of the estimate at booking, balance reconciled at
+  // trip end. The percentage comes from the server so the ramp is not
+  // duplicated in the client.
+  const adv = parseFloat(p.deposit || p.advance30 || '0');
+  const depositPct = parseInt(p.depositPct || '20');
   const [partial, setPartial] = useState(false);
   const [busy, setBusy] = useState(false);
   const [order, setOrder] = useState<any>(null);
@@ -37,6 +41,9 @@ export default function Payment() {
       scheduled_at: p.scheduled_at,
       return_at: p.return_at || undefined,
       intersect_at_owner: p.intersect_at_owner === '1',
+      // Must match what the estimate was priced with, or the booking re-adds a
+      // stay allowance the customer was quoted without.
+      customer_stay: p.customer_stay === '1',
       transmission: 'Automatic',
       payment_method: 'upi',
       pay_partial: partial,
@@ -91,8 +98,8 @@ export default function Payment() {
 
           <TouchableOpacity testID="pay-partial" style={[styles.option, partial && styles.optionActive]} onPress={() => setPartial(true)}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.optTitle}>Partial Payment (30%)</Text>
-              <Text style={styles.optSub}>Pay 30% now, rest before trip starts</Text>
+              <Text style={styles.optTitle}>Pay deposit ({depositPct}%)</Text>
+              <Text style={styles.optSub}>Balance is charged when your trip ends</Text>
               <Text style={styles.optAmt}>₹{adv.toLocaleString('en-IN')}</Text>
             </View>
             <View style={[styles.radio, partial && styles.radioActive]}>{partial && <View style={styles.radioDot} />}</View>
@@ -108,9 +115,9 @@ export default function Payment() {
           </View>
 
           <View style={styles.summary}>
-            <RowS label="Total Trip Cost" value={`₹${total.toLocaleString('en-IN')}`} />
-            <RowS label={`Paying Now ${partial ? '(30%)' : '(100%)'}`} value={`₹${payable.toLocaleString('en-IN')}`} highlight />
-            <RowS label="Remaining Amount" value={`₹${remaining.toLocaleString('en-IN')}`} muted />
+            <RowS label="Estimated fare" value={`₹${total.toLocaleString('en-IN')}`} />
+            <RowS label={`Paying now ${partial ? `(${depositPct}%)` : '(100%)'}`} value={`₹${payable.toLocaleString('en-IN')}`} highlight />
+            <RowS label="Balance at trip end" value={`₹${remaining.toLocaleString('en-IN')}`} muted />
           </View>
         </ScrollView>
 
