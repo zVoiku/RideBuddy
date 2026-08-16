@@ -2,13 +2,16 @@
 // app's cadence) and the toast host.
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
-import { api, clearToken, getToken, Partner, Trip } from './api';
+import { api, clearToken, getToken, OpsUser, Partner, Trip } from './api';
 import { ACTIVE_STATES } from './theme';
 
 type ToastSpec = { type?: 'success' | 'info' | 'error'; title: string; body?: string };
 
 type Ctx = {
   partner: Partner | null;
+  // Set instead of `partner` when the signed-in number is an Ops number. The
+  // two are mutually exclusive: one session is one role.
+  ops: OpsUser | null;
   trips: Trip[];
   loading: boolean;
   ready: boolean;
@@ -20,6 +23,7 @@ type Ctx = {
   hideToast: () => void;
   refresh: () => Promise<void>;
   signIn: (partner: Partner) => void;
+  signInOps: (ops: OpsUser) => void;
   signOut: () => Promise<void>;
   setAvailability: (v: boolean) => Promise<void>;
   tripById: (id?: string) => Trip | undefined;
@@ -31,6 +35,7 @@ const POLL_MS = 3000;
 
 export function Provider({ children }: { children: React.ReactNode }) {
   const [partner, setPartner] = useState<Partner | null>(null);
+  const [ops, setOps] = useState<OpsUser | null>(null);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
@@ -67,12 +72,19 @@ export function Provider({ children }: { children: React.ReactNode }) {
     (async () => {
       const token = await getToken();
       if (token) {
+        // The token carries the role, but the client cannot read it, so ask.
+        // Ops is tried first: a partner token 403s /ops/me cheaply, whereas an
+        // Ops token would 403 /driver/me and look like a dead session.
         try {
-          const me = await api.me();
-          setPartner(me);
-          await refresh();
+          setOps(await api.opsMe());
         } catch {
-          await clearToken();
+          try {
+            const me = await api.me();
+            setPartner(me);
+            await refresh();
+          } catch {
+            await clearToken();
+          }
         }
       }
       setReady(true);
@@ -104,9 +116,12 @@ export function Provider({ children }: { children: React.ReactNode }) {
     refresh().finally(() => setLoading(false));
   }, [refresh]);
 
+  const signInOps = useCallback((o: OpsUser) => setOps(o), []);
+
   const signOut = useCallback(async () => {
     await clearToken();
     setPartner(null);
+    setOps(null);
     setTrips([]);
     setUnread(0);
   }, []);
@@ -129,8 +144,8 @@ export function Provider({ children }: { children: React.ReactNode }) {
   return (
     <RBContext.Provider
       value={{
-        partner, trips, loading, ready, error, toast, activeTrip, unread,
-        showToast, hideToast, refresh, signIn, signOut, setAvailability, tripById,
+        partner, ops, trips, loading, ready, error, toast, activeTrip, unread,
+        showToast, hideToast, refresh, signIn, signInOps, signOut, setAvailability, tripById,
       }}
     >
       {children}

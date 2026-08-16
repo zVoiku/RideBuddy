@@ -110,6 +110,82 @@ export type ChatConversation = {
   messages: ChatMessage[];
 };
 
+// ── Ops console ─────────────────────────────────────────────────────────────
+export type OpsUser = { phone: string; name: string | null };
+
+export type OpsMetrics = {
+  total: number; completed: number; in_progress: number; confirmed: number;
+  pending: number; cancelled: number;
+  completion_rate: number; cancellation_rate: number; avg_fare: number;
+  top_cancel_reason: string;
+  active_buddies: number; on_duty: number; available: number;
+  utilisation_pct: number; avg_rating: number; utilisation: number;
+  applied: number; in_verification: number; verified_ready: number;
+  in_pipeline: number; onboarding: number; dormant: number;
+  avg_days_in_pipeline: number; punjab: number; himachal: number;
+  earnings_per_buddy: number;
+  payment_rate: number; payments_failed: number;
+  deposits_collected: number; balance_collected: number;
+  refunds_pending: number; refunds_pending_value: number;
+  revenue: number; commission_pct: number;
+};
+
+// Ops sees customers in full — this is the founder's console, not a partner's.
+export type OpsBooking = {
+  id: string;
+  status: TripStatus;
+  label: string;               // the design's vocabulary: Received, Confirmed, …
+  customer: { id: string | null; name: string | null; phone: string | null; email: string | null };
+  buddy: { id: string; name: string | null; phone: string | null; rating: number | null } | null;
+  pickup_address: string | null;
+  drop_address: string | null;
+  one_way: boolean;
+  days: number;
+  distance_km: number;
+  scheduled_at: string | null;
+  return_at: string | null;
+  created_at: string;
+  fare: number;
+  deposit: number;
+  balance: number;
+  paid_amount: number;
+  payment_failed: boolean;
+  refund_done: boolean;
+  cancel_reason: string | null;
+  rating: number | null;
+  transmission: string | null;
+  // detail only
+  breakdown?: Record<string, any>;
+  payout?: number;
+  commission?: { commission: number; gst: number; net_revenue: number; commission_pct: number };
+  car?: string | null;
+  plate?: string | null;
+  comment?: string | null;
+  customer_stay?: boolean;
+  timeline?: Record<string, string | null>;
+};
+
+export type OpsBuddy = {
+  id: string;
+  name: string | null;
+  phone: string;
+  licence: string | null;
+  photo: string | null;
+  rating: number;
+  trips: number;
+  active: boolean;
+  available: boolean;
+  onboarding: boolean;
+  stage: 'applied' | 'verification' | 'verified' | null;
+  joined: string | null;
+  applied_at: string | null;
+  region: 'Punjab' | 'Himachal';
+  trips_in_system: number;
+  completed: number;
+  earnings: number;
+  on_duty: boolean;
+};
+
 async function authHeaders() {
   const token = await AsyncStorage.getItem(TOKEN_KEY);
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -168,7 +244,11 @@ async function request(method: string, path: string, body?: any) {
 
 export const api = {
   sendOtp: (phone: string) => request('POST', '/driver/auth/send-otp', { phone }),
-  verifyOtp: (phone: string, otp: string): Promise<{ token: string; partner: Partner }> =>
+  // One login endpoint for both apps: `role` says which shell to open, and only
+  // the matching payload is present.
+  verifyOtp: (phone: string, otp: string): Promise<{
+    role: 'ops' | 'driver'; token: string; partner: Partner; ops?: OpsUser;
+  }> =>
     request('POST', '/driver/auth/verify-otp', { phone, otp }),
 
   me: (): Promise<Partner> => request('GET', '/driver/me'),
@@ -198,6 +278,27 @@ export const api = {
     request('POST', `/chat/${id}/messages`, { body }),
   chatRead: (id: string) => request('POST', `/chat/${id}/read`),
   chatUnread: (): Promise<{ unread: number }> => request('GET', '/chat/unread'),
+
+  // Ops console. Same login endpoint as the partner app — the backend decides
+  // the role from the number, and these routes 403 for a driver token.
+  opsMe: (): Promise<OpsUser> => request('GET', '/ops/me'),
+  opsMetrics: (): Promise<OpsMetrics> => request('GET', '/ops/metrics'),
+  opsBookings: (scope = 'open', sort = 'status'): Promise<OpsBooking[]> =>
+    request('GET', `/ops/bookings?scope=${scope}&sort=${sort}`),
+  opsBooking: (id: string): Promise<OpsBooking> => request('GET', `/ops/bookings/${id}`),
+  opsAssign: (id: string, buddyId: string): Promise<OpsBooking> =>
+    request('POST', `/ops/bookings/${id}/assign`, { buddy_id: buddyId }),
+  opsRefund: (id: string) => request('POST', `/ops/bookings/${id}/refund`),
+  opsBuddies: (): Promise<OpsBuddy[]> => request('GET', '/ops/buddies'),
+  opsBuddy: (id: string): Promise<OpsBuddy & { recent: OpsBooking[] }> =>
+    request('GET', `/ops/buddies/${id}`),
+  opsAddBuddy: (data: { phone: string; name?: string; licence?: string; email?: string }) =>
+    request('POST', '/ops/buddies', data),
+  opsPatchBuddy: (id: string, data: { active?: boolean; stage?: string }) =>
+    request('PATCH', `/ops/buddies/${id}`, data),
+  // One-way: nothing in the partner app comes back here.
+  opsSwitchToPartner: (): Promise<{ token: string; partner: Partner }> =>
+    request('POST', '/ops/switch-to-partner'),
 };
 
 export const saveToken = (t: string) => AsyncStorage.setItem(TOKEN_KEY, t);
