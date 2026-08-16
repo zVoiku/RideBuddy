@@ -1,4 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+// Imperative router: a dead session has to be recoverable from inside the API
+// layer, which has no component context to redirect from.
+import { router } from 'expo-router';
 
 const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
 
@@ -34,6 +37,16 @@ async function request(method: string, path: string, body?: any) {
     throw new Error(`Cannot reach ${BASE} — ${e?.message || 'network request failed'}`);
   } finally {
     clearTimeout(timer);
+  }
+
+  // A 401 means the stored token no longer resolves to a user — most often
+  // because the in-memory dev DB was wiped by a backend restart. Without this
+  // the app sits on a dead session showing "User not found" on every screen,
+  // with no route back to login except reinstalling.
+  if (res.status === 401) {
+    await clearToken();
+    router.replace('/login');
+    throw new Error('Your session has expired. Please sign in again.');
   }
 
   const txt = await res.text();
