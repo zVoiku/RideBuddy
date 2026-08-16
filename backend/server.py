@@ -6,6 +6,7 @@ import os
 import logging
 import asyncio
 import math
+from collections import Counter
 import random
 import string
 import jwt
@@ -129,6 +130,8 @@ class Partner(BaseModel):
     stage: Optional[Literal["applied", "verification", "verified"]] = None
     is_new: bool = True
     joined: str = Field(default_factory=lambda: datetime.now(timezone.utc).date().isoformat())
+    # When they entered the acquisition pipeline — drives "avg days in pipeline".
+    applied_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -178,6 +181,13 @@ class Booking(BaseModel):
     completed_at: Optional[str] = None
     rating: Optional[int] = None
     comment: Optional[str] = None
+    # Ops-tracked state. A cancelled booking holds the customer's deposit until
+    # Ops resolves it, so the refund queue is driven off refund_done rather than
+    # inferred from status alone.
+    cancel_reason: Optional[str] = None
+    refund_done: bool = False
+    refunded_at: Optional[str] = None
+    payment_failed: bool = False
     # Chat read marks — the newest message each side has seen. Kept on the
     # booking because the booking *is* the thread; there is no separate thread
     # record to create, and a trip without a partner has nobody to talk to.
@@ -269,6 +279,24 @@ class MessageIn(BaseModel):
     body: str
 
 
+class AssignIn(BaseModel):
+    buddy_id: str
+
+
+class AddBuddyIn(BaseModel):
+    phone: str
+    name: Optional[str] = None
+    licence: Optional[str] = None
+    email: Optional[str] = None
+
+
+class OpsBuddyPatch(BaseModel):
+    active: Optional[bool] = None
+    stage: Optional[Literal["applied", "verification", "verified"]] = None
+    name: Optional[str] = None
+    licence: Optional[str] = None
+
+
 # ---------------- Helpers ----------------
 def make_token(user_id: str, role: str = "user") -> str:
     """Issue a JWT carrying the caller's role.
@@ -304,6 +332,33 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     if not user:
         raise HTTPException(401, "User not found")
     return user
+
+
+# ---------------- Ops ----------------
+# Which numbers reach the Ops console. Role is decided by the number alone, so
+# one login screen serves both apps: a whitelisted number lands in Ops, anything
+# else is a Buddy. Ops is a role, not a stored account — there is no ops
+# collection because nothing is owned by an ops user.
+OPS_WHITELIST = {
+    "+919999999999": {"name": "Voiku"},
+}
+
+
+def ops_entry(phone: str) -> Optional[dict]:
+    return OPS_WHITELIST.get((phone or "").strip())
+
+
+async def get_current_ops(authorization: Optional[str] = Header(None)) -> dict:
+    payload = _decode(authorization)
+    if payload.get("role") != "ops":
+        raise HTTPException(403, "This endpoint is for the Ops console")
+    phone = payload.get("sub")
+    entry = ops_entry(phone)
+    if not entry:
+        # Revoking a number takes effect immediately, without waiting for the
+        # 30-day token to expire.
+        raise HTTPException(403, "This number no longer has Ops access")
+    return {"phone": phone, "name": entry.get("name")}
 
 
 async def get_current_driver(authorization: Optional[str] = Header(None)) -> dict:
@@ -946,11 +1001,22 @@ async def driver_verify_otp(body: VerifyOtpIn):
         await db.otps.update_one({"phone": phone}, {"$set": {"verified": True}})
     # else: mock mode — any 6-digit code passes.
 
+    # The number decides the app. Checked before the partner lookup so an Ops
+    # number that has also been used in partner mode still lands in Ops on a
+    # fresh login — returning to Ops is exactly "sign out, sign in again".
+    entry = ops_entry(phone)
+    if entry:
+        return {
+            "role": "ops",
+            "token": make_token(phone, "ops"),
+            "ops": {"phone": phone, "name": entry.get("name")},
+        }
+
     existing = await db.partners.find_one({"phone": phone}, {"_id": 0})
     if existing:
         if not existing.get("active", True):
             raise HTTPException(403, "This partner account has been deactivated")
-        return {"token": make_token(existing["id"], "driver"), "partner": existing}
+        return {"role": "driver", "token": make_token(existing["id"], "driver"), "partner": existing}
 
     # TODO(onboarding): the design gates login on an Ops-managed whitelist and
     # shows "This number isn't authorised. Contact the admin." Self-signup is
@@ -958,7 +1024,7 @@ async def driver_verify_otp(body: VerifyOtpIn):
     # whitelist lookup + document verification when Ops onboarding ships.
     partner = Partner(phone=phone)
     await db.partners.insert_one(partner.dict())
-    return {"token": make_token(partner.id, "driver"), "partner": partner.dict()}
+    return {"role": "driver", "token": make_token(partner.id, "driver"), "partner": partner.dict()}
 
 
 @api_router.get("/driver/me")
@@ -1262,6 +1328,328 @@ async def chat_unread_total(caller=Depends(get_chat_participant)):
     return {"unread": total}
 
 
+# ---------------- Ops console ----------------
+# Ops sees everything: real customer names and numbers, exact addresses, fares
+# and payouts. The masking in _driver_view() exists to keep customer contact
+# details away from *partners*, not from the operator handling their disputes.
+
+# The design's vocabulary differs from the lifecycle the apps drive. Mapped in
+# one place so the console reads the way the spec does without renaming states
+# the client and partner apps already depend on.
+OPS_STATUS_LABEL = {
+    "pending": "Received",
+    "searching": "Received",
+    "assigned": "Confirmed",
+    "en_route": "Left for Pickup",
+    "arrived": "Arrived at Pickup",
+    "in_progress": "In Progress",
+    "completed": "Complete",
+}
+OPS_OPEN_STATES = ("pending", "searching", "assigned", "en_route", "arrived", "in_progress")
+OPS_ENGAGED_STATES = ("assigned", "en_route", "arrived", "in_progress")
+
+
+def ops_label(b: dict) -> str:
+    """"Closed" is a cancelled booking whose refund has been settled."""
+    if b.get("status") == "cancelled":
+        return "Closed" if b.get("refund_done") else "Cancelled"
+    return OPS_STATUS_LABEL.get(b.get("status"), b.get("status", ""))
+
+
+def deposit_of(b: dict) -> float:
+    return round(float(b.get("total_fare") or 0) * DEPOSIT_PCT / 100)
+
+
+def balance_of(b: dict) -> float:
+    return max(0.0, round(float(b.get("total_fare") or 0) - float(b.get("paid_amount") or 0)))
+
+
+def region_of(licence: Optional[str]) -> str:
+    return "Himachal" if (licence or "").startswith("HP") else "Punjab"
+
+
+async def _ops_booking_view(b: dict, *, detail: bool = False) -> dict:
+    owner = await db.users.find_one({"id": b["user_id"]}, {"_id": 0}) or {}
+    partner = await db.partners.find_one({"id": b["driver_id"]}, {"_id": 0}) if b.get("driver_id") else None
+    car = await db.cars.find_one({"id": b["car_id"]}, {"_id": 0}) if b.get("car_id") else None
+    view = {
+        "id": b["id"],
+        "status": b["status"],
+        "label": ops_label(b),
+        "customer": {"id": owner.get("id"), "name": owner.get("name"), "phone": owner.get("phone"),
+                     "email": owner.get("email")},
+        "buddy": {"id": partner["id"], "name": partner.get("name"), "phone": partner.get("phone"),
+                  "rating": partner.get("rating")} if partner else None,
+        "pickup_address": b.get("pickup_address"),
+        "drop_address": b.get("drop_address"),
+        "one_way": b.get("one_way", True),
+        "days": b.get("days", 0),
+        "distance_km": b.get("distance_km", 0),
+        "scheduled_at": b.get("scheduled_at"),
+        "return_at": b.get("return_at"),
+        "created_at": b.get("created_at"),
+        "fare": float(b.get("total_fare") or 0),
+        "deposit": deposit_of(b),
+        "balance": balance_of(b),
+        "paid_amount": float(b.get("paid_amount") or 0),
+        "payment_failed": bool(b.get("payment_failed")),
+        "refund_done": bool(b.get("refund_done")),
+        "cancel_reason": b.get("cancel_reason"),
+        "rating": b.get("rating"),
+        "transmission": b.get("transmission"),
+    }
+    if detail:
+        view.update({
+            "breakdown": b.get("fare") or {},
+            "payout": partner_payout(b) if b.get("driver_id") else 0,
+            "commission": commission_lines(b),
+            "car": f"{car['make']} {car['model']}" if car else None,
+            "plate": (car or {}).get("plate"),
+            "comment": b.get("comment"),
+            "start_code": b.get("start_code"),
+            "customer_stay": b.get("customer_stay"),
+            "timeline": {k: b.get(k) for k in
+                         ("created_at", "left_at", "arrived_at", "started_at", "completed_at")},
+        })
+    return view
+
+
+def _ops_buddy_view(p: dict, bookings: List[dict]) -> dict:
+    mine = [b for b in bookings if b.get("driver_id") == p["id"]]
+    done = [b for b in mine if b["status"] == "completed"]
+    return {
+        "id": p["id"],
+        "name": p.get("name"),
+        "phone": p.get("phone"),
+        "licence": p.get("licence"),
+        "photo": p.get("photo"),
+        "rating": p.get("rating", 0),
+        "trips": p.get("trips", 0),
+        "active": p.get("active", True),
+        "available": p.get("available", True),
+        "onboarding": p.get("onboarding", False),
+        "stage": p.get("stage"),
+        "joined": p.get("joined"),
+        "applied_at": p.get("applied_at"),
+        "region": region_of(p.get("licence")),
+        "trips_in_system": len(mine),
+        "completed": len(done),
+        "earnings": round(sum(partner_payout(b) for b in done)),
+        "on_duty": any(b["status"] in OPS_ENGAGED_STATES for b in mine),
+    }
+
+
+@api_router.get("/ops/me")
+async def ops_me(ops=Depends(get_current_ops)):
+    return ops
+
+
+@api_router.post("/ops/switch-to-partner")
+async def ops_switch_to_partner(ops=Depends(get_current_ops)):
+    """Hand back a driver token for the operator's own number.
+
+    One-way by design: nothing in the partner app links back here. Returning to
+    Ops means signing out and signing in again, at which point the whitelist
+    check in driver_verify_otp routes the same number to Ops.
+    """
+    phone = ops["phone"]
+    partner = await db.partners.find_one({"phone": phone}, {"_id": 0})
+    if not partner:
+        partner = Partner(phone=phone, name=ops.get("name"), is_new=True).dict()
+        await db.partners.insert_one(dict(partner))
+    elif not partner.get("active", True):
+        raise HTTPException(403, "This partner account has been deactivated")
+    return {"role": "driver", "token": make_token(partner["id"], "driver"), "partner": partner}
+
+
+@api_router.get("/ops/metrics")
+async def ops_metrics(ops=Depends(get_current_ops)):
+    bookings = await db.bookings.find({}, {"_id": 0}).to_list(5000)
+    partners = await db.partners.find({}, {"_id": 0}).to_list(1000)
+
+    total = len(bookings)
+    by = lambda *s: [b for b in bookings if b["status"] in s]
+    completed = by("completed")
+    in_progress = by("in_progress")
+    confirmed = by("assigned", "en_route", "arrived")
+    cancelled = by("cancelled")
+    pending = [b for b in bookings if b["status"] in ("pending", "searching") and not b.get("driver_id")]
+
+    roster = [p for p in partners if not p.get("onboarding")]
+    active_list = [p for p in roster if p.get("active", True)]
+    on_duty = {b["driver_id"] for b in in_progress if b.get("driver_id")}
+    engaged = {b["driver_id"] for b in by(*OPS_ENGAGED_STATES) if b.get("driver_id")}
+    rated = [b for b in bookings if b.get("rating")]
+
+    pipeline = [p for p in partners if p.get("onboarding")]
+    def stage(n):
+        return len([p for p in pipeline if p.get("stage") == n])
+    days_in_pipeline = [
+        (datetime.now(timezone.utc) - datetime.fromisoformat(p["applied_at"])).days
+        for p in pipeline if p.get("applied_at")
+    ]
+
+    payable = [b for b in bookings if b["status"] != "cancelled"]
+    failed = [b for b in payable if b.get("payment_failed")]
+    refund_queue = [b for b in cancelled if not b.get("refund_done")]
+    buddy_earnings = sum(partner_payout(b) for b in completed if b.get("driver_id"))
+
+    revenue = sum(deposit_of(b) for b in payable if not b.get("payment_failed")) \
+        + sum(balance_of(b) for b in completed)
+
+    finished = len(completed) + len(cancelled)
+    return {
+        # trips
+        "total": total, "completed": len(completed), "in_progress": len(in_progress),
+        "confirmed": len(confirmed), "pending": len(pending), "cancelled": len(cancelled),
+        "completion_rate": round(len(completed) / finished * 100) if finished else 0,
+        "cancellation_rate": round(len(cancelled) / finished * 100) if finished else 0,
+        "avg_fare": round(sum(b.get("total_fare", 0) for b in completed) / len(completed)) if completed else 0,
+        "top_cancel_reason": Counter(
+            [b.get("cancel_reason") for b in cancelled if b.get("cancel_reason")]
+        ).most_common(1)[0][0] if any(b.get("cancel_reason") for b in cancelled) else "—",
+        # buddies
+        "active_buddies": len(active_list),
+        "on_duty": len(on_duty),
+        "available": max(0, len(active_list) - len(on_duty)),
+        "utilisation_pct": round(len(engaged) / len(active_list) * 100) if active_list else 0,
+        "avg_rating": round(sum(b["rating"] for b in rated) / len(rated), 1) if rated else 0.0,
+        "utilisation": round(len(completed) / len(active_list), 1) if active_list else 0.0,
+        # acquisition
+        "applied": stage("applied"), "in_verification": stage("verification"),
+        "verified_ready": stage("verified"), "in_pipeline": len(pipeline),
+        "onboarding": len([p for p in pipeline if p.get("stage") != "applied"]),
+        "dormant": len([p for p in roster if not p.get("active", True)]),
+        "avg_days_in_pipeline": round(sum(days_in_pipeline) / len(days_in_pipeline)) if days_in_pipeline else 0,
+        "punjab": len([p for p in active_list if region_of(p.get("licence")) == "Punjab"]),
+        "himachal": len([p for p in active_list if region_of(p.get("licence")) == "Himachal"]),
+        "earnings_per_buddy": round(buddy_earnings / len(active_list)) if active_list else 0,
+        # payments
+        "payment_rate": round((len(payable) - len(failed)) / len(payable) * 100) if payable else 0,
+        "payments_failed": len(failed),
+        "deposits_collected": round(sum(deposit_of(b) for b in payable if not b.get("payment_failed"))),
+        "balance_collected": round(sum(balance_of(b) for b in completed)),
+        "refunds_pending": len(refund_queue),
+        "refunds_pending_value": round(sum(deposit_of(b) for b in refund_queue)),
+        "revenue": round(revenue),
+        "commission_pct": effective_commission_pct(),
+    }
+
+
+@api_router.get("/ops/bookings")
+async def ops_bookings(
+    scope: str = "open", sort: str = "status", ops=Depends(get_current_ops),
+):
+    """`scope`: open (the console's working list) | completed | cancelled | all."""
+    q = {"status": {"$in": list(OPS_OPEN_STATES)}} if scope == "open" else \
+        {"status": scope[:-1] if scope.endswith("s") else scope} if scope in ("completed", "cancelled") else {}
+    items = await db.bookings.find(q, {"_id": 0}).to_list(2000)
+    views = [await _ops_booking_view(b) for b in items]
+    if sort == "soonest":
+        views.sort(key=lambda v: v.get("scheduled_at") or "")
+    elif sort == "fare":
+        views.sort(key=lambda v: v["fare"], reverse=True)
+    else:
+        rank = {s: i for i, s in enumerate(OPS_OPEN_STATES)}
+        views.sort(key=lambda v: (rank.get(v["status"], 99), v.get("scheduled_at") or ""))
+    return views
+
+
+@api_router.get("/ops/bookings/{booking_id}")
+async def ops_booking(booking_id: str, ops=Depends(get_current_ops)):
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Booking not found")
+    return await _ops_booking_view(b, detail=True)
+
+
+@api_router.post("/ops/bookings/{booking_id}/assign")
+async def ops_assign(booking_id: str, body: AssignIn, ops=Depends(get_current_ops)):
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Booking not found")
+    if b["status"] not in ("pending", "searching"):
+        raise HTTPException(400, f"This trip is already {ops_label(b).lower()}")
+    partner = await db.partners.find_one({"id": body.buddy_id}, {"_id": 0})
+    if not partner:
+        raise HTTPException(404, "Buddy not found")
+    if not partner.get("active", True):
+        raise HTTPException(400, "That Buddy is deactivated")
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {"$set": {"driver_id": body.buddy_id, "status": "assigned"}},
+    )
+    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    return await _ops_booking_view(updated, detail=True)
+
+
+@api_router.post("/ops/bookings/{booking_id}/refund")
+async def ops_refund(booking_id: str, ops=Depends(get_current_ops)):
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Booking not found")
+    if b["status"] != "cancelled":
+        raise HTTPException(400, "Only a cancelled trip has a refund to settle")
+    if b.get("refund_done"):
+        raise HTTPException(400, "This refund is already settled")
+    await db.bookings.update_one(
+        {"id": booking_id}, {"$set": {"refund_done": True, "refunded_at": now_iso()}}
+    )
+    return {"ok": True, "refunded": deposit_of(b)}
+
+
+@api_router.get("/ops/buddies")
+async def ops_buddies(ops=Depends(get_current_ops)):
+    partners = await db.partners.find({}, {"_id": 0}).to_list(1000)
+    bookings = await db.bookings.find({}, {"_id": 0}).to_list(5000)
+    views = [_ops_buddy_view(p, bookings) for p in partners]
+    views.sort(key=lambda v: (not v["active"], -(v["rating"] or 0)))
+    return views
+
+
+@api_router.get("/ops/buddies/{buddy_id}")
+async def ops_buddy(buddy_id: str, ops=Depends(get_current_ops)):
+    p = await db.partners.find_one({"id": buddy_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Buddy not found")
+    bookings = await db.bookings.find({"driver_id": buddy_id}, {"_id": 0}).to_list(2000)
+    view = _ops_buddy_view(p, bookings)
+    view["recent"] = [await _ops_booking_view(b) for b in
+                      sorted(bookings, key=lambda b: b.get("scheduled_at") or "", reverse=True)[:20]]
+    return view
+
+
+@api_router.post("/ops/buddies")
+async def ops_add_buddy(body: AddBuddyIn, ops=Depends(get_current_ops)):
+    phone = body.phone.strip()
+    if await db.partners.find_one({"phone": phone}, {"_id": 0}):
+        raise HTTPException(400, "A Buddy with that number already exists")
+    if ops_entry(phone):
+        raise HTTPException(400, "That number is an Ops number")
+    partner = Partner(
+        phone=phone, name=body.name, licence=body.licence, email=body.email,
+        onboarding=True, stage="applied", applied_at=now_iso(), active=True, is_new=True,
+    )
+    await db.partners.insert_one(partner.dict())
+    return partner.dict()
+
+
+@api_router.patch("/ops/buddies/{buddy_id}")
+async def ops_update_buddy(buddy_id: str, body: OpsBuddyPatch, ops=Depends(get_current_ops)):
+    p = await db.partners.find_one({"id": buddy_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Buddy not found")
+    patch = {k: v for k, v in body.dict().items() if v is not None}
+    if not patch:
+        raise HTTPException(400, "Nothing to update")
+    # Promoting out of the pipeline clears the onboarding flag so the Buddy
+    # starts counting toward the active roster.
+    if patch.get("stage") == "verified":
+        patch["onboarding"] = False
+    await db.partners.update_one({"id": buddy_id}, {"$set": patch})
+    return await db.partners.find_one({"id": buddy_id}, {"_id": 0})
+
+
 # ---------------- Seeding ----------------
 # Partners are re-seeded on every startup (upsert by phone) so partner login
 # always works, including after an in-memory DB restart.
@@ -1293,6 +1681,17 @@ SEED_PARTNERS = [
     },
 ]
 
+# Buddy applicants in the acquisition pipeline. Not part of the active roster —
+# they populate the Ops funnel (applied -> verification -> verified) and are the
+# only Buddies whose stage Ops can advance.
+SEED_PIPELINE = [
+    {"phone": "+919812004471", "name": "Rohit Bansal",  "licence": "PB-0320210088412", "stage": "applied",      "days_ago": 2},
+    {"phone": "+919816550233", "name": "Neha Chauhan",  "licence": "HP-0620220011907", "stage": "applied",      "days_ago": 6},
+    {"phone": "+919888342190", "name": "Gurpreet Sidhu","licence": "PB-0120200055318", "stage": "verification", "days_ago": 11},
+    {"phone": "+919418223760", "name": "Ankit Sharma",  "licence": "HP-0920210044126", "stage": "verification", "days_ago": 15},
+    {"phone": "+919779004512", "name": "Simran Kaur",   "licence": "PB-0720190033204", "stage": "verified",     "days_ago": 23},
+]
+
 # Mock owners + their cars, so seeded trips render a real customer and vehicle.
 SEED_OWNERS = [
     {"name": "Vikram Saini", "phone": "+919814552210", "make": "Maruti Suzuki", "model": "Swift Dzire", "transmission": "Manual"},
@@ -1322,6 +1721,13 @@ SEED_TRIPS = [
     (2, "Chandigarh", "Kasauli", True, 0, "in_progress", 0, 3200, 62, None, None),
     (0, "Mohali", "Kasauli", True, 0, "assigned", 1, 3200, 68, None, None),
     (1, "Chandigarh", "Shimla", False, 3, "assigned", 2, 6800, 113, None, None),
+    # Unassigned — these are the Ops pending queue and what Assign acts on.
+    (4, "Panchkula", "Shimla", True, 0, "searching", 1, 0, 118, None, None),
+    (6, "Chandigarh", "Manali", False, 2, "searching", 3, 0, 305, None, None),
+    (7, "Mohali", "Dharamshala", True, 0, "searching", 5, 0, 245, None, None),
+    # Cancelled — deposits still held, so these form the refund queue.
+    (5, "Chandigarh", "Kasauli", True, 0, "cancelled", -1, 0, 62, None, None),
+    (1, "Panchkula", "Manali", False, 2, "cancelled", -3, 0, 290, None, None),
     # Completed history is spread from a couple of days ago out to ~6 months so
     # the Earnings screen has content in every period filter (week → annual).
     (3, "Mohali", "Kasauli", True, 0, "completed", -2, 3300, 68, 5, "Smooth, careful drive up."),
@@ -1400,7 +1806,9 @@ async def seed_partner_demo_data():
             payment_method="upi",
             paid_amount=fare if completed else round(fare * DEPOSIT_PCT / 100),
             status=status,
-            driver_id=demo["id"],
+            # A trip still being matched has no Buddy — that is what makes it
+            # show up in the Ops pending queue.
+            driver_id=None if status in ("pending", "searching") else demo["id"],
             start_code=gen_code(),
             end_code=gen_code(),
             created_at=(out - timedelta(days=2)).isoformat(),
@@ -1408,6 +1816,11 @@ async def seed_partner_demo_data():
             completed_at=(out + timedelta(days=days, hours=6)).isoformat() if completed else None,
             rating=rating,
             comment=comment,
+            cancel_reason=random.choice(
+                ["Plans changed", "Plans changed", "Found another driver", "Trip postponed"]
+            ) if status == "cancelled" else None,
+            # One simulated gateway failure so payment rate is not a flat 100%.
+            payment_failed=(status == "assigned" and offset == 2),
         )
         await db.bookings.insert_one(booking.dict())
     logger.info("Seeded %d partners and %d demo trips", len(SEED_PARTNERS), len(SEED_TRIPS))
@@ -1473,6 +1886,18 @@ async def seed_drivers():
                     phone=d["phone"], name=d["name"], rating=d["rating"], trips=d["trips"],
                     photo=d["photo"], eta_minutes=d["eta_minutes"], is_new=False,
                     licence="MH-0120190000000",
+                ).dict()
+            )
+    for a in SEED_PIPELINE:
+        if not await db.partners.find_one({"phone": a["phone"]}):
+            await db.partners.insert_one(
+                Partner(
+                    phone=a["phone"], name=a["name"], licence=a["licence"],
+                    onboarding=True, stage=a["stage"], is_new=True,
+                    # Applicants are not yet drivable: they sit outside the
+                    # active roster until Ops marks them verified.
+                    active=False, available=False,
+                    applied_at=(datetime.now(timezone.utc) - timedelta(days=a["days_ago"])).isoformat(),
                 ).dict()
             )
     await seed_partner_demo_data()
