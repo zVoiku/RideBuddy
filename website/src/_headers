@@ -1,0 +1,9 @@
+# The beta is a preview shared by link. Keep it out of search results — a
+# "coming soon" artboard is not what should rank for the brand.
+/beta/*
+  X-Robots-Tag: noindex, nofollow
+  Cache-Control: public, max-age=300
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin

@@ -119,3 +119,9 @@ Split them:
 | Atlas M0 connection limit / 512MB full | M10 (~$57/mo), same Mumbai region |
 | Need staging + prod | Second App Platform app on a `staging.` subdomain |
 | Real-time driver tracking replaces 3s polling | WebSockets — App Platform supports them; revisit region pinning first |
+
+## The beta site
+
+`website/` builds what Pages serves: a holding page at `/` and the design-canvas
+beta at `/beta/`. Deploy settings and the artboard build are documented in
+`website/README.md`.

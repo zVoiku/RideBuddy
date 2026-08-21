@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /beta/
+Allow: /
+
+Sitemap: https://www.ridebuddy.co.in/sitemap.xml
