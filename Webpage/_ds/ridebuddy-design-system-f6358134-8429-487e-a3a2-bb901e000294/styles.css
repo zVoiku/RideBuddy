@@ -1,0 +1,12 @@
+/* ============================================================
+   RideBuddy Design System — Global Stylesheet
+   Single entry point. Consumers link this one file.
+   Import order matters: fonts & tokens before anything that
+   references them.
+   ============================================================ */
+
+@import url("tokens/fonts.css");
+@import url("tokens/colors.css");
+@import url("tokens/typography.css");
+@import url("tokens/spacing.css");
+@import url("tokens/elevation.css");
