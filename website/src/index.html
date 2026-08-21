@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RideBuddy — Coming soon</title>
+<meta name="description" content="Verified Buddies to drive your own car. Chandigarh Tricity to the hills. Launching soon.">
+<meta name="theme-color" content="#F5F0E8">
+<link rel="icon" href="/logomark.svg" type="image/svg+xml">
+<meta property="og:title" content="RideBuddy — Coming soon">
+<meta property="og:description" content="Verified Buddies to drive your own car. Chandigarh Tricity to the hills.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://www.ridebuddy.co.in/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Urbanist:wght@700;800&family=DM+Sans:wght@400;500&display=swap">
+<style>
+  :root {
+    --parchment: #F5F0E8;
+    --charcoal:  #1E1E1A;
+    --green500:  #4A5C2F;
+    --green300:  #8FA96A;
+    --grey500:   #888888;
+    --display: Urbanist, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --body: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: grid;
+    place-items: center;
+    padding: 32px 24px;
+    background: var(--parchment);
+    color: var(--charcoal);
+    font-family: var(--body);
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 34rem; text-align: center; }
+  .mark { width: 76px; height: 76px; display: block; margin: 0 auto 22px; }
+  .wordmark {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: clamp(2.1rem, 7vw, 3rem);
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+  .rule {
+    width: 44px;
+    height: 3px;
+    margin: 22px auto;
+    border-radius: 999px;
+    background: var(--green300);
+  }
+  .soon {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(1.05rem, 3.4vw, 1.3rem);
+    color: var(--green500);
+    margin: 0 0 14px;
+  }
+  .line {
+    font-size: 1.02rem;
+    line-height: 1.65;
+    color: var(--charcoal);
+    margin: 0 auto;
+    max-width: 26rem;
+  }
+  .contact { margin-top: 30px; font-size: 0.94rem; color: var(--grey500); }
+  .contact a {
+    color: var(--green500);
+    font-weight: 500;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(74, 92, 47, 0.32);
+    padding-bottom: 1px;
+  }
+  .contact a:hover { border-bottom-color: var(--green500); }
+  .region {
+    margin-top: 40px;
+    font-size: 0.82rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--grey500);
+  }
+</style>
+</head>
+<body>
+<main>
+  <svg class="mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="RideBuddy">
+    <path d="M40 26 V86" fill="none" stroke="#4A5C2F" stroke-width="14" stroke-linecap="round"/>
+    <path d="M40 26 H62 A18 18 0 0 1 62 62 H40" fill="none" stroke="#4A5C2F" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M49 62 Q66 80 78 78 T86 92" fill="none" stroke="#4A5C2F" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="86" cy="84" r="13" fill="#4A5C2F"/>
+    <path d="M86 110 L75 90 H97 Z" fill="#4A5C2F"/>
+    <circle cx="86" cy="84" r="4.6" fill="#F5F0E8"/>
+    <path d="M40 37 V74" fill="none" stroke="#F5F0E8" stroke-width="3" stroke-linecap="round" stroke-dasharray="0.5 9"/>
+  </svg>
+
+  <h1 class="wordmark">RideBuddy</h1>
+  <div class="rule"></div>
+  <p class="soon">Coming soon.</p>
+  <p class="line">Verified Buddies to drive your own car — from the Chandigarh Tricity out to the hills.</p>
+
+  <p class="contact">Questions? <a href="mailto:support@ridebuddy.co.in">support@ridebuddy.co.in</a></p>
+  <p class="region">Chandigarh · Mohali · Panchkula</p>
+</main>
+</body>
+</html>
