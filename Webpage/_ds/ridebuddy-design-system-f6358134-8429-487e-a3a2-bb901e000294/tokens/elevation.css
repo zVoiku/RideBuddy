@@ -1,0 +1,36 @@
+/* ============================================================
+   RideBuddy — Elevation & Motion
+   Shadows: cool grey, soft, diffused. Never dramatic.
+   Motion: calm & flowing. No spring. No bounce.
+   "Like a deep breath, not a snap."
+   ============================================================ */
+
+:root {
+
+  /* ── Elevation / shadow ── */
+  --shadow-0:  none;                                  /* Flat, inactive */
+  --shadow-sm: 0 1px 3px  rgba(100,100,100,0.08),
+               0 1px 2px  rgba(100,100,100,0.06);     /* List items, subtle cards */
+  --shadow-md: 0 4px 12px rgba(100,100,100,0.10),
+               0 2px 4px  rgba(100,100,100,0.06);     /* Cards, booking panels — DEFAULT */
+  --shadow-lg: 0 8px 24px rgba(100,100,100,0.12),
+               0 4px 8px  rgba(100,100,100,0.06);     /* Bottom sheets, modals */
+  --shadow-xl: 0 16px 40px rgba(100,100,100,0.14),
+               0 8px 16px  rgba(100,100,100,0.06);    /* FABs, toasts */
+
+  /* Focus ring — Trail Green glow */
+  --ring-focus: 0 0 0 3px rgba(74, 92, 47, 0.18);
+
+  /* ── Motion · durations ── */
+  --duration-fast:  150ms;  /* @kind other */ /* Micro feedback — tap, checkbox tick */
+  --duration-base:  250ms;  /* @kind other */ /* Standard — tab switch, input focus */
+  --duration-slow:  350ms;  /* @kind other */ /* Screen transitions, sheet slide-up */
+  --duration-enter: 300ms;  /* @kind other */ /* Elements entering */
+  --duration-exit:  200ms;  /* @kind other */ /* Elements leaving — exits slightly faster */
+
+  /* ── Motion · easing ── */
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);          /* @kind other */ /* Smooth in/out */
+  --ease-enter:   cubic-bezier(0.0, 0.0, 0.2, 1);        /* @kind other */ /* Decelerate on entry */
+  --ease-exit:    cubic-bezier(0.4, 0.0, 1, 1);          /* @kind other */ /* Accelerate on exit */
+  --ease-calm:    cubic-bezier(0.25, 0.46, 0.45, 0.94);  /* @kind other */ /* RideBuddy signature — tab fades */
+}

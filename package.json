@@ -1,0 +1,14 @@
+{
+  "name": "ridebuddy",
+  "private": true,
+  "description": "Convenience scripts only. The three apps are separate projects — backend/, frontend/ and RideBuddy-partner/ — and each keeps its own dependencies. Deliberately NOT an npm workspace: hoisting Expo's native deps out of the app folders breaks Metro resolution.",
+  "scripts": {
+    "backend": "backend/.venv/bin/uvicorn --app-dir backend server:app --host 0.0.0.0 --port 8001",
+    "partner": "cd RideBuddy-partner && npx expo start --dev-client --clear",
+    "partner:ios": "cd RideBuddy-partner && npx expo run:ios --device",
+    "client": "cd frontend && npx expo start --clear --port 8083",
+    "client:ios": "cd frontend && npx expo run:ios --device",
+    "test": "EXPO_PUBLIC_BACKEND_URL=http://localhost:8001 backend/.venv/bin/pytest backend/tests -q",
+    "ip": "ipconfig getifaddr en0 || ipconfig getifaddr en1 || hostname -I"
+  }
+}

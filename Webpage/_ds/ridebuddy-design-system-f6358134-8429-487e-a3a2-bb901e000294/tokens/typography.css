@@ -1,0 +1,49 @@
+/* ============================================================
+   RideBuddy — Typography
+   Display & headings: Urbanist 700/800
+   Body, UI, captions: DM Sans 400/500
+   Type scale from Visual Foundations (Section 1).
+   ============================================================ */
+
+:root {
+
+  /* ── Font size scale ── */
+  --text-display: 40px;   /* Hero headlines — Urbanist 700 */
+  --text-h1:      28px;   /* Page titles — Urbanist 700 */
+  --text-h2:      22px;   /* Section headers — Urbanist 700 */
+  --text-h3:      18px;   /* Sub-headers / sheet titles — Urbanist 700 */
+  --text-title:   16px;   /* Card titles — Urbanist 700 */
+  --text-lead:    17px;   /* Buddy name — Urbanist 700 */
+  --text-body:    15px;   /* Paragraphs, inputs, primary CTA — DM Sans 400 */
+  --text-ui:      14px;   /* Secondary buttons, fare rows — DM Sans 400/500 */
+  --text-label:   13px;   /* Field labels, chips — DM Sans 500 */
+  --text-caption: 12px;   /* Meta, timestamps, badges — DM Sans 400 */
+  --text-micro:   11px;   /* Pill labels, nav labels — DM Sans 400 */
+  --text-overline:10px;   /* Uppercase detail labels — DM Sans 500 */
+
+  /* ── Weights ── */
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+  --weight-extra:    800;
+
+  /* ── Line heights ── */
+  --leading-tight:  1.15;  /* display & headings */
+  --leading-snug:   1.35;  /* sub-headers, titles */
+  --leading-normal: 1.5;   /* body copy */
+
+  /* ── Tracking ── */
+  --tracking-tight:   -0.01em;  /* large display */
+  --tracking-normal:  0;
+  --tracking-overline:0.08em;   /* uppercase labels */
+}
+
+/* Optional helper classes (consumers may use vars directly) */
+.rb-display { font-family: var(--font-display); font-size: var(--text-display); font-weight: var(--weight-bold); line-height: var(--leading-tight); letter-spacing: var(--tracking-tight); color: var(--text-primary); }
+.rb-h1      { font-family: var(--font-display); font-size: var(--text-h1); font-weight: var(--weight-bold); line-height: var(--leading-tight); color: var(--text-primary); }
+.rb-h2      { font-family: var(--font-display); font-size: var(--text-h2); font-weight: var(--weight-bold); line-height: var(--leading-snug); color: var(--text-primary); }
+.rb-h3      { font-family: var(--font-display); font-size: var(--text-h3); font-weight: var(--weight-bold); line-height: var(--leading-snug); color: var(--text-primary); }
+.rb-body    { font-family: var(--font-body); font-size: var(--text-body); font-weight: var(--weight-regular); line-height: var(--leading-normal); color: var(--text-primary); }
+.rb-caption { font-family: var(--font-body); font-size: var(--text-caption); font-weight: var(--weight-regular); color: var(--text-secondary); }
+.rb-overline{ font-family: var(--font-display); font-size: var(--text-overline); font-weight: var(--weight-bold); text-transform: uppercase; letter-spacing: var(--tracking-overline); color: var(--color-green-700); }

@@ -40,6 +40,8 @@ export default function Home() {
   const [picker, setPicker] = useState<DateField | null>(null);
   const [cityPicker, setCityPicker] = useState<null | 'pickup' | 'drop'>(null);
   const [intersect, setIntersect] = useState(true);
+  // Round trips only: does the customer put the Buddy up overnight? (§5.2)
+  const [customerStay, setCustomerStay] = useState(false);
 
   const load = async () => {
     try {
@@ -50,8 +52,12 @@ export default function Home() {
   };
   useFocusEffect(useCallback(() => { load(); }, []));
 
-  const days = oneWay || tripMode === 'hourly' || !returnDate ? 0 :
-    Math.max(1, Math.ceil((returnDate.getTime() - pickupDate.getTime()) / (1000 * 60 * 60 * 24)));
+  // Rate Table v1.7 §5.3: trip_days = return date − outbound date + 1, counted
+  // on calendar days. A same-day return is one billable day, an overnight two.
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const nights = oneWay || tripMode === 'hourly' || !returnDate ? 0 :
+    Math.max(0, Math.round((startOfDay(returnDate) - startOfDay(pickupDate)) / 86400000));
+  const days = oneWay || tripMode === 'hourly' || !returnDate ? 0 : nights + 1;
 
   const valid = tripMode === 'hourly' ? !!pickupAddr && parseFloat(hours) > 0 : !!pickupAddr && !!dropAddr;
 
@@ -72,6 +78,7 @@ export default function Home() {
         days: String(days),
         duration_hours: tripMode === 'hourly' ? hours : '0',
         intersect_at_owner: intersect ? '1' : '0',
+        customer_stay: customerStay ? '1' : '0',
       },
     });
   };
@@ -176,6 +183,28 @@ export default function Home() {
                     </Text>
                   </View>
                 </TouchableOpacity>
+              )}
+
+              {/* Round trips only (Rate Table v1.7 §5.2). Answering yes removes
+                  the ₹499/night stay allowance from the fare. */}
+              {tripMode === 'point_to_point' && !oneWay && nights > 0 && (
+                <View style={styles.intersectCard}>
+                  <View style={{ flex: 1, paddingRight: 12 }}>
+                    <Text style={styles.intersectTitle}>I&apos;ll arrange the Buddy&apos;s stay</Text>
+                    <Text style={styles.intersectSub}>
+                      {customerStay
+                        ? `You're providing accommodation for ${nights} ${nights === 1 ? 'night' : 'nights'}`
+                        : `We'll include a stay allowance for ${nights} ${nights === 1 ? 'night' : 'nights'}`}
+                    </Text>
+                  </View>
+                  <Switch
+                    testID="customer-stay-switch"
+                    value={customerStay}
+                    onValueChange={setCustomerStay}
+                    trackColor={{ false: '#CBD5E1', true: theme.colors.primary }}
+                    thumbColor={theme.colors.card}
+                  />
+                </View>
               )}
 
               <View style={styles.intersectCard}>

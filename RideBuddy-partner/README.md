@@ -76,8 +76,16 @@ backend/.venv/bin/uvicorn --app-dir backend server:app --host 0.0.0.0 --port 800
 # This app — needs a dev build, react-native-maps cannot run in Expo Go
 npx expo run:ios --device          # macOS
 eas build -p android --profile development
-npx expo start --dev-client
+npx expo start --dev-client        # subsequent runs, once the build is installed
 ```
+
+The build is an `expo-dev-client` one, so the installed app has a launcher
+screen for choosing (or typing) the Metro URL rather than a single address
+baked in at build time.
+
+**Anything native changes — icons, splash, app.json, a new native package —
+only takes effect on a rebuild.** `git pull` plus a Metro reload will not move
+them; rerun `npx expo run:ios --device`.
 
 Sign in with **98765 43210** and any 6-digit code to land on the seeded demo
 partner (Rajesh Singh), who already has trips assigned, one in progress and a
@@ -90,3 +98,41 @@ a fresh partner account with no trips.
 - The in-memory dev DB resets on every backend restart — sign out and back in.
 - `web` runs for a quick look, but `react-native-maps` has no web build, so the
   map falls back to a schematic route card there.
+
+## Troubleshooting
+
+**`Unable to resolve module <name> from node_modules/…`** — the install is
+incomplete, not the manifest. `npm install` leaves this behind if it is
+interrupted. Reinstall from the lockfile:
+
+```bash
+rm -rf node_modules && npm ci
+npx expo start --dev-client --clear
+```
+
+Note that `node_modules` is untracked, so it does **not** follow a `git mv`: if
+this folder was renamed under you, the old path kept the modules and this one
+needs its own install.
+
+**`No script URL provided … unsanitizedScriptURLString = (null)`** — the app has
+no Metro server to pull JS from. Note this is about **Metro**, not the backend:
+`EXPO_PUBLIC_BACKEND_URL` plays no part in it, and a build can hit this with a
+perfectly good backend.
+
+Start Metro from this folder and leave it running — that terminal *is* the
+packager, and its output is what to read when a bundle fails:
+
+```bash
+npx expo start --dev-client
+```
+
+Then launch the app. If it opens straight into a redbox instead of the dev
+launcher, open it from the phone's home screen: `expo-dev-client` shows a
+"Development servers" screen where the running Metro instance is listed, and
+"Enter URL manually" accepts `http://<mac-lan-ip>:8081` when autodiscovery
+can't cross the network. Both devices must be on the same Wi-Fi, and macOS
+firewall must not be blocking node.
+
+**Bundling is slow on a dev machine** — it shouldn't be; Metro uses all cores by
+default here. `METRO_MAX_WORKERS` caps it, and is only meant for memory-starved
+CI/sandbox environments.

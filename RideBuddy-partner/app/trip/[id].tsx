@@ -110,13 +110,7 @@ export default function TripDetail() {
         <View style={styles.topRow}>
           <StatusBadge status={trip.status} />
           <Pressable
-            onPress={() =>
-              showToast({
-                type: 'info',
-                title: `Messaging ${trip.customer}…`,
-                body: 'In-app chat arrives in the next release.',
-              })
-            }
+            onPress={() => router.push(`/thread/${trip.id}`)}
             style={styles.msgBtn}
             accessibilityRole="button"
           >

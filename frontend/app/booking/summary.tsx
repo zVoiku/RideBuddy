@@ -37,6 +37,10 @@ export default function Summary() {
           trip_type: isHourly ? 'hourly' : 'point_to_point',
           one_way: p.one_way === '1' || isHourly,
           distance_km, duration_hours: hours, days,
+          // The night/odd-hour charge depends on the pickup time, and the stay
+          // allowance on the customer's answer, so both must reach the engine.
+          scheduled_at: p.scheduled_at || undefined,
+          customer_stay: p.customer_stay === '1',
         });
         setEst({ ...r, distance_km });
       } catch (e: any) { Alert.alert('Error', e.message); }
@@ -112,25 +116,31 @@ export default function Summary() {
           </View>
 
           <Text style={[styles.sectionT, { marginTop: 26 }]}>Fare Estimate</Text>
+          {/* Rate Table v1.7 §2.4: one number, no component breakdown. The
+              itemisation exists server-side but is deliberately not rendered —
+              the conditions below are what the customer is told instead. */}
           {!est ? <ActivityIndicator color={theme.colors.primary} /> : (
             <View style={styles.fareCard}>
-              {days > 0 && (
-                <Row label="Trip Duration" value={`${days} Days`} bold />
-              )}
-              <Row label={est.per_day_rate ? `Base Fare (${days} × ₹${est.per_day_rate})` : 'Base Fare'} value={`₹${est.base_fare.toLocaleString('en-IN')}`} />
-              {est.discount > 0 && (
-                <View style={styles.discountBox}>
-                  <Text style={{ fontSize: 22 }}>🎉</Text>
-                  <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Text style={styles.discountTitle}>New User Discount</Text>
-                    <Text style={styles.discountSub}>{est.per_day_discount > 0 ? `₹${est.per_day_discount} off per day for new users` : '10% off for new users'}</Text>
-                  </View>
-                  <Text style={styles.discountAmt}>-₹{est.discount.toLocaleString('en-IN')}</Text>
-                </View>
-              )}
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLbl}>Total Amount</Text>
-                <Text style={styles.totalVal}>₹{est.total_fare.toLocaleString('en-IN')}</Text>
+              <Text style={styles.estLbl}>Estimated fare</Text>
+              <Text testID="fare-estimate" style={styles.estVal}>
+                ₹{est.total_fare.toLocaleString('en-IN')}
+              </Text>
+
+              <View style={styles.conds}>
+                <Cond text={`Includes ${est.included_km?.toLocaleString('en-IN')} km and ${est.included_hours} hours${est.trip_days > 1 ? ` across ${est.trip_days} days` : ''}.`} />
+                <Cond text="Extra distance or time beyond that is added to the final fare." />
+                {est.stay_included && (
+                  <Cond text={`Includes the Buddy's stay for ${est.overnights} ${est.overnights === 1 ? 'night' : 'nights'}. Tell us if you're arranging it and we'll take it off.`} />
+                )}
+                {est.night_charge_applied && (
+                  <Cond text="Includes a night charge — pickup is before 6 AM or arrival is after 10 PM." />
+                )}
+                <Cond text="Tolls are not part of this fare. You pay them directly during the trip." />
+              </View>
+
+              <View style={styles.varianceBox}>
+                <Ionicons name="information-circle-outline" size={16} color={theme.colors.primary} />
+                <Text style={styles.varianceTxt}>Final fare is calculated when your trip ends.</Text>
               </View>
             </View>
           )}
@@ -143,7 +153,7 @@ export default function Summary() {
             disabled={!est}
             onPress={() => router.push({
               pathname: '/booking/payment',
-              params: { ...p, total: String(est.total_fare), advance30: String(est.advance_30), distance_km: String(est.distance_km || 0), polyline: route?.polyline || '' },
+              params: { ...p, total: String(est.total_fare), deposit: String(est.deposit), depositPct: String(est.deposit_pct), distance_km: String(est.distance_km || 0), polyline: route?.polyline || '' },
             })}
           >
             <Text style={styles.ctaText}>Confirm & Pay</Text>
@@ -170,10 +180,11 @@ export default function Summary() {
   );
 }
 
-const Row = ({ label, value, bold }: any) => (
-  <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 }}>
-    <Text style={{ color: theme.colors.textPrimary, fontWeight: bold ? '900' : '600', fontSize: 15 }}>{label}</Text>
-    <Text style={{ color: theme.colors.textPrimary, fontWeight: '900', fontSize: 15 }}>{value}</Text>
+/** One inclusion/exclusion line under the estimate (§2.4). */
+const Cond = ({ text }: { text: string }) => (
+  <View style={styles.condRow}>
+    <View style={styles.condDot} />
+    <Text style={styles.condTxt}>{text}</Text>
   </View>
 );
 
@@ -194,13 +205,17 @@ const styles = StyleSheet.create({
   dateLbl: { color: theme.colors.textSecondary, fontSize: 13, marginBottom: 2 },
   dateVal: { color: theme.colors.textPrimary, fontWeight: '900', fontSize: 15 },
   fareCard: { backgroundColor: theme.colors.softCard, borderRadius: theme.radius.lg, padding: 18 },
-  discountBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.card, borderRadius: theme.radius.md, padding: 14, marginVertical: 10 },
-  discountTitle: { color: theme.colors.primary, fontWeight: '900', fontSize: 15 },
-  discountSub: { color: theme.colors.textSecondary, fontSize: 12, marginTop: 2 },
-  discountAmt: { color: theme.colors.primary, fontWeight: '900', fontSize: 16 },
-  totalRow: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 12, marginTop: 4 },
-  totalLbl: { fontWeight: '900', fontSize: 18, color: theme.colors.textPrimary },
-  totalVal: { fontWeight: '900', fontSize: 22, color: theme.colors.primary },
+  estLbl: { color: theme.colors.textSecondary, fontSize: 14, fontWeight: '600' },
+  estVal: { color: theme.colors.primary, fontSize: 38, fontWeight: '900', marginTop: 2, letterSpacing: -0.5 },
+  conds: { marginTop: 16, gap: 9 },
+  condRow: { flexDirection: 'row', gap: 9 },
+  condDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: theme.colors.primaryLight, marginTop: 7 },
+  condTxt: { flex: 1, color: theme.colors.textSecondary, fontSize: 13.5, lineHeight: 19 },
+  varianceBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16,
+    backgroundColor: theme.colors.card, borderRadius: theme.radius.md, padding: 12,
+  },
+  varianceTxt: { flex: 1, color: theme.colors.textPrimary, fontSize: 13, fontWeight: '600' },
   bottom: { padding: 16, backgroundColor: theme.colors.card },
   cta: { backgroundColor: theme.colors.primary, height: 58, borderRadius: theme.radius.pill, alignItems: 'center', justifyContent: 'center' },
   ctaText: { color: theme.colors.inverse, fontSize: 18, fontWeight: '900' },

@@ -9,6 +9,11 @@ const config = getDefaultConfig(__dirname);
 const root = process.env.METRO_CACHE_ROOT || path.join(__dirname, '.metro-cache');
 config.cacheStores = [new FileStore({ root: path.join(root, 'cache') })];
 
-config.maxWorkers = 2;
+// Capped only where memory is tight (this repo's Linux dev sandbox OOMs above
+// this). On a normal dev machine let Metro use the cores it finds — pinning it
+// to 2 roughly triples a cold native bundle.
+if (process.env.METRO_MAX_WORKERS) {
+  config.maxWorkers = Number(process.env.METRO_MAX_WORKERS);
+}
 
 module.exports = config;

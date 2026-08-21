@@ -104,7 +104,7 @@ export default function BookingDetail() {
                   <Ionicons name="call" size={18} color={theme.colors.inverse} />
                   <Text style={styles.actText}>Call</Text>
                 </TouchableOpacity>
-                <TouchableOpacity testID="msg-driver" style={[styles.actBtn, styles.actBtnAlt]} onPress={() => Alert.alert('Chat', 'In-app chat coming soon')}>
+                <TouchableOpacity testID="msg-driver" style={[styles.actBtn, styles.actBtnAlt]} onPress={() => router.push(`/chat/${b.id}`)}>
                   <Ionicons name="chatbubble" size={18} color={theme.colors.primary} />
                   <Text style={[styles.actText, { color: theme.colors.primary }]}>Message</Text>
                 </TouchableOpacity>

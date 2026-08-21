@@ -5,6 +5,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import asyncio
+import math
+from collections import Counter
 import random
 import string
 import jwt
@@ -128,6 +130,8 @@ class Partner(BaseModel):
     stage: Optional[Literal["applied", "verification", "verified"]] = None
     is_new: bool = True
     joined: str = Field(default_factory=lambda: datetime.now(timezone.utc).date().isoformat())
+    # When they entered the acquisition pipeline — drives "avg days in pipeline".
+    applied_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -154,8 +158,12 @@ class Booking(BaseModel):
     base_fare: float = 0
     discount: float = 0
     total_fare: float = 0
+    # Itemised fare the estimate was built from (Rate Table v1.7). Kept so the
+    # payout split and trip-end reconciliation use the same components.
+    fare: dict = Field(default_factory=dict)
+    customer_stay: bool = False
     payment_method: Literal["upi", "card", "cash"] = "upi"
-    pay_partial: bool = False  # 30% advance
+    pay_partial: bool = False  # deposit at booking, see DEPOSIT_PCT
     paid_amount: float = 0
     # en_route ("Left for Pickup") sits between assigned and arrived: the partner
     # has set off but has not yet reached the owner. Set from the driver app only.
@@ -173,6 +181,33 @@ class Booking(BaseModel):
     completed_at: Optional[str] = None
     rating: Optional[int] = None
     comment: Optional[str] = None
+    # Ops-tracked state. A cancelled booking holds the customer's deposit until
+    # Ops resolves it, so the refund queue is driven off refund_done rather than
+    # inferred from status alone.
+    cancel_reason: Optional[str] = None
+    refund_done: bool = False
+    refunded_at: Optional[str] = None
+    payment_failed: bool = False
+    # Chat read marks — the newest message each side has seen. Kept on the
+    # booking because the booking *is* the thread; there is no separate thread
+    # record to create, and a trip without a partner has nobody to talk to.
+    chat_read_user_at: Optional[str] = None
+    chat_read_driver_at: Optional[str] = None
+
+
+class Message(BaseModel):
+    """One chat message on a booking.
+
+    `sender_role` is the authoritative author: the client app and partner app
+    both write here, and a message is rendered as "mine" purely by comparing
+    this against the reader's own role.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    booking_id: str
+    sender_role: Literal["user", "driver"]
+    sender_id: str
+    body: str
+    created_at: str = Field(default_factory=now_iso)
 
 
 # ---------------- Schemas ----------------
@@ -204,6 +239,11 @@ class EstimateIn(BaseModel):
     distance_km: float = 0
     duration_hours: float = 0
     days: int = 0
+    # Needed to price the night/odd-hour charge (§2.1 #5).
+    scheduled_at: Optional[str] = None
+    # Round trips only (§5.2): True = the customer puts the Buddy up, so the
+    # stay allowance is excluded.
+    customer_stay: bool = False
 
 
 class BookingIn(BaseModel):
@@ -224,12 +264,37 @@ class BookingIn(BaseModel):
     intersect_at_owner: bool = True
     transmission: Literal["Manual", "Automatic"] = "Automatic"
     car_id: Optional[str] = None
+    # Round trips only (§5.2): True = the customer puts the Buddy up, so the
+    # stay allowance is excluded from the fare.
+    customer_stay: bool = False
     payment_method: Literal["upi", "card", "cash"] = "upi"
     pay_partial: bool = False
 
 
 class CodeIn(BaseModel):
     code: str
+
+
+class MessageIn(BaseModel):
+    body: str
+
+
+class AssignIn(BaseModel):
+    buddy_id: str
+
+
+class AddBuddyIn(BaseModel):
+    phone: str
+    name: Optional[str] = None
+    licence: Optional[str] = None
+    email: Optional[str] = None
+
+
+class OpsBuddyPatch(BaseModel):
+    active: Optional[bool] = None
+    stage: Optional[Literal["applied", "verification", "verified"]] = None
+    name: Optional[str] = None
+    licence: Optional[str] = None
 
 
 # ---------------- Helpers ----------------
@@ -269,6 +334,33 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     return user
 
 
+# ---------------- Ops ----------------
+# Which numbers reach the Ops console. Role is decided by the number alone, so
+# one login screen serves both apps: a whitelisted number lands in Ops, anything
+# else is a Buddy. Ops is a role, not a stored account — there is no ops
+# collection because nothing is owned by an ops user.
+OPS_WHITELIST = {
+    "+919999999999": {"name": "Voiku"},
+}
+
+
+def ops_entry(phone: str) -> Optional[dict]:
+    return OPS_WHITELIST.get((phone or "").strip())
+
+
+async def get_current_ops(authorization: Optional[str] = Header(None)) -> dict:
+    payload = _decode(authorization)
+    if payload.get("role") != "ops":
+        raise HTTPException(403, "This endpoint is for the Ops console")
+    phone = payload.get("sub")
+    entry = ops_entry(phone)
+    if not entry:
+        # Revoking a number takes effect immediately, without waiting for the
+        # 30-day token to expire.
+        raise HTTPException(403, "This number no longer has Ops access")
+    return {"phone": phone, "name": entry.get("name")}
+
+
 async def get_current_driver(authorization: Optional[str] = Header(None)) -> dict:
     payload = _decode(authorization)
     if payload.get("role") != "driver":
@@ -281,34 +373,241 @@ async def get_current_driver(authorization: Optional[str] = Header(None)) -> dic
     return partner
 
 
-def compute_fare(trip_type: str, one_way: bool, distance_km: float, duration_hours: float, is_new_user: bool, days: int = 0):
-    if trip_type == "point_to_point":
-        if not one_way and days > 0:
-            # Round trip = days-based pricing
-            base = days * 1499
-            discount = days * 200 if is_new_user else 0
-            total = base - discount
-            return float(base), float(discount), float(total)
-        base = 199 + distance_km * 12
-    else:  # hourly
-        base = max(1, duration_hours) * 249
-    discount = round(base * 0.10, 2) if is_new_user else 0.0
-    total = round(base - discount, 2)
-    return round(base, 2), discount, total
+async def get_chat_participant(authorization: Optional[str] = Header(None)) -> dict:
+    """Resolve a caller from *either* app.
+
+    Chat is the first resource both roles touch — every other endpoint belongs
+    to exactly one app, so `get_current_user` and `get_current_driver` reject
+    each other by design. This resolves whoever is calling and says which side
+    they are; proving they belong to a particular thread is `_thread_or_403`.
+    """
+    payload = _decode(authorization)
+    # Legacy tokens predate the role claim; absence means the client app.
+    if payload.get("role", "user") == "driver":
+        partner = await db.partners.find_one({"id": payload["sub"]}, {"_id": 0})
+        if not partner:
+            raise HTTPException(401, "Partner not found")
+        if not partner.get("active", True):
+            raise HTTPException(403, "This partner account has been deactivated")
+        return {"role": "driver", "id": partner["id"], "account": partner}
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(401, "User not found")
+    return {"role": "user", "id": user["id"], "account": user}
+
+
+# A thread stops accepting messages once the trip is over, but stays readable —
+# the design's Messages tab splits exactly this way (Active / Closed).
+CHAT_CLOSED_STATES = ("completed", "cancelled")
+
+
+async def _thread_or_403(booking_id: str, caller: dict) -> dict:
+    """Return the booking only if the caller is one of its two participants."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Trip not found")
+    owner_side = caller["role"] == "user"
+    mine = b["user_id"] if owner_side else b.get("driver_id")
+    if not mine or mine != caller["id"]:
+        raise HTTPException(403, "Not your trip")
+    # An unassigned trip has no counterparty, so there is no thread to open.
+    if not b.get("driver_id"):
+        raise HTTPException(409, "No partner assigned to this trip yet")
+    return b
+
+
+# ---------------- Fare engine — Rate Table v1.7 ----------------
+# §3.4 requires every rate be a configurable variable rather than a literal, so
+# the ramp and any repricing land here and nowhere else.
+FARE = {
+    "per_day_rate": 1199,
+    "daily_km_inclusion": 300,
+    "daily_hour_inclusion": 12,
+    "overage_per_km": 3.99,
+    "return_per_km": 0.99,
+    "food_per_day": 299,
+    "night_charge": 249,
+    "stay_per_night": 499,
+    "night_start_hour": 22,   # arrival at or after 22:00 triggers
+    "night_end_hour": 6,      # pickup before 06:00 triggers
+    "standard_commission_pct": 25,
+    "promo_discount_pct": 15,  # launch promo; ramps to 0 → standard 25%
+    "gst_rate_pct": 18,
+}
+
+# §1: 20% of the estimate at booking, balance reconciled at trip end.
+DEPOSIT_PCT = 20
+
+
+def effective_commission_pct() -> float:
+    """Standard rate less the launch promo — 10% at launch, ramping to 25%."""
+    return max(0.0, FARE["standard_commission_pct"] - FARE["promo_discount_pct"])
+
+
+def _night_trigger(scheduled_at: Optional[str], duration_hours: float) -> bool:
+    """Pickup before 06:00, or estimated arrival at/after 22:00 (§2.1 #5)."""
+    if not scheduled_at:
+        return False
+    try:
+        start = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if start.hour < FARE["night_end_hour"]:
+        return True
+    arrival = start + timedelta(hours=max(0.0, duration_hours))
+    return arrival.hour >= FARE["night_start_hour"] or arrival.date() > start.date()
+
+
+def _one_way_days(duration_hours: float, scheduled_at: Optional[str]) -> int:
+    """§2.2: 1 day unless drive time exceeds the daily hour inclusion or the
+    trip crosses into the next calendar day, in which case the next day bills.
+
+    NOTE: Open Question #1 in v1.7 is unresolved — §2.1 says a >12h day charges
+    per-km overage, while §2.2 says it bills a second day. The formula section
+    wins here; flip this one function if the Founder rules the other way.
+    """
+    hours = max(0.0, duration_hours)
+    days = max(1, math.ceil(hours / FARE["daily_hour_inclusion"])) if hours else 1
+    if scheduled_at:
+        try:
+            start = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+            if (start + timedelta(hours=hours)).date() > start.date():
+                days = max(days, 2)
+        except ValueError:
+            pass
+    return days
+
+
+def fare_breakdown(
+    *,
+    trip_type: str,
+    one_way: bool,
+    distance_km: float,
+    duration_hours: float = 0,
+    days: int = 0,
+    scheduled_at: Optional[str] = None,
+    customer_stay: bool = False,
+) -> dict:
+    """Itemised fare. §1 keeps the itemisation internal — the customer is shown
+    a single estimate — but every component is priced individually because
+    commission applies to only some of them (§3.1).
+
+    `distance_km` is always the one-way distance from the routing API. A round
+    trip covers it twice, which is what §5.4's sense check assumes (a 300 km
+    each-way route measured as 600 km).
+    """
+    # Hourly is not covered by the rate table at all — v1.7 locks One-Way and
+    # Round Trip only. Left on its prior pricing rather than invented here.
+    if trip_type == "hourly":
+        base = round(max(1.0, duration_hours) * 249, 2)
+        return {
+            "per_day": base, "overage": 0.0, "return_leg": 0.0, "food": 0.0,
+            "stay": 0.0, "night": 0.0, "trip_days": 0, "billable_km": 0.0,
+            "night_trigger": False, "total": base, "uncovered_by_rate_table": True,
+        }
+
+    if one_way:
+        trip_days = _one_way_days(duration_hours, scheduled_at)
+        billable_km = max(0.0, distance_km)
+        return_leg = FARE["return_per_km"] * billable_km
+        stay = 0.0  # §2.1: no stay charges on one-way trips
+    else:
+        # §5.3: trip_days = return date − outbound date + 1. The caller counts
+        # nights, so a same-day return is 1 day and an overnight return is 2.
+        trip_days = max(1, days)
+        billable_km = max(0.0, distance_km) * 2
+        return_leg = 0.0  # §5.1 #3: the Buddy returns driving the customer's car
+        overnights = max(0, trip_days - 1)
+        stay = 0.0 if customer_stay else FARE["stay_per_night"] * overnights
+
+    per_day = FARE["per_day_rate"] * trip_days
+    included_km = FARE["daily_km_inclusion"] * trip_days
+    overage = FARE["overage_per_km"] * max(0.0, billable_km - included_km)
+    food = FARE["food_per_day"] * trip_days
+    night_trigger = _night_trigger(scheduled_at, duration_hours)
+    night = float(FARE["night_charge"]) if night_trigger else 0.0
+
+    total = per_day + overage + return_leg + food + stay + night
+    return {
+        "per_day": round(per_day, 2),
+        "overage": round(overage, 2),
+        "return_leg": round(return_leg, 2),
+        "food": round(food, 2),
+        "stay": round(stay, 2),
+        "night": night,
+        "trip_days": trip_days,
+        "billable_km": round(billable_km, 2),
+        "night_trigger": night_trigger,
+        "total": round(total),  # customers are quoted whole rupees
+        "uncovered_by_rate_table": False,
+    }
+
+
+def compute_fare(trip_type: str, one_way: bool, distance_km: float, duration_hours: float,
+                 is_new_user: bool, days: int = 0, scheduled_at: Optional[str] = None,
+                 customer_stay: bool = False):
+    """Back-compatible shape (base, discount, total) for existing callers.
+
+    v1.7 is a fixed rate table with no promotional discount, so `discount` is
+    always 0 and `is_new_user` no longer changes the price.
+    """
+    b = fare_breakdown(
+        trip_type=trip_type, one_way=one_way, distance_km=distance_km,
+        duration_hours=duration_hours, days=days, scheduled_at=scheduled_at,
+        customer_stay=customer_stay,
+    )
+    return float(b["total"]), 0.0, float(b["total"])
 
 
 def gen_code() -> str:
     return "".join(random.choices(string.digits, k=4))
 
 
-# Partners keep 80% of the trip fare; the platform commission is 20%. Rounded to
-# the nearest ₹10 so the figure the partner sees is always a clean number.
-COMMISSION_RATE = 0.20
+def partner_payout(booking: dict) -> float:
+    """What the Buddy earns (§3.1).
+
+    Commission is charged on margin-bearing components only — the per-day rate
+    and distance overage. The return charge, food, stay and night charges pass
+    through at 100%, so a flat percentage of the total fare would underpay the
+    Buddy on exactly the trips carrying the most allowances.
+    """
+    b = booking.get("fare") or {}
+    if not b:
+        # Pre-v1.7 bookings stored only a total; fall back to the whole fare as
+        # margin-bearing rather than inventing a split.
+        margin = float(booking.get("total_fare") or 0)
+        pass_through = 0.0
+    else:
+        margin = float(b.get("per_day", 0)) + float(b.get("overage", 0))
+        pass_through = (
+            float(b.get("return_leg", 0)) + float(b.get("food", 0))
+            + float(b.get("stay", 0)) + float(b.get("night", 0))
+        )
+    commission = margin * effective_commission_pct() / 100
+    return round(margin - commission + pass_through)
+
+
+def commission_lines(booking: dict) -> dict:
+    """Platform side of the same split — commission, the GST inside it, and net."""
+    b = booking.get("fare") or {}
+    margin = (float(b.get("per_day", 0)) + float(b.get("overage", 0))) if b else float(booking.get("total_fare") or 0)
+    commission = margin * effective_commission_pct() / 100
+    # §3.1: GST is absorbed within the commission, not added to the customer fare.
+    gst = commission * FARE["gst_rate_pct"] / (100 + FARE["gst_rate_pct"])
+    return {
+        "commission": round(commission),
+        "gst": round(gst),
+        "net_revenue": round(commission - gst),
+        "commission_pct": effective_commission_pct(),
+    }
+
+
+# Kept for callers that still expect a single rate; the real split is above.
+COMMISSION_RATE = effective_commission_pct() / 100
 
 
 def partner_earnings(booking: dict) -> float:
-    fare = booking.get("total_fare") or 0
-    return float(round(fare * (1 - COMMISSION_RATE) / 10) * 10)
+    return partner_payout(booking)
 
 
 def mask_name(name: Optional[str]) -> str:
@@ -463,38 +762,54 @@ async def delete_car(car_id: str, user=Depends(get_current_user)):
 
 @api_router.post("/bookings/estimate")
 async def estimate(body: EstimateIn, user=Depends(get_current_user)):
-    base, discount, total = compute_fare(
-        body.trip_type, body.one_way, body.distance_km, body.duration_hours, user.get("is_new", True), body.days
+    b = fare_breakdown(
+        trip_type=body.trip_type, one_way=body.one_way, distance_km=body.distance_km,
+        duration_hours=body.duration_hours, days=body.days,
+        scheduled_at=body.scheduled_at, customer_stay=body.customer_stay,
     )
-    per_day_discount = 200 if (not body.one_way and body.days > 0 and user.get("is_new", True)) else 0
+    total = float(b["total"])
     return {
-        "base_fare": base,
-        "discount": discount,
+        # §2.4: the customer is shown one number. The itemisation stays here for
+        # ops and payout, and the client deliberately does not render it.
         "total_fare": total,
-        "new_user_discount": user.get("is_new", True),
-        "advance_30": round(total * 0.30, 2),
-        "days": body.days,
-        "per_day_rate": 1499 if (not body.one_way and body.days > 0) else 0,
-        "per_day_discount": per_day_discount,
+        "deposit": round(total * DEPOSIT_PCT / 100),
+        "deposit_pct": DEPOSIT_PCT,
+        "trip_days": b["trip_days"],
+        "included_km": FARE["daily_km_inclusion"] * b["trip_days"],
+        "included_hours": FARE["daily_hour_inclusion"] * b["trip_days"],
+        "night_charge_applied": b["night_trigger"],
+        "stay_included": (not body.one_way) and b["stay"] > 0,
+        "overnights": max(0, b["trip_days"] - 1) if not body.one_way else 0,
+        "breakdown": b,
+        # Retained so older clients keep rendering; v1.7 has no discount.
+        "base_fare": total,
+        "discount": 0.0,
+        "advance_30": round(total * DEPOSIT_PCT / 100),
     }
 
 
 @api_router.post("/bookings")
 async def create_booking(body: BookingIn, user=Depends(get_current_user)):
-    base, discount, total = compute_fare(
-        body.trip_type, body.one_way, body.distance_km, body.duration_hours, user.get("is_new", True), body.days
+    fare = fare_breakdown(
+        trip_type=body.trip_type, one_way=body.one_way, distance_km=body.distance_km,
+        duration_hours=body.duration_hours, days=body.days,
+        scheduled_at=body.scheduled_at, customer_stay=body.customer_stay,
     )
+    total = float(fare["total"])
     paid = 0.0
     if body.payment_method != "cash":
-        paid = round(total * 0.30, 2) if body.pay_partial else total
+        paid = round(total * DEPOSIT_PCT / 100) if body.pay_partial else total
     # Drop None values so Booking model defaults (e.g. pickup_lat=Mumbai) kick in only when not supplied
     body_data = {k: v for k, v in body.dict().items() if v is not None}
     booking = Booking(
         user_id=user["id"],
         **body_data,
-        base_fare=base,
-        discount=discount,
+        base_fare=total,
+        discount=0.0,
         total_fare=total,
+        # Stored so the payout split and the trip-end reconciliation work from
+        # the same components the estimate was built from.
+        fare=fare,
         paid_amount=paid,
         status="searching",
     )
@@ -686,11 +1001,22 @@ async def driver_verify_otp(body: VerifyOtpIn):
         await db.otps.update_one({"phone": phone}, {"$set": {"verified": True}})
     # else: mock mode — any 6-digit code passes.
 
+    # The number decides the app. Checked before the partner lookup so an Ops
+    # number that has also been used in partner mode still lands in Ops on a
+    # fresh login — returning to Ops is exactly "sign out, sign in again".
+    entry = ops_entry(phone)
+    if entry:
+        return {
+            "role": "ops",
+            "token": make_token(phone, "ops"),
+            "ops": {"phone": phone, "name": entry.get("name")},
+        }
+
     existing = await db.partners.find_one({"phone": phone}, {"_id": 0})
     if existing:
         if not existing.get("active", True):
             raise HTTPException(403, "This partner account has been deactivated")
-        return {"token": make_token(existing["id"], "driver"), "partner": existing}
+        return {"role": "driver", "token": make_token(existing["id"], "driver"), "partner": existing}
 
     # TODO(onboarding): the design gates login on an Ops-managed whitelist and
     # shows "This number isn't authorised. Contact the admin." Self-signup is
@@ -698,7 +1024,7 @@ async def driver_verify_otp(body: VerifyOtpIn):
     # whitelist lookup + document verification when Ops onboarding ships.
     partner = Partner(phone=phone)
     await db.partners.insert_one(partner.dict())
-    return {"token": make_token(partner.id, "driver"), "partner": partner.dict()}
+    return {"role": "driver", "token": make_token(partner.id, "driver"), "partner": partner.dict()}
 
 
 @api_router.get("/driver/me")
@@ -879,6 +1205,451 @@ async def driver_earnings(partner=Depends(get_current_driver)):
     }
 
 
+# ---------------- Chat ----------------
+# Serves both apps off one set of routes. What differs between them is only who
+# the counterparty is: the owner sees the partner in full (name, photo, phone —
+# they are handing over their car), while the partner sees the masked name and
+# no contact details at all. Chat is therefore the partner's *only* channel to
+# the owner, until owner-initiated number sharing lands.
+
+
+async def _counterparty(b: dict, caller_role: str) -> dict:
+    if caller_role == "user":
+        drv = await db.partners.find_one({"id": b["driver_id"]}, {"_id": 0}) or {}
+        return {
+            "name": drv.get("name") or "Your partner",
+            "photo": drv.get("photo"),
+            "phone": drv.get("phone"),
+            "rating": drv.get("rating"),
+        }
+    owner = await db.users.find_one({"id": b["user_id"]}, {"_id": 0}) or {}
+    # Deliberately no phone/email: see mask_name().
+    return {"name": mask_name(owner.get("name")), "photo": None, "phone": None, "rating": None}
+
+
+async def _unread_count(booking_id: str, b: dict, caller_role: str) -> int:
+    """Messages from the other side newer than this side's read mark."""
+    mark = b.get("chat_read_user_at" if caller_role == "user" else "chat_read_driver_at")
+    q: dict = {"booking_id": booking_id, "sender_role": {"$ne": caller_role}}
+    if mark:
+        q["created_at"] = {"$gt": mark}
+    return await db.messages.count_documents(q)
+
+
+async def _thread_summary(b: dict, caller_role: str) -> dict:
+    last = await db.messages.find(
+        {"booking_id": b["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(1)
+    return {
+        "booking_id": b["id"],
+        "status": b["status"],
+        "closed": b["status"] in CHAT_CLOSED_STATES,
+        "with": await _counterparty(b, caller_role),
+        "pickup_address": b.get("pickup_address"),
+        "drop_address": b.get("drop_address"),
+        "scheduled_at": b.get("scheduled_at"),
+        "last_message": last[0] if last else None,
+        "unread": await _unread_count(b["id"], b, caller_role),
+    }
+
+
+def _threads_query(caller: dict) -> dict:
+    """Bookings the caller is a participant in, and which have a counterparty.
+
+    Written as one dict rather than `{key: id, "driver_id": {"$ne": None}}`:
+    for a driver that key *is* `driver_id`, so the second entry would silently
+    replace the first and match every partner's trips instead of their own.
+    """
+    if caller["role"] == "user":
+        return {"user_id": caller["id"], "driver_id": {"$ne": None}}
+    # A concrete driver_id is non-None by definition.
+    return {"driver_id": caller["id"]}
+
+
+@api_router.get("/chat/threads")
+async def chat_threads(caller=Depends(get_chat_participant)):
+    """Every trip of the caller's that has a partner on it, newest first."""
+    items = await db.bookings.find(
+        _threads_query(caller), {"_id": 0}
+    ).sort("created_at", -1).to_list(200)
+    return [await _thread_summary(b, caller["role"]) for b in items]
+
+
+@api_router.get("/chat/{booking_id}/messages")
+async def chat_messages(booking_id: str, caller=Depends(get_chat_participant)):
+    b = await _thread_or_403(booking_id, caller)
+    msgs = await db.messages.find(
+        {"booking_id": booking_id}, {"_id": 0}
+    ).sort("created_at", 1).to_list(1000)
+    return {
+        "thread": await _thread_summary(b, caller["role"]),
+        "me": caller["role"],
+        "messages": msgs,
+    }
+
+
+@api_router.post("/chat/{booking_id}/messages")
+async def chat_send(booking_id: str, body: MessageIn, caller=Depends(get_chat_participant)):
+    b = await _thread_or_403(booking_id, caller)
+    if b["status"] in CHAT_CLOSED_STATES:
+        raise HTTPException(409, "This trip is over — the conversation is closed")
+    text = (body.body or "").strip()
+    if not text:
+        raise HTTPException(400, "Message is empty")
+    if len(text) > 2000:
+        raise HTTPException(400, "Message is too long")
+    msg = Message(
+        booking_id=booking_id, sender_role=caller["role"],
+        sender_id=caller["id"], body=text,
+    ).model_dump()
+    await db.messages.insert_one(dict(msg))
+    # Sending is also reading: it clears your own unread count.
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {"$set": {f"chat_read_{caller['role']}_at": msg["created_at"]}},
+    )
+    return msg
+
+
+@api_router.post("/chat/{booking_id}/read")
+async def chat_mark_read(booking_id: str, caller=Depends(get_chat_participant)):
+    await _thread_or_403(booking_id, caller)
+    await db.bookings.update_one(
+        {"id": booking_id}, {"$set": {f"chat_read_{caller['role']}_at": now_iso()}}
+    )
+    return {"ok": True}
+
+
+@api_router.get("/chat/unread")
+async def chat_unread_total(caller=Depends(get_chat_participant)):
+    """One number for the Messages tab badge."""
+    items = await db.bookings.find(_threads_query(caller), {"_id": 0}).to_list(200)
+    total = sum([await _unread_count(b["id"], b, caller["role"]) for b in items])
+    return {"unread": total}
+
+
+# ---------------- Ops console ----------------
+# Ops sees everything: real customer names and numbers, exact addresses, fares
+# and payouts. The masking in _driver_view() exists to keep customer contact
+# details away from *partners*, not from the operator handling their disputes.
+
+# The design's vocabulary differs from the lifecycle the apps drive. Mapped in
+# one place so the console reads the way the spec does without renaming states
+# the client and partner apps already depend on.
+OPS_STATUS_LABEL = {
+    "pending": "Received",
+    "searching": "Received",
+    "assigned": "Confirmed",
+    "en_route": "Left for Pickup",
+    "arrived": "Arrived at Pickup",
+    "in_progress": "In Progress",
+    "completed": "Complete",
+}
+OPS_OPEN_STATES = ("pending", "searching", "assigned", "en_route", "arrived", "in_progress")
+OPS_ENGAGED_STATES = ("assigned", "en_route", "arrived", "in_progress")
+
+
+def ops_label(b: dict) -> str:
+    """"Closed" is a cancelled booking whose refund has been settled."""
+    if b.get("status") == "cancelled":
+        return "Closed" if b.get("refund_done") else "Cancelled"
+    return OPS_STATUS_LABEL.get(b.get("status"), b.get("status", ""))
+
+
+def deposit_of(b: dict) -> float:
+    return round(float(b.get("total_fare") or 0) * DEPOSIT_PCT / 100)
+
+
+def balance_of(b: dict) -> float:
+    return max(0.0, round(float(b.get("total_fare") or 0) - float(b.get("paid_amount") or 0)))
+
+
+def region_of(licence: Optional[str]) -> str:
+    return "Himachal" if (licence or "").startswith("HP") else "Punjab"
+
+
+async def _ops_booking_view(b: dict, *, detail: bool = False) -> dict:
+    owner = await db.users.find_one({"id": b["user_id"]}, {"_id": 0}) or {}
+    partner = await db.partners.find_one({"id": b["driver_id"]}, {"_id": 0}) if b.get("driver_id") else None
+    car = await db.cars.find_one({"id": b["car_id"]}, {"_id": 0}) if b.get("car_id") else None
+    view = {
+        "id": b["id"],
+        "status": b["status"],
+        "label": ops_label(b),
+        "customer": {"id": owner.get("id"), "name": owner.get("name"), "phone": owner.get("phone"),
+                     "email": owner.get("email")},
+        "buddy": {"id": partner["id"], "name": partner.get("name"), "phone": partner.get("phone"),
+                  "rating": partner.get("rating")} if partner else None,
+        "pickup_address": b.get("pickup_address"),
+        "drop_address": b.get("drop_address"),
+        "one_way": b.get("one_way", True),
+        "days": b.get("days", 0),
+        "distance_km": b.get("distance_km", 0),
+        "scheduled_at": b.get("scheduled_at"),
+        "return_at": b.get("return_at"),
+        "created_at": b.get("created_at"),
+        "fare": float(b.get("total_fare") or 0),
+        "deposit": deposit_of(b),
+        "balance": balance_of(b),
+        "paid_amount": float(b.get("paid_amount") or 0),
+        "payment_failed": bool(b.get("payment_failed")),
+        "refund_done": bool(b.get("refund_done")),
+        "cancel_reason": b.get("cancel_reason"),
+        "rating": b.get("rating"),
+        "transmission": b.get("transmission"),
+    }
+    if detail:
+        view.update({
+            "breakdown": b.get("fare") or {},
+            "payout": partner_payout(b) if b.get("driver_id") else 0,
+            "commission": commission_lines(b),
+            "car": f"{car['make']} {car['model']}" if car else None,
+            "plate": (car or {}).get("plate"),
+            "comment": b.get("comment"),
+            "start_code": b.get("start_code"),
+            "customer_stay": b.get("customer_stay"),
+            "timeline": {k: b.get(k) for k in
+                         ("created_at", "left_at", "arrived_at", "started_at", "completed_at")},
+        })
+    return view
+
+
+def _ops_buddy_view(p: dict, bookings: List[dict]) -> dict:
+    mine = [b for b in bookings if b.get("driver_id") == p["id"]]
+    done = [b for b in mine if b["status"] == "completed"]
+    return {
+        "id": p["id"],
+        "name": p.get("name"),
+        "phone": p.get("phone"),
+        "licence": p.get("licence"),
+        "photo": p.get("photo"),
+        "rating": p.get("rating", 0),
+        "trips": p.get("trips", 0),
+        "active": p.get("active", True),
+        "available": p.get("available", True),
+        "onboarding": p.get("onboarding", False),
+        "stage": p.get("stage"),
+        "joined": p.get("joined"),
+        "applied_at": p.get("applied_at"),
+        "region": region_of(p.get("licence")),
+        "trips_in_system": len(mine),
+        "completed": len(done),
+        "earnings": round(sum(partner_payout(b) for b in done)),
+        "on_duty": any(b["status"] in OPS_ENGAGED_STATES for b in mine),
+    }
+
+
+@api_router.get("/ops/me")
+async def ops_me(ops=Depends(get_current_ops)):
+    return ops
+
+
+@api_router.post("/ops/switch-to-partner")
+async def ops_switch_to_partner(ops=Depends(get_current_ops)):
+    """Hand back a driver token for the operator's own number.
+
+    One-way by design: nothing in the partner app links back here. Returning to
+    Ops means signing out and signing in again, at which point the whitelist
+    check in driver_verify_otp routes the same number to Ops.
+    """
+    phone = ops["phone"]
+    partner = await db.partners.find_one({"phone": phone}, {"_id": 0})
+    if not partner:
+        partner = Partner(phone=phone, name=ops.get("name"), is_new=True).dict()
+        await db.partners.insert_one(dict(partner))
+    elif not partner.get("active", True):
+        raise HTTPException(403, "This partner account has been deactivated")
+    return {"role": "driver", "token": make_token(partner["id"], "driver"), "partner": partner}
+
+
+@api_router.get("/ops/metrics")
+async def ops_metrics(ops=Depends(get_current_ops)):
+    bookings = await db.bookings.find({}, {"_id": 0}).to_list(5000)
+    partners = await db.partners.find({}, {"_id": 0}).to_list(1000)
+
+    total = len(bookings)
+    by = lambda *s: [b for b in bookings if b["status"] in s]
+    completed = by("completed")
+    in_progress = by("in_progress")
+    confirmed = by("assigned", "en_route", "arrived")
+    cancelled = by("cancelled")
+    pending = [b for b in bookings if b["status"] in ("pending", "searching") and not b.get("driver_id")]
+
+    roster = [p for p in partners if not p.get("onboarding")]
+    active_list = [p for p in roster if p.get("active", True)]
+    on_duty = {b["driver_id"] for b in in_progress if b.get("driver_id")}
+    engaged = {b["driver_id"] for b in by(*OPS_ENGAGED_STATES) if b.get("driver_id")}
+    rated = [b for b in bookings if b.get("rating")]
+
+    pipeline = [p for p in partners if p.get("onboarding")]
+    def stage(n):
+        return len([p for p in pipeline if p.get("stage") == n])
+    days_in_pipeline = [
+        (datetime.now(timezone.utc) - datetime.fromisoformat(p["applied_at"])).days
+        for p in pipeline if p.get("applied_at")
+    ]
+
+    payable = [b for b in bookings if b["status"] != "cancelled"]
+    failed = [b for b in payable if b.get("payment_failed")]
+    refund_queue = [b for b in cancelled if not b.get("refund_done")]
+    buddy_earnings = sum(partner_payout(b) for b in completed if b.get("driver_id"))
+
+    revenue = sum(deposit_of(b) for b in payable if not b.get("payment_failed")) \
+        + sum(balance_of(b) for b in completed)
+
+    finished = len(completed) + len(cancelled)
+    return {
+        # trips
+        "total": total, "completed": len(completed), "in_progress": len(in_progress),
+        "confirmed": len(confirmed), "pending": len(pending), "cancelled": len(cancelled),
+        "completion_rate": round(len(completed) / finished * 100) if finished else 0,
+        "cancellation_rate": round(len(cancelled) / finished * 100) if finished else 0,
+        "avg_fare": round(sum(b.get("total_fare", 0) for b in completed) / len(completed)) if completed else 0,
+        "top_cancel_reason": Counter(
+            [b.get("cancel_reason") for b in cancelled if b.get("cancel_reason")]
+        ).most_common(1)[0][0] if any(b.get("cancel_reason") for b in cancelled) else "—",
+        # buddies
+        "active_buddies": len(active_list),
+        "on_duty": len(on_duty),
+        "available": max(0, len(active_list) - len(on_duty)),
+        "utilisation_pct": round(len(engaged) / len(active_list) * 100) if active_list else 0,
+        "avg_rating": round(sum(b["rating"] for b in rated) / len(rated), 1) if rated else 0.0,
+        "utilisation": round(len(completed) / len(active_list), 1) if active_list else 0.0,
+        # acquisition
+        "applied": stage("applied"), "in_verification": stage("verification"),
+        "verified_ready": stage("verified"), "in_pipeline": len(pipeline),
+        "onboarding": len([p for p in pipeline if p.get("stage") != "applied"]),
+        "dormant": len([p for p in roster if not p.get("active", True)]),
+        "avg_days_in_pipeline": round(sum(days_in_pipeline) / len(days_in_pipeline)) if days_in_pipeline else 0,
+        "punjab": len([p for p in active_list if region_of(p.get("licence")) == "Punjab"]),
+        "himachal": len([p for p in active_list if region_of(p.get("licence")) == "Himachal"]),
+        "earnings_per_buddy": round(buddy_earnings / len(active_list)) if active_list else 0,
+        # payments
+        "payment_rate": round((len(payable) - len(failed)) / len(payable) * 100) if payable else 0,
+        "payments_failed": len(failed),
+        "deposits_collected": round(sum(deposit_of(b) for b in payable if not b.get("payment_failed"))),
+        "balance_collected": round(sum(balance_of(b) for b in completed)),
+        "refunds_pending": len(refund_queue),
+        "refunds_pending_value": round(sum(deposit_of(b) for b in refund_queue)),
+        "revenue": round(revenue),
+        "commission_pct": effective_commission_pct(),
+    }
+
+
+@api_router.get("/ops/bookings")
+async def ops_bookings(
+    scope: str = "open", sort: str = "status", ops=Depends(get_current_ops),
+):
+    """`scope`: open (the console's working list) | completed | cancelled | all."""
+    q = {"status": {"$in": list(OPS_OPEN_STATES)}} if scope == "open" else \
+        {"status": scope[:-1] if scope.endswith("s") else scope} if scope in ("completed", "cancelled") else {}
+    items = await db.bookings.find(q, {"_id": 0}).to_list(2000)
+    views = [await _ops_booking_view(b) for b in items]
+    if sort == "soonest":
+        views.sort(key=lambda v: v.get("scheduled_at") or "")
+    elif sort == "fare":
+        views.sort(key=lambda v: v["fare"], reverse=True)
+    else:
+        rank = {s: i for i, s in enumerate(OPS_OPEN_STATES)}
+        views.sort(key=lambda v: (rank.get(v["status"], 99), v.get("scheduled_at") or ""))
+    return views
+
+
+@api_router.get("/ops/bookings/{booking_id}")
+async def ops_booking(booking_id: str, ops=Depends(get_current_ops)):
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Booking not found")
+    return await _ops_booking_view(b, detail=True)
+
+
+@api_router.post("/ops/bookings/{booking_id}/assign")
+async def ops_assign(booking_id: str, body: AssignIn, ops=Depends(get_current_ops)):
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Booking not found")
+    if b["status"] not in ("pending", "searching"):
+        raise HTTPException(400, f"This trip is already {ops_label(b).lower()}")
+    partner = await db.partners.find_one({"id": body.buddy_id}, {"_id": 0})
+    if not partner:
+        raise HTTPException(404, "Buddy not found")
+    if not partner.get("active", True):
+        raise HTTPException(400, "That Buddy is deactivated")
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {"$set": {"driver_id": body.buddy_id, "status": "assigned"}},
+    )
+    updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    return await _ops_booking_view(updated, detail=True)
+
+
+@api_router.post("/ops/bookings/{booking_id}/refund")
+async def ops_refund(booking_id: str, ops=Depends(get_current_ops)):
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Booking not found")
+    if b["status"] != "cancelled":
+        raise HTTPException(400, "Only a cancelled trip has a refund to settle")
+    if b.get("refund_done"):
+        raise HTTPException(400, "This refund is already settled")
+    await db.bookings.update_one(
+        {"id": booking_id}, {"$set": {"refund_done": True, "refunded_at": now_iso()}}
+    )
+    return {"ok": True, "refunded": deposit_of(b)}
+
+
+@api_router.get("/ops/buddies")
+async def ops_buddies(ops=Depends(get_current_ops)):
+    partners = await db.partners.find({}, {"_id": 0}).to_list(1000)
+    bookings = await db.bookings.find({}, {"_id": 0}).to_list(5000)
+    views = [_ops_buddy_view(p, bookings) for p in partners]
+    views.sort(key=lambda v: (not v["active"], -(v["rating"] or 0)))
+    return views
+
+
+@api_router.get("/ops/buddies/{buddy_id}")
+async def ops_buddy(buddy_id: str, ops=Depends(get_current_ops)):
+    p = await db.partners.find_one({"id": buddy_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Buddy not found")
+    bookings = await db.bookings.find({"driver_id": buddy_id}, {"_id": 0}).to_list(2000)
+    view = _ops_buddy_view(p, bookings)
+    view["recent"] = [await _ops_booking_view(b) for b in
+                      sorted(bookings, key=lambda b: b.get("scheduled_at") or "", reverse=True)[:20]]
+    return view
+
+
+@api_router.post("/ops/buddies")
+async def ops_add_buddy(body: AddBuddyIn, ops=Depends(get_current_ops)):
+    phone = body.phone.strip()
+    if await db.partners.find_one({"phone": phone}, {"_id": 0}):
+        raise HTTPException(400, "A Buddy with that number already exists")
+    if ops_entry(phone):
+        raise HTTPException(400, "That number is an Ops number")
+    partner = Partner(
+        phone=phone, name=body.name, licence=body.licence, email=body.email,
+        onboarding=True, stage="applied", applied_at=now_iso(), active=True, is_new=True,
+    )
+    await db.partners.insert_one(partner.dict())
+    return partner.dict()
+
+
+@api_router.patch("/ops/buddies/{buddy_id}")
+async def ops_update_buddy(buddy_id: str, body: OpsBuddyPatch, ops=Depends(get_current_ops)):
+    p = await db.partners.find_one({"id": buddy_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Buddy not found")
+    patch = {k: v for k, v in body.dict().items() if v is not None}
+    if not patch:
+        raise HTTPException(400, "Nothing to update")
+    # Promoting out of the pipeline clears the onboarding flag so the Buddy
+    # starts counting toward the active roster.
+    if patch.get("stage") == "verified":
+        patch["onboarding"] = False
+    await db.partners.update_one({"id": buddy_id}, {"$set": patch})
+    return await db.partners.find_one({"id": buddy_id}, {"_id": 0})
+
+
 # ---------------- Seeding ----------------
 # Partners are re-seeded on every startup (upsert by phone) so partner login
 # always works, including after an in-memory DB restart.
@@ -910,6 +1681,17 @@ SEED_PARTNERS = [
     },
 ]
 
+# Buddy applicants in the acquisition pipeline. Not part of the active roster —
+# they populate the Ops funnel (applied -> verification -> verified) and are the
+# only Buddies whose stage Ops can advance.
+SEED_PIPELINE = [
+    {"phone": "+919812004471", "name": "Rohit Bansal",  "licence": "PB-0320210088412", "stage": "applied",      "days_ago": 2},
+    {"phone": "+919816550233", "name": "Neha Chauhan",  "licence": "HP-0620220011907", "stage": "applied",      "days_ago": 6},
+    {"phone": "+919888342190", "name": "Gurpreet Sidhu","licence": "PB-0120200055318", "stage": "verification", "days_ago": 11},
+    {"phone": "+919418223760", "name": "Ankit Sharma",  "licence": "HP-0920210044126", "stage": "verification", "days_ago": 15},
+    {"phone": "+919779004512", "name": "Simran Kaur",   "licence": "PB-0720190033204", "stage": "verified",     "days_ago": 23},
+]
+
 # Mock owners + their cars, so seeded trips render a real customer and vehicle.
 SEED_OWNERS = [
     {"name": "Vikram Saini", "phone": "+919814552210", "make": "Maruti Suzuki", "model": "Swift Dzire", "transmission": "Manual"},
@@ -939,6 +1721,13 @@ SEED_TRIPS = [
     (2, "Chandigarh", "Kasauli", True, 0, "in_progress", 0, 3200, 62, None, None),
     (0, "Mohali", "Kasauli", True, 0, "assigned", 1, 3200, 68, None, None),
     (1, "Chandigarh", "Shimla", False, 3, "assigned", 2, 6800, 113, None, None),
+    # Unassigned — these are the Ops pending queue and what Assign acts on.
+    (4, "Panchkula", "Shimla", True, 0, "searching", 1, 0, 118, None, None),
+    (6, "Chandigarh", "Manali", False, 2, "searching", 3, 0, 305, None, None),
+    (7, "Mohali", "Dharamshala", True, 0, "searching", 5, 0, 245, None, None),
+    # Cancelled — deposits still held, so these form the refund queue.
+    (5, "Chandigarh", "Kasauli", True, 0, "cancelled", -1, 0, 62, None, None),
+    (1, "Panchkula", "Manali", False, 2, "cancelled", -3, 0, 290, None, None),
     # Completed history is spread from a couple of days ago out to ~6 months so
     # the Earnings screen has content in every period filter (week → annual).
     (3, "Mohali", "Kasauli", True, 0, "completed", -2, 3300, 68, 5, "Smooth, careful drive up."),
@@ -990,6 +1779,14 @@ async def seed_partner_demo_data():
         car = await db.cars.find_one({"user_id": owner_ids[oi]}, {"_id": 0})
         out = now + timedelta(days=offset)
         completed = status == "completed"
+        # Price the demo trips off the live rate table rather than the tuple's
+        # legacy figure, so seeded earnings match what the engine would quote.
+        seed_fare = fare_breakdown(
+            trip_type="point_to_point", one_way=one_way, distance_km=dist,
+            duration_hours=max(1.0, dist / 45), days=days,
+            scheduled_at=out.isoformat(), customer_stay=False,
+        )
+        fare = float(seed_fare["total"])
         booking = Booking(
             user_id=owner_ids[oi],
             trip_type="point_to_point",
@@ -1005,11 +1802,13 @@ async def seed_partner_demo_data():
             return_at=(out + timedelta(days=days)).isoformat() if days else None,
             transmission=(car or {}).get("transmission", "Automatic"),
             car_id=(car or {}).get("id"),
-            base_fare=fare, discount=0, total_fare=fare,
+            base_fare=fare, discount=0, total_fare=fare, fare=seed_fare,
             payment_method="upi",
-            paid_amount=fare if completed else round(fare * 0.30, 2),
+            paid_amount=fare if completed else round(fare * DEPOSIT_PCT / 100),
             status=status,
-            driver_id=demo["id"],
+            # A trip still being matched has no Buddy — that is what makes it
+            # show up in the Ops pending queue.
+            driver_id=None if status in ("pending", "searching") else demo["id"],
             start_code=gen_code(),
             end_code=gen_code(),
             created_at=(out - timedelta(days=2)).isoformat(),
@@ -1017,6 +1816,11 @@ async def seed_partner_demo_data():
             completed_at=(out + timedelta(days=days, hours=6)).isoformat() if completed else None,
             rating=rating,
             comment=comment,
+            cancel_reason=random.choice(
+                ["Plans changed", "Plans changed", "Found another driver", "Trip postponed"]
+            ) if status == "cancelled" else None,
+            # One simulated gateway failure so payment rate is not a flat 100%.
+            payment_failed=(status == "assigned" and offset == 2),
         )
         await db.bookings.insert_one(booking.dict())
     logger.info("Seeded %d partners and %d demo trips", len(SEED_PARTNERS), len(SEED_TRIPS))
@@ -1082,6 +1886,18 @@ async def seed_drivers():
                     phone=d["phone"], name=d["name"], rating=d["rating"], trips=d["trips"],
                     photo=d["photo"], eta_minutes=d["eta_minutes"], is_new=False,
                     licence="MH-0120190000000",
+                ).dict()
+            )
+    for a in SEED_PIPELINE:
+        if not await db.partners.find_one({"phone": a["phone"]}):
+            await db.partners.insert_one(
+                Partner(
+                    phone=a["phone"], name=a["name"], licence=a["licence"],
+                    onboarding=True, stage=a["stage"], is_new=True,
+                    # Applicants are not yet drivable: they sit outside the
+                    # active roster until Ops marks them verified.
+                    active=False, available=False,
+                    applied_at=(datetime.now(timezone.utc) - timedelta(days=a["days_ago"])).isoformat(),
                 ).dict()
             )
     await seed_partner_demo_data()
