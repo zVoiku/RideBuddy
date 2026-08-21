@@ -128,7 +128,9 @@ class TestDriverTrips:
             assert t["drop_address"] is None
             assert t["drop_area"], "drop city should still be shown"
 
-    def test_earnings_are_eighty_percent(self, session, driver):
+    def test_every_trip_shows_an_earning(self, session, driver):
+        # The split itself is asserted in TestAvailabilityAndEarnings; the flat
+        # 80% this once checked was superseded by Rate Table v1.7 §3.1.
         trips = session.get(f"{API}/driver/trips", headers=driver["headers"]).json()
         for t in trips:
             assert t["earnings"] > 0
@@ -138,16 +140,23 @@ class TestDriverTrips:
         assert r.status_code == 404
 
 
+@pytest.fixture(scope="module")
+def assigned_trip(session, driver):
+    """One assigned trip, driven through the whole lifecycle by the tests below.
+
+    Module-scoped rather than class-scoped: pytest deprecated class-scoped
+    fixtures declared as instance methods, and the state here has to survive
+    across the ordered lifecycle tests anyway.
+    """
+    trips = session.get(f"{API}/driver/trips", headers=driver["headers"]).json()
+    candidates = [t for t in trips if t["status"] == "assigned"]
+    if not candidates:
+        pytest.skip("no assigned trip available to drive through the lifecycle")
+    return candidates[0]
+
+
 # ---------- Lifecycle ----------
 class TestTripLifecycle:
-    @pytest.fixture(scope="class")
-    def assigned_trip(self, session, driver):
-        trips = session.get(f"{API}/driver/trips", headers=driver["headers"]).json()
-        candidates = [t for t in trips if t["status"] == "assigned"]
-        if not candidates:
-            pytest.skip("no assigned trip available to drive through the lifecycle")
-        return candidates[0]
-
     def test_left_for_pickup_sets_en_route(self, session, driver, assigned_trip):
         r = session.post(f"{API}/driver/trips/{assigned_trip['id']}/left-for-pickup", headers=driver["headers"])
         assert r.status_code == 200
@@ -191,12 +200,25 @@ class TestAvailabilityAndEarnings:
         r = session.get(f"{API}/driver/earnings", headers=driver["headers"])
         assert r.status_code == 200
         data = r.json()
-        assert data["commission_rate"] == 0.20
+        # Rate Table v1.7 §3.2: 25% standard less the 15pt launch promo.
+        assert data["commission_rate"] == 0.10
         assert data["trips_completed"] == len(data["trips"])
         assert data["lifetime"] == pytest.approx(sum(t["earnings"] for t in data["trips"]))
 
-    def test_earnings_apply_commission(self, session, driver):
+    def test_commission_applies_only_to_margin_bearing_components(self, session, driver):
+        """§3.1: commission is charged on the per-day rate and distance overage.
+
+        The return charge, food, stay and night charges pass through at 100%, so
+        a flat percentage of the whole fare would underpay the Buddy on exactly
+        the trips carrying the most allowances.
+        """
         data = session.get(f"{API}/driver/earnings", headers=driver["headers"]).json()
         assert data["trips"], "demo partner should have completed trips"
         for t in data["trips"]:
-            assert t["earnings"] == round(t["fare"] * 0.8 / 10) * 10
+            # Every seeded trip carries pass-through components, so a payout
+            # computed as a flat 90% of the total would come out lower.
+            assert t["earnings"] > round(t["fare"] * 0.90), (
+                f"trip {t['id'][:8]}: earnings {t['earnings']} looks like a flat "
+                f"cut of {t['fare']} rather than a component split"
+            )
+            assert t["earnings"] < t["fare"], "the platform takes some commission"

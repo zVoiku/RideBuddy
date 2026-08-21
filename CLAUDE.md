@@ -52,13 +52,34 @@ Not committed (git-ignored). The SessionStart hook scaffolds safe defaults.
 
 ## Run locally
 
+Each app is its own npm project, so Expo commands must run **inside** the app
+folder — `npx expo start` at the repo root fails with `ConfigError: The
+expected package.json path .../RideBuddy/package.json does not exist`. The root
+`package.json` holds convenience scripts that cd for you:
+
 ```bash
-# Backend (in-memory DB by default via .env)
+npm run backend       # uvicorn on 0.0.0.0:8001
+npm run partner       # RideBuddy-partner, dev client, cache cleared
+npm run client        # frontend on port 8083
+npm run partner:ios   # device build (macOS + Xcode)
+npm test              # backend suite — needs `npm run backend` already running
+npm run ip            # the LAN IP to put in each app's .env
+```
+
+It is deliberately **not** an npm workspace: hoisting Expo's native deps out of
+the app folders breaks Metro resolution.
+
+Run them directly if you prefer:
+
+```bash
 backend/.venv/bin/uvicorn --app-dir backend server:app --host 0.0.0.0 --port 8001
 
 # Frontend — web preview (works headless; maps use the SVG fallback)
 cd frontend && BROWSER=none npx expo start --web --offline --port 8081
 ```
+
+`EXPO_PUBLIC_*` values are baked in when Metro starts, so after changing a
+`.env` (a new Wi-Fi network, say) restart with `--clear`.
 
 Test login: any 10-digit phone + any 6-digit OTP (e.g. `123456`).
 

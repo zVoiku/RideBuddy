@@ -35,6 +35,43 @@ export const Ico = {
     </>
   )),
   ChevronRight: mk(() => <Path d="m9 18 6-6-6-6" />),
+  // Ops console nav
+  Dashboard: mk(() => (
+    <>
+      <Rect x="3" y="3" width="7" height="9" rx="1" />
+      <Rect x="14" y="3" width="7" height="5" rx="1" />
+      <Rect x="14" y="12" width="7" height="9" rx="1" />
+      <Rect x="3" y="16" width="7" height="5" rx="1" />
+    </>
+  )),
+  Users: mk(() => (
+    <>
+      <Path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <Circle cx="9" cy="7" r="4" />
+      <Path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <Path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </>
+  )),
+  Plus: mk(() => (
+    <>
+      <Path d="M12 5v14" />
+      <Path d="M5 12h14" />
+    </>
+  )),
+  Search: mk(() => (
+    <>
+      <Circle cx="11" cy="11" r="8" />
+      <Path d="m21 21-4.3-4.3" />
+    </>
+  )),
+  IndianRupee: mk(() => (
+    <>
+      <Path d="M6 3h12" />
+      <Path d="M6 8h12" />
+      <Path d="m6 13 8.5 8" />
+      <Path d="M6 13h3a4.5 4.5 0 1 0 0-9" />
+    </>
+  )),
   ChevronDown: mk(() => <Path d="m6 9 6 6 6-6" />),
   Phone: mk(() => (
     <Path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92Z" />

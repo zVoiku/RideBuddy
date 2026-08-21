@@ -1,5 +1,5 @@
-// Auth gate: sends the partner to the tabs or to login once the stored session
-// has been checked.
+// Auth gate: sends the signed-in user to their role's shell — the Ops console
+// or the Buddy tabs — or to login, once the stored session has been checked.
 import React from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { Redirect } from 'expo-router';
@@ -7,7 +7,7 @@ import { useRB } from '../src/store';
 import { theme } from '../src/theme';
 
 export default function Index() {
-  const { ready, partner } = useRB();
+  const { ready, partner, ops } = useRB();
 
   if (!ready) {
     return (
@@ -17,6 +17,7 @@ export default function Index() {
     );
   }
 
+  if (ops) return <Redirect href="/ops/dashboard" />;
   return <Redirect href={partner ? '/(tabs)/home' : '/login'} />;
 }
 

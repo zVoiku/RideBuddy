@@ -9,7 +9,7 @@ import { Header, OtpInput, DemoNote } from '../src/ui';
 export default function Otp() {
   const router = useRouter();
   const { phone } = useLocalSearchParams<{ phone: string }>();
-  const { signIn, showToast } = useRB();
+  const { signIn, signInOps, showToast } = useRB();
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -30,8 +30,16 @@ export default function Otp() {
     try {
       const res = await api.verifyOtp(String(phone), value);
       await saveToken(res.token);
-      signIn(res.partner);
-      router.replace('/(tabs)/home');
+      // The number decides the app. An Ops number lands in the console; every
+      // other number is a Buddy. This is also the only way back to Ops from
+      // partner mode — signing in again re-runs the same check.
+      if (res.role === 'ops' && res.ops) {
+        signInOps(res.ops);
+        router.replace('/ops/dashboard');
+      } else {
+        signIn(res.partner);
+        router.replace('/(tabs)/home');
+      }
     } catch (e: any) {
       setErr(e?.message || 'That code did not work.');
       setCode('');
