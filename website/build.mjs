@@ -89,6 +89,15 @@ async function main() {
   if (!canvasFile) throw new Error('no *.dc.html found in ../Webpage');
   let html = await readFile(path.join(CANVAS, canvasFile), 'utf8');
   for (const [from, to] of rewrites) html = html.replaceAll(from, to);
+
+  // src/_headers also sends X-Robots-Tag, but Pages and Workers static assets
+  // do not honour that file identically. The meta tag works on both, and a
+  // browser-compiled "coming soon" artboard must not rank for the brand.
+  const NOINDEX = '<meta name="robots" content="noindex, nofollow">';
+  if (!html.includes('name="robots"')) {
+    html = html.replace(/<head>/i, `<head>\n${NOINDEX}`);
+    if (!html.includes(NOINDEX)) throw new Error('could not inject noindex: no <head> in the artboard');
+  }
   await writeFile(path.join(BETA, 'index.html'), html);
 
   console.log(`\nBuilt dist/ from ${canvasFile}`);

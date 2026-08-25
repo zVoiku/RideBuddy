@@ -9,6 +9,7 @@
     "client": "cd frontend && npx expo start --clear --port 8083",
     "client:ios": "cd frontend && npx expo run:ios --device",
     "test": "EXPO_PUBLIC_BACKEND_URL=http://localhost:8001 backend/.venv/bin/pytest backend/tests -q",
-    "ip": "ipconfig getifaddr en0 || ipconfig getifaddr en1 || hostname -I"
+    "ip": "ipconfig getifaddr en0 || ipconfig getifaddr en1 || hostname -I",
+    "build": "npm --prefix website install && npm --prefix website run build"
   }
 }
