@@ -125,14 +125,43 @@ class TestEstimate:
         assert d["deposit"] == round(d["total_fare"] * 0.20)
 
     def test_night_charge_triggers_on_early_pickup(self, session, auth):
+        """§2.1 #5 is an IST wall-clock rule: pickup before 06:00 or arrival at/after 22:00."""
         base = {"trip_type": "point_to_point", "one_way": True, "distance_km": 115, "duration_hours": 3}
         day = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
-                           json={**base, "scheduled_at": "2026-09-01T09:00:00+00:00"}).json()
+                           json={**base, "scheduled_at": "2026-09-01T09:00:00+05:30"}).json()
         early = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
-                             json={**base, "scheduled_at": "2026-09-01T05:30:00+00:00"}).json()
+                             json={**base, "scheduled_at": "2026-09-01T05:30:00+05:30"}).json()
         assert day["night_charge_applied"] is False
         assert early["night_charge_applied"] is True
         assert early["total_fare"] - day["total_fare"] == 249
+
+    def test_night_charge_is_evaluated_in_ist_whatever_the_offset(self, session, auth):
+        """The app serialises pickups as UTC (`toISOString()`), so a 09:00 IST
+        pickup arrives as 03:30Z. The night window must be applied to the IST
+        wall clock, never to the hour as received."""
+        base = {"trip_type": "point_to_point", "one_way": True, "distance_km": 115, "duration_hours": 3}
+        def night(ts):
+            return session.post(f"{API}/bookings/estimate", headers=auth["headers"],
+                                json={**base, "scheduled_at": ts}).json()["night_charge_applied"]
+        assert night("2026-09-01T03:30:00Z") is False          # 09:00 IST
+        assert night("2026-09-01T03:30:00.000Z") is False      # exactly what toISOString() sends
+        assert night("2026-09-01T00:00:00Z") is True           # 05:30 IST
+        assert night("2026-09-01T16:30:00Z") is True           # 22:00 IST pickup -> 01:00 arrival
+        assert night("2026-09-01T09:00:00") is False           # no offset: taken as IST
+
+    def test_late_arrival_triggers_night_charge_and_second_day(self, session, auth):
+        """A 16:00 IST departure on an 8h drive arrives past midnight: §2.1 #5
+        adds the night charge and §2.2 bills the next day."""
+        base = {"trip_type": "point_to_point", "one_way": True, "distance_km": 300}
+        noon = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
+                            json={**base, "duration_hours": 8, "scheduled_at": "2026-09-01T09:00:00+05:30"}).json()
+        late = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
+                            json={**base, "duration_hours": 8, "scheduled_at": "2026-09-01T16:00:00+05:30"}).json()
+        assert noon["trip_days"] == 1 and noon["night_charge_applied"] is False
+        assert late["trip_days"] == 2 and late["night_charge_applied"] is True
+        # One extra day (1199 + 299 food) plus the flat night charge; the 300 km
+        # now sit inside a 600 km inclusion, so no overage either way.
+        assert late["total_fare"] - noon["total_fare"] == 1199 + 299 + 249
 
     def test_estimate_hourly(self, session, auth):
         r = session.post(f"{API}/bookings/estimate", headers=auth["headers"],

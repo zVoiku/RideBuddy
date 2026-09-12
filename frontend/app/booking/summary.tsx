@@ -28,15 +28,20 @@ export default function Summary() {
   useEffect(() => {
     (async () => {
       let distance_km = 0;
+      // Point-to-point trips are priced on the routed drive time, not the
+      // (always zero) hours the form sends: §2.2 bills a second day past the
+      // 12-hour inclusion or a midnight crossing, and §2.1 #5 charges for a
+      // late arrival — neither can be known without the route's duration.
+      let duration_hours = hours;
       if (!isHourly && p.pickup_lat && p.drop_lat) {
         const r = await getDirections(`${p.pickup_lat},${p.pickup_lng}`, `${p.drop_lat},${p.drop_lng}`);
-        if (r) { setRoute(r); distance_km = r.distance_km; }
+        if (r) { setRoute(r); distance_km = r.distance_km; duration_hours = r.duration_min / 60; }
       }
       try {
         const r = await api.estimate({
           trip_type: isHourly ? 'hourly' : 'point_to_point',
           one_way: p.one_way === '1' || isHourly,
-          distance_km, duration_hours: hours, days,
+          distance_km, duration_hours, days,
           // The night/odd-hour charge depends on the pickup time, and the stay
           // allowance on the customer's answer, so both must reach the engine.
           scheduled_at: p.scheduled_at || undefined,
