@@ -2,13 +2,15 @@
   "name": "ridebuddy-website",
   "private": true,
   "type": "module",
-  "description": "Public site for ridebuddy.co.in. Root is a holding page; /beta serves the design-canvas artboard from ../Webpage. Its own npm project — the monorepo is deliberately not a workspace.",
+  "description": "Public site for ridebuddy.co.in. Root is a holding page, /estimate is the fare estimator, /beta serves the design-canvas artboard from ../Webpage. Its own npm project — the monorepo is deliberately not a workspace.",
   "scripts": {
     "build": "node build.mjs",
+    "test": "node test/parity.mjs",
     "preview": "node build.mjs && npx --yes http-server dist -p 8099 -c-1"
   },
   "devDependencies": {
     "@babel/standalone": "7.29.0",
+    "esbuild": "0.24.2",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "sharp": "^0.33.5"

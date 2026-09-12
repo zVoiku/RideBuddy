@@ -444,12 +444,29 @@ def effective_commission_pct() -> float:
     return max(0.0, FARE["standard_commission_pct"] - FARE["promo_discount_pct"])
 
 
+# Every trip starts and ends in India, so the night window and the calendar
+# day are always IST ones. Clients send `scheduled_at` however their platform
+# serialises dates — the app sends UTC (`toISOString()`), a 09:00 IST pickup
+# arriving as 03:30Z — so the wall-clock rules below must never read the hour
+# off the timestamp as received. IST has no DST; a fixed offset is exact.
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _pickup_in_ist(scheduled_at: str) -> datetime:
+    """Parse an ISO-8601 pickup time and express it in IST. Timestamps without
+    an offset are taken to already be IST wall-clock time."""
+    start = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=IST)
+    return start.astimezone(IST)
+
+
 def _night_trigger(scheduled_at: Optional[str], duration_hours: float) -> bool:
-    """Pickup before 06:00, or estimated arrival at/after 22:00 (§2.1 #5)."""
+    """Pickup before 06:00 IST, or estimated arrival at/after 22:00 IST (§2.1 #5)."""
     if not scheduled_at:
         return False
     try:
-        start = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+        start = _pickup_in_ist(scheduled_at)
     except ValueError:
         return False
     if start.hour < FARE["night_end_hour"]:
@@ -460,7 +477,7 @@ def _night_trigger(scheduled_at: Optional[str], duration_hours: float) -> bool:
 
 def _one_way_days(duration_hours: float, scheduled_at: Optional[str]) -> int:
     """§2.2: 1 day unless drive time exceeds the daily hour inclusion or the
-    trip crosses into the next calendar day, in which case the next day bills.
+    trip crosses into the next IST calendar day, in which case the next day bills.
 
     NOTE: Open Question #1 in v1.7 is unresolved — §2.1 says a >12h day charges
     per-km overage, while §2.2 says it bills a second day. The formula section
@@ -470,7 +487,7 @@ def _one_way_days(duration_hours: float, scheduled_at: Optional[str]) -> int:
     days = max(1, math.ceil(hours / FARE["daily_hour_inclusion"])) if hours else 1
     if scheduled_at:
         try:
-            start = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+            start = _pickup_in_ist(scheduled_at)
             if (start + timedelta(hours=hours)).date() > start.date():
                 days = max(days, 2)
         except ValueError:
