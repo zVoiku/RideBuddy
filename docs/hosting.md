@@ -120,8 +120,10 @@ Split them:
 | Need staging + prod | Second App Platform app on a `staging.` subdomain |
 | Real-time driver tracking replaces 3s polling | WebSockets — App Platform supports them; revisit region pinning first |
 
-## The beta site
+## The site
 
-`website/` builds what Pages serves: a holding page at `/` and the design-canvas
-beta at `/beta/`. Deploy settings and the artboard build are documented in
-`website/README.md`.
+`website/` builds what Cloudflare serves: a holding page at `/`, the fare
+estimator at `/estimate/` (the app's estimate flow on the web, Google Maps JS +
+the same fare engine as the backend), and the design-canvas beta at `/beta/`.
+Deploy settings, the Google Maps browser key, and the artboard build are
+documented in `website/README.md`.

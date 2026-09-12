@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estimate your fare — RideBuddy</title>
+<meta name="description" content="A specific fare for your exact trip. Verified Buddies drive your own car from the Chandigarh Tricity to Shimla, Manali, Delhi and beyond.">
+<meta name="theme-color" content="#F5F0E8">
+<link rel="icon" href="/logomark.svg" type="image/svg+xml">
+<meta property="og:title" content="Estimate your fare — RideBuddy">
+<meta property="og:description" content="A specific fare for your exact trip, in your own car.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://www.ridebuddy.co.in/estimate/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://maps.googleapis.com">
+<link rel="stylesheet" href="__DS_DIR__/styles.css">
+<style>
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--color-parchment); color: var(--color-charcoal);
+    font-family: var(--font-body), "DM Sans", sans-serif; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--color-green-500); text-decoration: none; }
+  a:hover { color: var(--color-green-700); }
+
+  .rb-header {
+    position: sticky; top: 0; z-index: 50; background: var(--color-parchment);
+    border-bottom: 0.5px solid var(--border-hairline); box-shadow: var(--shadow-sm);
+  }
+  .rb-header__in {
+    max-width: 1200px; margin: 0 auto; padding: 0 24px; height: 72px;
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  }
+  .rb-brand { display: flex; align-items: center; gap: 10px; }
+  .rb-brand img { width: 34px; height: 34px; display: block; }
+  .rb-brand span {
+    font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800; font-size: 21px;
+    letter-spacing: -0.01em; color: var(--color-charcoal);
+  }
+  .rb-back { font-size: 15px; font-weight: 500; color: var(--color-grey-500); white-space: nowrap; }
+  .rb-back:hover { color: var(--color-charcoal); }
+
+  .rb-page { padding: clamp(40px, 6vw, 80px) 24px clamp(56px, 8vw, 104px); }
+  .rb-intro { max-width: 720px; margin: 0 auto 40px; text-align: center; }
+  .rb-intro h1 {
+    font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800;
+    font-size: clamp(32px, 4.6vw, 50px); line-height: 1.06; letter-spacing: -0.025em; margin: 0;
+  }
+  .rb-intro p { font-size: clamp(16px, 1.6vw, 19px); line-height: 1.55; color: var(--color-grey-500); margin: 14px auto 0; max-width: 46ch; }
+  .rb-overline {
+    text-align: center; margin-bottom: 28px; font-family: var(--font-display), Urbanist, sans-serif;
+    font-weight: 700; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--color-green-700);
+  }
+  .rb-est { max-width: 680px; margin: 0 auto; }
+  .rb-card {
+    border-radius: var(--radius-lg); border: 0.5px solid var(--border-hairline); box-shadow: var(--shadow-lg);
+    background: var(--color-white); padding: clamp(24px, 4vw, 40px);
+  }
+  .rb-card h2 {
+    font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800;
+    font-size: clamp(26px, 3.4vw, 34px); line-height: 1.12; letter-spacing: -0.02em; margin: 0;
+  }
+  .rb-card .rb-lede { font-size: 15px; line-height: 1.6; color: var(--color-grey-500); margin: 10px 0 28px; }
+  .rb-stack { display: flex; flex-direction: column; gap: 24px; }
+  .rb-group { display: flex; flex-direction: column; gap: 10px; }
+  .rb-group__label { font-size: 13px; font-weight: 500; color: #888; }
+  .rb-chips { display: flex; gap: 10px; flex-wrap: wrap; }
+  .rb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+  .rb-stay { display: flex; flex-direction: column; gap: 10px; padding: 18px; background: var(--color-green-50); border-radius: var(--radius-lg); }
+  .rb-stay__q { font-size: 14px; font-weight: 500; }
+  .rb-stay__hint { font-size: 12px; color: var(--color-grey-500); }
+  .rb-actions { display: flex; flex-direction: column; gap: 12px; align-items: center; margin-top: 4px; }
+  .rb-form-error { font-size: 14px; color: var(--color-error); margin: 0; }
+
+  .rb-suggest {
+    position: absolute; z-index: 20; left: 0; right: 0; top: 100%; margin-top: 6px;
+    background: var(--color-white); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+    border: 0.5px solid var(--border-hairline); overflow: hidden; max-height: 280px; overflow-y: auto;
+  }
+  .rb-suggest__item {
+    display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; padding: 12px 16px;
+    border: none; background: transparent; cursor: pointer; font-family: inherit;
+  }
+  .rb-suggest__item:hover, .rb-suggest__item:focus { background: var(--color-green-50); outline: none; }
+  .rb-suggest__main { font-size: 15px; font-weight: 500; color: var(--color-charcoal); }
+  .rb-suggest__sub { font-size: 12px; color: var(--color-grey-500); }
+  .rb-suggest__powered { padding: 8px 16px; font-size: 11px; font-weight: 600; color: var(--color-grey-400); border-top: 0.5px solid var(--border-hairline); }
+  .rb-place { position: relative; }
+  .rb-place__busy {
+    position: absolute; right: 14px; top: 42px; width: 16px; height: 16px; border-radius: 50%;
+    border: 2px solid var(--color-green-100); border-top-color: var(--color-green-500); animation: rb-spin 0.8s linear infinite;
+  }
+  @keyframes rb-spin { to { transform: rotate(360deg); } }
+  @keyframes rb-shimmer { 0% { background-position: -280px 0; } 100% { background-position: 280px 0; } }
+  @keyframes rb-fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  .rb-loading { padding: 48px 0; text-align: center; }
+  .rb-loading p { font-family: var(--font-display), Urbanist, sans-serif; font-weight: 700; font-size: 22px; margin: 0 0 20px; }
+  .rb-loading__bar {
+    height: 8px; border-radius: 99px; max-width: 280px; margin: 0 auto;
+    background: linear-gradient(90deg, var(--color-green-50) 0%, var(--color-green-100) 50%, var(--color-green-50) 100%);
+    background-size: 280px 100%; animation: rb-shimmer 1.1s linear infinite;
+  }
+
+  .rb-result { animation: rb-fade-up 300ms cubic-bezier(.25,.46,.45,.94); }
+  .rb-result__route { font-family: var(--font-display), Urbanist, sans-serif; font-weight: 700; font-size: clamp(17px, 2.2vw, 20px); margin: 0; }
+  .rb-result__meta { font-size: 14px; color: var(--color-grey-500); margin: 6px 0 0; }
+  .rb-fare { margin: 22px 0 8px; }
+  .rb-fare__label { font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-grey-500); margin-bottom: 6px; }
+  .rb-fare__value {
+    font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800;
+    font-size: clamp(46px, 8vw, 68px); line-height: 1; letter-spacing: -0.03em; color: var(--color-green-500);
+  }
+  .rb-conds { list-style: none; margin: 28px 0 0; padding: 20px 0 0; border-top: 0.5px solid var(--border-hairline); display: flex; flex-direction: column; gap: 10px; }
+  .rb-conds li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.5; color: var(--color-grey-500); }
+  .rb-conds li svg { flex: 0 0 auto; margin-top: 3px; }
+  .rb-conds li.rb-excluded { color: var(--color-grey-400); }
+  .rb-final { font-size: 13px; color: var(--color-charcoal); background: var(--color-fill-soft); border-radius: var(--radius-lg); padding: 12px 16px; margin: 20px 0 0; }
+  .rb-edit {
+    display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 48px; margin-top: 20px;
+    padding: 12px 20px; cursor: pointer; background: var(--color-white); border: 1.5px solid var(--color-green-500);
+    border-radius: var(--radius-lg); font-family: inherit; font-size: 15px; font-weight: 500; color: var(--color-green-700);
+  }
+  .rb-edit:hover { background: var(--color-green-50); }
+  .rb-book { margin-top: 32px; padding-top: 28px; border-top: 0.5px solid var(--border-hairline); }
+  .rb-book__row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 24px; }
+  .rb-waitlist { display: flex; flex-direction: column; gap: 14px; }
+  .rb-waitlist h3 { font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800; font-size: 20px; letter-spacing: -0.01em; margin: 0; }
+  .rb-waitlist p { font-size: 14px; line-height: 1.55; color: var(--color-grey-500); margin: 0; }
+  .rb-waitlist small { font-size: 12px; color: var(--color-grey-500); }
+  .rb-done { display: flex; gap: 10px; align-items: center; background: var(--badge-confirmed-bg, #E8F3E8); border-radius: var(--radius-lg); padding: 16px; font-size: 15px; font-weight: 500; color: #1B5E20; }
+
+  .rb-map { position: relative; margin: 22px 0 0; border-radius: var(--radius-lg); overflow: hidden; border: 0.5px solid var(--border-hairline); background: var(--color-green-50); }
+  .rb-map__canvas { width: 100%; height: 260px; }
+  .rb-map__toggle {
+    position: absolute; right: 12px; bottom: 12px; z-index: 2; border: none; cursor: pointer; font-family: inherit;
+    font-size: 13px; font-weight: 500; padding: 8px 12px; border-radius: 999px; background: var(--color-white); color: var(--color-green-700); box-shadow: var(--shadow-md);
+  }
+  .rb-map__fallback { position: absolute; inset: 0; display: grid; place-items: center; font-size: 14px; color: var(--color-grey-500); }
+  .rb-map--full { position: fixed; inset: 0; z-index: 1000; margin: 0; border-radius: 0; border: none; }
+  .rb-map--full .rb-map__canvas { height: 100%; }
+  .rb-map--full .rb-map__toggle { top: 16px; right: 16px; bottom: auto; }
+  body.rb-lock { overflow: hidden; }
+
+  .rb-banner { max-width: 680px; margin: 0 auto 24px; padding: 14px 18px; border-radius: var(--radius-lg); background: #FFF5F5; color: var(--color-error); font-size: 14px; }
+</style>
+</head>
+<body>
+<header class="rb-header">
+  <div class="rb-header__in">
+    <a class="rb-brand" href="/beta/" aria-label="RideBuddy home">
+      <img src="/logomark.svg" alt="">
+      <span>RideBuddy</span>
+    </a>
+    <a class="rb-back" href="/beta/">Back to site</a>
+  </div>
+</header>
+<main class="rb-page">
+  <div id="app"></div>
+</main>
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script src="__DS_DIR__/_ds_bundle.js"></script>
+<script src="/estimate/app.js"></script>
+</body>
+</html>

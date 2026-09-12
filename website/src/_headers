@@ -4,6 +4,10 @@
   X-Robots-Tag: noindex, nofollow
   Cache-Control: public, max-age=300
 
+# The estimator is a real page; short cache so a rate change lands quickly.
+/estimate/*
+  Cache-Control: public, max-age=300
+
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
