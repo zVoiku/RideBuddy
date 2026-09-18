@@ -144,30 +144,36 @@ function PlaceField({ label, icon, placeholder, kind, value, onChange, onSelect,
 // ----- Map picker: drop a pin when the address isn't precise enough ---------------
 
 /**
- * A map in a modal with a fixed centre pin: drag or tap the map to move the
- * point, and confirm. Centres on whatever the field already holds, otherwise
- * on the Tricity (pickups) or the wider service region (destinations).
+ * A map in a modal: tap one of Google's places to select it by name, or drag
+ * the map under the fixed centre pin to place an arbitrary point, then
+ * confirm. Centres on whatever the field already holds, otherwise on the
+ * Tricity (pickups) or the wider service region (destinations).
  *
  * The point is what matters — routing and the fare use its coordinates. The
- * address is only a label, so a project without the Geocoding API still gets a
+ * name is only a label, so a project without the Geocoding API still gets a
  * working picker, captioned with coordinates.
  */
 function MapPicker({ kind, initial, onClose, onPick }) {
   const el = useRef(null);
   const map = useRef(null);
   const timer = useRef(null);
+  // A place tapped on the map knows its own name; reverse geocoding must not
+  // overwrite it with a street address once the pan settles.
+  const named = useRef(initial && initial.place_id ? { ...initial, address: initial.description } : null);
   const [point, setPoint] = useState(initial ? { lat: initial.lat, lng: initial.lng } : null);
   const [label, setLabel] = useState(initial ? { address: initial.description, main_text: initial.main_text } : null);
   const [naming, setNaming] = useState(false);
   const [failed, setFailed] = useState(false);
 
   const gate = point ? maps.withinService(kind, point) : { ok: true };
+  /** The tapped place, while the pin is still on it. */
+  const atNamed = () => (named.current && point && maps.haversineKm(point, named.current) < 0.01 ? named.current : null);
 
   useEffect(() => {
     document.body.classList.add('rb-lock');
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
-    return () => { document.body.classList.remove('rb-lock'); document.removeEventListener('keydown', onKey); clearTimeout(timer.current); };
+    return () => { document.body.classList.remove('rb-lock'); document.removeEventListener('keydown', onKey); clearTimeout(timer.current); window.__rbPickerMap = null; window.__rbPickerNamed = null; };
   }, []);
 
   useEffect(() => {
@@ -180,11 +186,35 @@ function MapPicker({ kind, initial, onClose, onPick }) {
         const centre = initial ? { lat: initial.lat, lng: initial.lng } : maps.CHANDIGARH;
         const m = new Map(el.current, {
           center: centre, zoom: initial ? 16 : (kind === 'pickup' ? 12 : 8),
-          disableDefaultUI: true, zoomControl: true, clickableIcons: false, gestureHandling: 'greedy',
+          disableDefaultUI: true, zoomControl: true, clickableIcons: true, gestureHandling: 'greedy',
         });
         map.current = m;
-        // Tapping recentres, so the pin can be placed without dragging.
-        m.addListener('click', (e) => m.panTo(e.latLng));
+        // Handles for the end-to-end check in test/verify.mjs, which needs to
+        // aim a click at a place icon and see which place came back.
+        window.__rbPickerMap = m;
+        window.__rbPickerNamed = null;
+        m.addListener('click', async (e) => {
+          // Google's own places carry a placeId. Take the place itself —
+          // e.stop() suppresses Google's info window, which we replace with
+          // the name in the footer.
+          if (e.placeId) {
+            e.stop();
+            setNaming(true);
+            const poi = await maps.getPlaceById(e.placeId);
+            if (poi && !dead) {
+              named.current = poi;
+              window.__rbPickerNamed = poi;
+              setLabel({ address: poi.address, main_text: poi.main_text });
+              setPoint({ lat: poi.lat, lng: poi.lng });
+              setNaming(false);
+              m.panTo({ lat: poi.lat, lng: poi.lng });
+              return;
+            }
+            setNaming(false);
+          }
+          // Anywhere else: recentre, so a point can be placed without dragging.
+          m.panTo(e.latLng);
+        });
         // The pin is fixed to the centre of the viewport; the map moves under it.
         m.addListener('idle', () => {
           const c = m.getCenter();
@@ -203,6 +233,10 @@ function MapPicker({ kind, initial, onClose, onPick }) {
     if (!point) return undefined;
     clearTimeout(timer.current);
     if (!maps.withinService(kind, point).ok) { setLabel(null); return undefined; }
+    const poi = atNamed();
+    if (poi) { setLabel({ address: poi.address, main_text: poi.main_text }); setNaming(false); return undefined; }
+    named.current = null;
+    window.__rbPickerNamed = null;
     setNaming(true);
     timer.current = setTimeout(async () => {
       const got = await maps.reverseGeocode(point);
@@ -214,12 +248,14 @@ function MapPicker({ kind, initial, onClose, onPick }) {
 
   const confirm = () => {
     if (!point || !gate.ok) return;
+    const poi = atNamed();
+    const where = poi?.address || label?.address || maps.coordLabel(point);
     onPick({
       lat: point.lat, lng: point.lng,
-      address: label?.address || maps.coordLabel(point),
-      description: label?.address || maps.coordLabel(point),
-      main_text: label?.main_text || 'Pinned location',
-      place_id: null,
+      address: where,
+      description: where,
+      main_text: poi?.main_text || label?.main_text || 'Pinned location',
+      place_id: poi?.place_id || null,
     });
   };
 
@@ -244,14 +280,15 @@ function MapPicker({ kind, initial, onClose, onPick }) {
                 </svg>
               </div>
             )}
-          <p className="rb-picker__hint">Drag the map or tap to place the pin</p>
+          <p className="rb-picker__hint">Tap a place to select it, or drag the map to drop a pin</p>
         </div>
         <div className="rb-picker__foot">
           <div className="rb-picker__where">
             {!gate.ok
               ? <span className="rb-picker__bad">{gate.message}</span>
               : <>
-                  <span className="rb-picker__addr">{naming ? 'Finding this place…' : (label?.address || (point ? maps.coordLabel(point) : '—'))}</span>
+                  <span className="rb-picker__addr">{naming ? 'Finding this place…' : (label?.main_text || (point ? 'Pinned location' : '—'))}</span>
+                  {label?.address && !naming && <span className="rb-picker__sub">{label.address}</span>}
                   {point && <span className="rb-picker__coord">{maps.coordLabel(point)}</span>}
                 </>}
           </div>
