@@ -88,9 +88,69 @@
   .rb-suggest__sub { font-size: 12px; color: var(--color-grey-500); }
   .rb-suggest__powered { padding: 8px 16px; font-size: 11px; font-weight: 600; color: var(--color-grey-400); border-top: 0.5px solid var(--border-hairline); }
   .rb-place { position: relative; }
+  .rb-place .rb-input { padding-right: 96px; }
+  .rb-place__map {
+    position: absolute; right: 8px; top: 31px; width: 38px; height: 38px; display: flex; align-items: center;
+    justify-content: center; cursor: pointer; border: none; border-radius: 10px;
+    background: var(--color-green-50); color: var(--color-green-700);
+  }
+  .rb-place__map:hover { background: var(--color-green-100); }
+  .rb-place__map:focus-visible { outline: none; box-shadow: var(--ring-focus); }
   .rb-place__busy {
-    position: absolute; right: 14px; top: 42px; width: 16px; height: 16px; border-radius: 50%;
+    position: absolute; right: 56px; top: 42px; width: 16px; height: 16px; border-radius: 50%;
     border: 2px solid var(--color-green-100); border-top-color: var(--color-green-500); animation: rb-spin 0.8s linear infinite;
+  }
+
+  /* Map picker — drop a pin when the typed address isn't precise enough. */
+  .rb-picker {
+    position: fixed; inset: 0; z-index: 1100; display: flex; align-items: center; justify-content: center;
+    padding: 24px; background: rgba(30, 30, 26, 0.55);
+  }
+  .rb-picker__sheet {
+    display: flex; flex-direction: column; width: min(680px, 100%); max-height: 100%;
+    background: var(--color-white); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-lg);
+  }
+  .rb-picker__head {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 16px 18px; border-bottom: 0.5px solid var(--border-hairline);
+  }
+  .rb-picker__head h3 {
+    margin: 0; font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800;
+    font-size: 18px; letter-spacing: -0.01em;
+  }
+  .rb-picker__close {
+    width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+    border: none; border-radius: 999px; background: transparent; color: var(--color-grey-500); cursor: pointer;
+  }
+  .rb-picker__close:hover { background: var(--color-fill-soft); color: var(--color-charcoal); }
+  .rb-picker__map { position: relative; flex: 1 1 auto; min-height: 260px; background: var(--color-green-50); }
+  .rb-picker__canvas { position: absolute; inset: 0; }
+  .rb-picker__fallback { position: absolute; inset: 0; display: grid; place-items: center; font-size: 14px; color: var(--color-grey-500); }
+  /* The pin sits at the centre of the viewport; the map moves under it. Its tip
+     is the point, so the graphic is offset by its own height. */
+  .rb-picker__pin {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -100%);
+    pointer-events: none; filter: drop-shadow(0 4px 6px rgba(30, 30, 26, 0.35));
+  }
+  .rb-picker__hint {
+    position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); margin: 0; white-space: nowrap;
+    padding: 6px 12px; border-radius: 999px; background: rgba(245, 240, 232, 0.94);
+    font-size: 12px; font-weight: 500; color: var(--color-charcoal); pointer-events: none;
+  }
+  .rb-picker__foot {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 16px 18px; border-top: 0.5px solid var(--border-hairline);
+  }
+  .rb-picker__where { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .rb-picker__addr { font-size: 15px; font-weight: 500; color: var(--color-charcoal); }
+  .rb-picker__coord { font-size: 12px; color: var(--color-grey-500); }
+  .rb-picker__bad { font-size: 14px; color: var(--color-error); }
+  .rb-picker__foot .rb-btn { width: auto; flex: 0 0 auto; }
+  @media (max-width: 560px) {
+    .rb-picker { padding: 0; }
+    .rb-picker__sheet { width: 100%; height: 100%; max-height: none; border-radius: 0; }
+    .rb-picker__foot { flex-direction: column; align-items: stretch; }
+    .rb-picker__foot .rb-btn { width: 100%; }
   }
   @keyframes rb-spin { to { transform: rotate(360deg); } }
   @keyframes rb-shimmer { 0% { background-position: -280px 0; } 100% { background-position: 280px 0; } }
