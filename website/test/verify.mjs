@@ -184,12 +184,13 @@ async function main() {
     // picker still works and captions the pin with its coordinates, so this is
     // reported rather than failed: the address is a label, not an input.
     const caption = async () => ({
-      addr: (await page.locator('.rb-picker__addr').textContent()).trim(),
+      name: (await page.locator('.rb-picker__addr').textContent()).trim(),
+      addr: await page.locator('.rb-picker__sub').textContent().catch(() => ''),
       coord: (await page.locator('.rb-picker__coord').textContent()).trim(),
     });
     const first = await caption();
-    const geocoded = first.addr !== first.coord && !/Finding this place/.test(first.addr);
-    console.log(`  ${geocoded ? 'ok  ' : 'note'} pin caption: "${first.addr.slice(0, 64)}"${geocoded ? '' : ' — coordinates only; Geocoding API is not enabled on the key'}`);
+    const geocoded = !!first.addr && !/Finding this place/.test(first.name);
+    console.log(`  ${geocoded ? 'ok  ' : 'note'} pin caption: "${first.name.slice(0, 50)}" / "${(first.addr || '').slice(0, 50)}"${geocoded ? '' : ' — coordinates only; Geocoding API is not enabled on the key'}`);
     await page.screenshot({ path: path.join(SHOTS, 'estimate-picker.png') });
 
     // Dragging the map moves the pin, which re-captions it.
@@ -200,12 +201,53 @@ async function main() {
     await page.mouse.up();
     await page.waitForTimeout(2500);
     const moved = await caption();
-    check(moved.coord !== first.coord && moved.addr !== first.addr, `dragging the map moves the pin and re-captions it ("${moved.addr.slice(0, 44)}")`);
+    check(moved.coord !== first.coord && moved.name !== first.name, `dragging the map moves the pin and re-captions it ("${moved.name.slice(0, 44)}")`);
 
     await page.getByRole('button', { name: 'Use this location' }).click();
     await page.waitForSelector('.rb-picker__sheet', { state: 'detached', timeout: 10000 });
     const pinned = await page.inputValue('#rb-pickup');
     check(pinned.length > 3, `picked point fills the pickup field ("${pinned.slice(0, 48)}")`);
+
+    // Tapping one of Google's place icons. Hunting for an icon's pixel is
+    // unreliable headlessly, so this fires the event Google fires on such a
+    // tap — a click carrying a placeId — which exercises the whole handler:
+    // fetch the place, name the pin, move the point. That the icons are
+    // clickable at all is Google's side of the contract (clickableIcons).
+    await page.locator('.rb-place__map').last().click();
+    await page.waitForSelector('.rb-picker__sheet', { timeout: 10000 });
+    await page.waitForSelector('.rb-picker__canvas .gm-style', { timeout: 30000 });
+    await page.waitForTimeout(2000);
+    const tapped = await page.evaluate(async () => {
+      const m = window.__rbPickerMap;
+      if (!m) return null;
+      const { AutocompleteSuggestion, AutocompleteSessionToken } = await google.maps.importLibrary('places');
+      const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions({
+        input: 'National Museum New Delhi', includedRegionCodes: ['in'], sessionToken: new AutocompleteSessionToken(),
+      });
+      const p = suggestions[0]?.placePrediction;
+      if (!p) return null;
+      google.maps.event.trigger(m, 'click', { placeId: p.placeId, latLng: m.getCenter(), stop() {} });
+      return p.text?.text || p.placeId;
+    });
+    if (!tapped) {
+      check(false, 'tapping a place icon selects it by name (could not resolve a place to tap)');
+    } else {
+      await page.waitForFunction(() => !!window.__rbPickerNamed, null, { timeout: 20000 }).catch(() => {});
+      const named = await page.evaluate(() => window.__rbPickerNamed);
+      check(!!named, `tapping a place icon selects it (tapped "${tapped.slice(0, 40)}")`);
+      const cap = await caption();
+      check(!!named && cap.name === named.main_text && /Museum/i.test(cap.name),
+        `the pin takes the place's name, not a street address ("${cap.name.slice(0, 44)}")`);
+      check(!!named && Math.abs(named.lat - 28.61) < 0.1, `the point moves to the place (${named ? named.lat.toFixed(4) + ', ' + named.lng.toFixed(4) : '—'})`);
+      await page.screenshot({ path: path.join(SHOTS, 'estimate-picker-poi.png') });
+      // Confirming carries the name and the place id into the field.
+      await page.getByRole('button', { name: 'Use this location' }).click();
+      await page.waitForSelector('.rb-picker__sheet', { state: 'detached', timeout: 10000 });
+      const destText = await page.inputValue('#rb-destination');
+      check(/Museum/i.test(destText), `the tapped place fills the destination field ("${destText.slice(0, 50)}")`);
+      // Put a routable destination back for the pricing check below.
+      await page.fill('#rb-destination', '');
+    }
 
     // A map-picked pickup prices exactly like a searched one.
     await pickPlace(page, '#rb-destination', 'Kasauli');

@@ -192,6 +192,37 @@ export async function reverseGeocode({ lat, lng }) {
   }
 }
 
+/**
+ * Details for a place the visitor tapped on the map. A click on one of
+ * Google's own points of interest carries a `placeId`, which names the point
+ * far better than reverse geocoding its coordinates ever could —
+ * "National Museum" rather than "Janpath, Rajpath Area".
+ *
+ * @returns {Promise<{lat, lng, address, main_text, place_id}|null>}
+ */
+export async function getPlaceById(placeId) {
+  try {
+    const g = await loadGoogleMaps();
+    const { Place } = await g.importLibrary('places');
+    const place = new Place({ id: placeId });
+    await place.fetchFields({ fields: ['location', 'formattedAddress', 'displayName'] });
+    const loc = place.location;
+    if (!loc) return null;
+    const name = place.displayName || '';
+    const addr = place.formattedAddress || '';
+    return {
+      lat: typeof loc.lat === 'function' ? loc.lat() : loc.lat,
+      lng: typeof loc.lng === 'function' ? loc.lng() : loc.lng,
+      // Read like an autocomplete description: the name, then where it is.
+      address: name && addr && !addr.startsWith(name) ? `${name}, ${addr}` : (addr || name),
+      main_text: name || addr.split(',')[0],
+      place_id: placeId,
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
 // ----- Static Map (image fallback while the interactive map loads) -----------------
 
 /** Mirrors staticMapUrl(); brand markers A (green) and B (red). */

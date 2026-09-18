@@ -20,12 +20,16 @@ result in `frontend/app/booking/summary.tsx`.
   for round trips, hours for hourly. No booking: the result leads to the
   waitlist.
 - **Map picker** — each place field carries a map button that opens a modal
-  with a fixed centre pin: drag or tap the map to place the point, then "Use
-  this location". For an address autocomplete can't pin precisely — a house, a
-  gate, a spot on a highway. The point is what routing and the fare use; the
-  address is only a caption, so the picker still works (captioned with
-  coordinates) if the Geocoding API is ever removed from the key. The service
-  radius gates the pin exactly as it gates a searched place.
+  map. **Tap one of Google's places and it is selected by name** ("National
+  Museum, New Delhi"), which is what a customer means when they point at a
+  landmark; anywhere else, drag the map under the fixed centre pin to place an
+  arbitrary point. Then "Use this location". For an address autocomplete can't
+  pin precisely — a house, a gate, a spot on a highway. The point is what
+  routing and the fare use; the name is only a caption, so the picker still
+  works (captioned with coordinates) if the Geocoding API is ever removed from
+  the key. A tapped place keeps its own name rather than being re-captioned
+  with the street address its coordinates reverse-geocode to. The service
+  radius gates a pinned point exactly as it gates a searched one.
 - **Route** — Directions gives the one-way distance and drive time, exactly as
   the app's `getDirections()` does. Both feed the fare engine.
 - **Fare** — `src/estimate/fare-engine.js` is a line-for-line port of
@@ -110,9 +114,15 @@ NODE_PATH=/opt/node22/lib/node_modules PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 
 `verify.mjs` serves `dist/`, drives the page headless — one way, a late
 departure, a three-day round trip, hourly, an out-of-area pickup, the map
-picker (open, drag, re-caption, confirm, then price the pinned point),
-fullscreen map, mobile viewport, the `/beta` CTA redirect — and re-prices every
-estimate with the backend's `fare_breakdown` on the exact inputs the page used.
+picker (open, drag, re-caption, tap a place, confirm, then price the pinned
+point), fullscreen map, mobile viewport, the `/beta` CTA redirect — and
+re-prices every estimate with the backend's `fare_breakdown` on the exact
+inputs the page used.
+
+Tapping a place icon is exercised by firing the click Google fires for one (a
+click carrying a `placeId`) rather than hunting for the icon's pixel, which is
+unreliable headlessly: that tests this page's handler, and leaves "are the
+icons clickable" to Google's side of the contract.
 
 By default it serves the build as **`www.ridebuddy.co.in` on port 80**, resolved
 to 127.0.0.1 inside Chromium, so the browser sends the production referrer —
