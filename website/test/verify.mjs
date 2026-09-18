@@ -173,6 +173,45 @@ async function main() {
     check(subs.length > 0 && subs.every((t) => inRegion.test(t) && !/New Delhi/.test(t)), `Delhi query only surfaces Tricity-local pickups (${subs.length}, e.g. "${(subs[0] || '').slice(0, 58)}")`);
     check(!!(await page.$('#rb-pickup')) && !errors.some((e) => e.startsWith('PAGEERROR')), 'page still alive after editing a completed estimate (no uncaught errors)');
 
+    // Map picker: drop a pin when the typed address isn't precise enough.
+    check(!!(await page.$('.rb-place__map')), 'map button sits on the place fields');
+    await page.locator('.rb-place__map').first().click();
+    await page.waitForSelector('.rb-picker__sheet', { timeout: 10000 });
+    const pickerMap = await page.waitForSelector('.rb-picker__canvas .gm-style', { timeout: 30000 }).then(() => true).catch(() => false);
+    check(pickerMap, 'picker opens with a Google map');
+    await page.waitForTimeout(2500);
+    // Reverse geocoding needs the Geocoding API on the key. Without it the
+    // picker still works and captions the pin with its coordinates, so this is
+    // reported rather than failed: the address is a label, not an input.
+    const caption = async () => ({
+      addr: (await page.locator('.rb-picker__addr').textContent()).trim(),
+      coord: (await page.locator('.rb-picker__coord').textContent()).trim(),
+    });
+    const first = await caption();
+    const geocoded = first.addr !== first.coord && !/Finding this place/.test(first.addr);
+    console.log(`  ${geocoded ? 'ok  ' : 'note'} pin caption: "${first.addr.slice(0, 64)}"${geocoded ? '' : ' — coordinates only; Geocoding API is not enabled on the key'}`);
+    await page.screenshot({ path: path.join(SHOTS, 'estimate-picker.png') });
+
+    // Dragging the map moves the pin, which re-captions it.
+    const box = await (await page.$('.rb-picker__canvas')).boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 - 140, box.y + box.height / 2 - 90, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(2500);
+    const moved = await caption();
+    check(moved.coord !== first.coord && moved.addr !== first.addr, `dragging the map moves the pin and re-captions it ("${moved.addr.slice(0, 44)}")`);
+
+    await page.getByRole('button', { name: 'Use this location' }).click();
+    await page.waitForSelector('.rb-picker__sheet', { state: 'detached', timeout: 10000 });
+    const pinned = await page.inputValue('#rb-pickup');
+    check(pinned.length > 3, `picked point fills the pickup field ("${pinned.slice(0, 48)}")`);
+
+    // A map-picked pickup prices exactly like a searched one.
+    await pickPlace(page, '#rb-destination', 'Kasauli');
+    await page.fill('#rb-pickup-time', '09:00');
+    await estimateAndCompare(page, 'map-picked pickup');
+
     // Mobile viewport render.
     const mobile = await ctx.newPage(); await mobile.setViewportSize({ width: 390, height: 844 });
     await mobile.goto(`${ORIGIN}/estimate/`, { waitUntil: 'networkidle' });

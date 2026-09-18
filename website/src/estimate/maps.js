@@ -163,6 +163,35 @@ export async function getDirections(origin, destination) {
   };
 }
 
+// ----- Reverse geocoding (naming a point dropped on the map) ----------------------
+
+/** Short label for a point when no address can be resolved. */
+export const coordLabel = ({ lat, lng }) => `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+
+/**
+ * Address for a map point, via the Maps JS Geocoder.
+ *
+ * Needs the **Geocoding API** enabled on the key. It is not required for the
+ * page to work: the map picker falls back to the coordinates, which is all the
+ * fare and the route actually need — so a null return here is a degraded
+ * label, never a broken estimate.
+ *
+ * @returns {Promise<{address: string, main_text: string}|null>}
+ */
+export async function reverseGeocode({ lat, lng }) {
+  try {
+    const g = await loadGoogleMaps();
+    const { Geocoder } = await g.importLibrary('geocoding');
+    const { results } = await new Geocoder().geocode({ location: { lat, lng }, region: 'in', language: 'en-IN' });
+    // Prefer a street address over the plus-code/locality entries Google also returns.
+    const best = results.find((r) => !r.types.includes('plus_code')) || results[0];
+    if (!best) return null;
+    return { address: best.formatted_address, main_text: best.address_components?.[0]?.long_name || best.formatted_address.split(',')[0] };
+  } catch (e) {
+    return null;
+  }
+}
+
 // ----- Static Map (image fallback while the interactive map loads) -----------------
 
 /** Mirrors staticMapUrl(); brand markers A (green) and B (red). */

@@ -19,6 +19,13 @@ result in `frontend/app/booking/summary.tsx`.
   from Google Places, pickup date and time, return date and the stay question
   for round trips, hours for hourly. No booking: the result leads to the
   waitlist.
+- **Map picker** — each place field carries a map button that opens a modal
+  with a fixed centre pin: drag or tap the map to place the point, then "Use
+  this location". For an address autocomplete can't pin precisely — a house, a
+  gate, a spot on a highway. The point is what routing and the fare use; the
+  address is only a caption, so the picker still works (captioned with
+  coordinates) if the Geocoding API is ever removed from the key. The service
+  radius gates the pin exactly as it gates a searched place.
 - **Route** — Directions gives the one-way distance and drive time, exactly as
   the app's `getDirections()` does. Both feed the fare engine.
 - **Fare** — `src/estimate/fare-engine.js` is a line-for-line port of
@@ -40,8 +47,10 @@ visitor's browser zone, because the night charge and the calendar-day rule are
 IST rules. The backend applies the same conversion.
 
 **Google APIs it actually calls:** Maps JavaScript API, Places API (New),
-Directions API. `staticMapUrl()` exists for parity with the app but is unused,
-so Maps Static API is optional on the key; Geocoding is not used.
+Directions API, and Geocoding API (reverse geocoding for the map picker — the
+browser `Geocoder`, not the web service, so the referrer-restricted key works).
+`staticMapUrl()` exists for parity with the app but is unused, so Maps Static
+API is optional on the key.
 
 **Design.** Same tokens and components as the artboard: `_ds/` is copied to
 `dist/_ds/` and `Button`, `Input`, `Chip`, `Badge` come from the design-system
@@ -100,9 +109,10 @@ NODE_PATH=/opt/node22/lib/node_modules PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 ```
 
 `verify.mjs` serves `dist/`, drives the page headless — one way, a late
-departure, a three-day round trip, hourly, an out-of-area pickup, fullscreen
-map, mobile viewport, the `/beta` CTA redirect — and re-prices every estimate
-with the backend's `fare_breakdown` on the exact inputs the page used.
+departure, a three-day round trip, hourly, an out-of-area pickup, the map
+picker (open, drag, re-caption, confirm, then price the pinned point),
+fullscreen map, mobile viewport, the `/beta` CTA redirect — and re-prices every
+estimate with the backend's `fare_breakdown` on the exact inputs the page used.
 
 By default it serves the build as **`www.ridebuddy.co.in` on port 80**, resolved
 to 127.0.0.1 inside Chromium, so the browser sends the production referrer —

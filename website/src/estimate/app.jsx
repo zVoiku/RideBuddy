@@ -58,7 +58,7 @@ const TRIP_TYPES = [
 
 // ----- Place field: the web twin of CityPicker.tsx --------------------------------
 
-function PlaceField({ label, icon, placeholder, kind, value, onChange, onSelect, onBusy, error, disabled }) {
+function PlaceField({ label, icon, placeholder, kind, value, onChange, onSelect, onBusy, onOpenMap, error, disabled }) {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -116,6 +116,15 @@ function PlaceField({ label, icon, placeholder, kind, value, onChange, onSelect,
         onChange={(e) => onChange(e.target.value)} onFocus={() => items.length && setOpen(true)}
         autoComplete="off" disabled={disabled} />
       {busy && <span className="rb-place__busy" aria-hidden="true" />}
+      {onOpenMap && (
+        <button type="button" className="rb-place__map" onClick={() => { setOpen(false); onOpenMap(); }}
+          title="Pick the exact point on a map" aria-label={`Pick ${label.toLowerCase()} on a map`}>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m9 4-6 2.5v13L9 17l6 2.5 6-2.5v-13L15 6.5 9 4z" />
+            <path d="M9 4v13M15 6.5v13" />
+          </svg>
+        </button>
+      )}
       {open && items.length > 0 && (
         <div className="rb-suggest" role="listbox">
           {items.map((s) => (
@@ -128,6 +137,127 @@ function PlaceField({ label, icon, placeholder, kind, value, onChange, onSelect,
           <div className="rb-suggest__powered">Powered by Google</div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ----- Map picker: drop a pin when the address isn't precise enough ---------------
+
+/**
+ * A map in a modal with a fixed centre pin: drag or tap the map to move the
+ * point, and confirm. Centres on whatever the field already holds, otherwise
+ * on the Tricity (pickups) or the wider service region (destinations).
+ *
+ * The point is what matters — routing and the fare use its coordinates. The
+ * address is only a label, so a project without the Geocoding API still gets a
+ * working picker, captioned with coordinates.
+ */
+function MapPicker({ kind, initial, onClose, onPick }) {
+  const el = useRef(null);
+  const map = useRef(null);
+  const timer = useRef(null);
+  const [point, setPoint] = useState(initial ? { lat: initial.lat, lng: initial.lng } : null);
+  const [label, setLabel] = useState(initial ? { address: initial.description, main_text: initial.main_text } : null);
+  const [naming, setNaming] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const gate = point ? maps.withinService(kind, point) : { ok: true };
+
+  useEffect(() => {
+    document.body.classList.add('rb-lock');
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => { document.body.classList.remove('rb-lock'); document.removeEventListener('keydown', onKey); clearTimeout(timer.current); };
+  }, []);
+
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      try {
+        const g = await maps.loadGoogleMaps();
+        const { Map } = await g.importLibrary('maps');
+        if (dead || !el.current) return;
+        const centre = initial ? { lat: initial.lat, lng: initial.lng } : maps.CHANDIGARH;
+        const m = new Map(el.current, {
+          center: centre, zoom: initial ? 16 : (kind === 'pickup' ? 12 : 8),
+          disableDefaultUI: true, zoomControl: true, clickableIcons: false, gestureHandling: 'greedy',
+        });
+        map.current = m;
+        // Tapping recentres, so the pin can be placed without dragging.
+        m.addListener('click', (e) => m.panTo(e.latLng));
+        // The pin is fixed to the centre of the viewport; the map moves under it.
+        m.addListener('idle', () => {
+          const c = m.getCenter();
+          const next = { lat: c.lat(), lng: c.lng() };
+          setPoint((prev) => (prev && maps.haversineKm(prev, next) < 0.005 ? prev : next));
+        });
+      } catch (e) {
+        if (!dead) setFailed(true);
+      }
+    })();
+    return () => { dead = true; };
+  }, []);
+
+  // Name the point once it settles — debounced, and only inside the service area.
+  useEffect(() => {
+    if (!point) return undefined;
+    clearTimeout(timer.current);
+    if (!maps.withinService(kind, point).ok) { setLabel(null); return undefined; }
+    setNaming(true);
+    timer.current = setTimeout(async () => {
+      const got = await maps.reverseGeocode(point);
+      setLabel(got);
+      setNaming(false);
+    }, 400);
+    return () => clearTimeout(timer.current);
+  }, [point, kind]);
+
+  const confirm = () => {
+    if (!point || !gate.ok) return;
+    onPick({
+      lat: point.lat, lng: point.lng,
+      address: label?.address || maps.coordLabel(point),
+      description: label?.address || maps.coordLabel(point),
+      main_text: label?.main_text || 'Pinned location',
+      place_id: null,
+    });
+  };
+
+  return (
+    <div className="rb-picker" role="dialog" aria-modal="true" aria-label={`Choose ${kind === 'pickup' ? 'pickup' : 'destination'} on the map`}>
+      <div className="rb-picker__sheet">
+        <div className="rb-picker__head">
+          <h3>{kind === 'pickup' ? 'Choose your pickup point' : 'Choose your destination'}</h3>
+          <button type="button" className="rb-picker__close" onClick={onClose} aria-label="Close">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="rb-picker__map">
+          <div ref={el} className="rb-picker__canvas" />
+          {failed
+            ? <div className="rb-picker__fallback">Map unavailable right now.</div>
+            : (
+              <div className="rb-picker__pin" aria-hidden="true">
+                <svg width="38" height="46" viewBox="0 0 38 46">
+                  <path d="M19 45c0-12 12-17 12-27A12 12 0 1 0 7 18c0 10 12 15 12 27z" fill="#4A5C2F" stroke="#F5F0E8" strokeWidth="2.5" />
+                  <circle cx="19" cy="18" r="4.4" fill="#F5F0E8" />
+                </svg>
+              </div>
+            )}
+          <p className="rb-picker__hint">Drag the map or tap to place the pin</p>
+        </div>
+        <div className="rb-picker__foot">
+          <div className="rb-picker__where">
+            {!gate.ok
+              ? <span className="rb-picker__bad">{gate.message}</span>
+              : <>
+                  <span className="rb-picker__addr">{naming ? 'Finding this place…' : (label?.address || (point ? maps.coordLabel(point) : '—'))}</span>
+                  {point && <span className="rb-picker__coord">{maps.coordLabel(point)}</span>}
+                </>}
+          </div>
+          <Button size="lg" onClick={confirm} disabled={!point || !gate.ok || failed}>Use this location</Button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -237,6 +367,8 @@ function App() {
   // estimate must not run against a half-selected field.
   const [busyFields, setBusyFields] = useState({});
   const resolving = Object.values(busyFields).some(Boolean);
+  // Which field, if any, is currently choosing a point on the map.
+  const [picker, setPicker] = useState(null);
 
   const isRound = tripType === 'round';
   const isHourly = tripType === 'hourly';
@@ -362,12 +494,14 @@ function App() {
 
                 <PlaceField label="Pickup" icon={<Icon d={PIN} />} placeholder="Sector, area or landmark in the Tricity" kind="pickup"
                   value={pickup} error={errors.pickup} onBusy={(b) => setBusyFields((m) => ({ ...m, pickup: b }))}
+                  onOpenMap={() => setPicker('pickup')}
                   onChange={(text) => { setPickup({ text, place: null }); err('pickup', ''); }}
                   onSelect={(place, msg) => { setPickup(place ? { text: place.description, place } : { text: pickup.text, place: null }); err('pickup', msg || ''); }} />
 
                 {!isHourly && (
                   <PlaceField label="Destination" icon={<Icon d={NAV} />} placeholder="Where are you headed" kind="destination"
                     value={destination} error={errors.destination} onBusy={(b) => setBusyFields((m) => ({ ...m, destination: b }))}
+                    onOpenMap={() => setPicker('destination')}
                     onChange={(text) => { setDestination({ text, place: null }); err('destination', ''); }}
                     onSelect={(place, msg) => { setDestination(place ? { text: place.description, place } : { text: destination.text, place: null }); err('destination', msg || ''); }} />
                 )}
@@ -467,6 +601,20 @@ function App() {
 
         </div>
       </div>
+      {picker && (
+        <MapPicker
+          kind={picker}
+          initial={(picker === 'pickup' ? pickup : destination).place}
+          onClose={() => setPicker(null)}
+          onPick={(place) => {
+            const set = picker === 'pickup' ? setPickup : setDestination;
+            set({ text: place.description, place });
+            err(picker, '');
+            track('map_point_picked', { field: picker });
+            setPicker(null);
+          }}
+        />
+      )}
     </>
   );
 }
