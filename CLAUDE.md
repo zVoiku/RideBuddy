@@ -26,6 +26,9 @@ RideBuddy-partner/     Driver app — self-contained Expo project, own package.j
   app/                 login, otp, (tabs)/*, trip/[id], nav/[id]
   src/                 api client, theme tokens, TripMap (native) + TripMap.web
   README.md            Lifecycle, privacy rules, and on-device run instructions
+website/               ridebuddy.co.in on Cloudflare Workers (see website/README.md)
+  build.mjs            builds dist/: holding page, /estimate/, /beta/ artboard
+  worker/              Worker script: form endpoints -> D1, /admin CSV downloads
 scripts/capture.js     Playwright script: screenshots the whole flow (web build)
 .claude/               SessionStart hook that installs deps + scaffolds .env
 ```

@@ -1,12 +1,31 @@
 {
-  // Static-assets-only Worker for ridebuddy.co.in — no server code, just the
-  // site built by `npm run build` (which delegates to website/build.mjs).
+  // The Worker for ridebuddy.co.in: the site built by `npm run build` (which
+  // delegates to website/build.mjs), plus a small script for the two forms and
+  // the password-protected downloads (website/worker/index.js).
   //
-  // Cloudflare Workers Builds runs from the repository root, so this file and
-  // the asset path below are both root-relative. See website/README.md.
+  // Static files are served first; the script only sees requests no file
+  // matches (/api/*, /admin). Cloudflare Workers Builds runs from the
+  // repository root, so every path here is root-relative. See website/README.md.
   "name": "ridebuddy",
   "compatibility_date": "2026-08-25",
+  "main": "./website/worker/index.js",
   "assets": {
-    "directory": "./website/dist"
+    "directory": "./website/dist",
+    "binding": "ASSETS"
+  },
+  // Waitlist signups and Buddy applications. The tables create themselves on
+  // first use. The id is an identifier, not a credential.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "ridebuddy",
+      "database_id": "a429f43d-61e2-44b7-9124-24582b3ae16d"
+    }
+  ],
+  // Errors from the script show under Workers & Pages → ridebuddy → Logs.
+  "observability": {
+    "enabled": true
   }
+  // ADMIN_PASSWORD is a secret set in the dashboard (Settings → Variables and
+  // secrets), never in this file. Until it exists, /admin stays locked.
 }

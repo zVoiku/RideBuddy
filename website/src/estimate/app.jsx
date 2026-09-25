@@ -40,6 +40,23 @@ function track(event, payload) {
   (window.dataLayer = window.dataLayer || []).push(Object.assign({ event }, payload || {}));
 }
 
+/**
+ * Saves a form through the site's Worker (website/worker/index.js). Resolves
+ * to { ok: true } or { ok: false, error, errors } and never throws: a failure
+ * is shown to the visitor, who can try again. The /beta artboard carries the
+ * same helper (artboard-patches.mjs).
+ */
+async function postForm(path, body) {
+  try {
+    const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) return { ok: true };
+    return { ok: false, error: data.error || 'We couldn’t save that just now. Please try again.', errors: data.errors || {} };
+  } catch (e) {
+    return { ok: false, error: 'We couldn’t reach RideBuddy. Check your connection and try again.', errors: {} };
+  }
+}
+
 /** Today's date in IST, +offset days — the page prices on Indian wall-clock time whatever the visitor's zone. */
 function istDate(offsetDays = 0) {
   return new Date(Date.now() + (330 + offsetDays * 1440) * 60000).toISOString().slice(0, 10);
@@ -400,6 +417,10 @@ function App() {
   const [mapsDown, setMapsDown] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
   const [waDone, setWaDone] = useState(false);
+  const [waError, setWaError] = useState('');
+  const [waSending, setWaSending] = useState(false);
+  // The field people never see and bots fill in; the Worker drops what arrives with it.
+  const honeypot = useRef(null);
   // Place details resolve asynchronously after a suggestion is chosen; the
   // estimate must not run against a half-selected field.
   const [busyFields, setBusyFields] = useState({});
@@ -451,7 +472,10 @@ function App() {
       }
       // Snapshot what the result describes: the form can change under it once
       // the customer taps "Edit trip details", and the result must not.
-      est.labels = { pickup: pickup.place.main_text, destination: destination.place?.main_text || '', round: isRound };
+      est.labels = {
+        pickup: pickup.place.main_text, destination: destination.place?.main_text || '', round: isRound,
+        date: departDate, ret: isRound ? returnDate : null, time: pickupTime,
+      };
       setRoute(r);
       setResult(est);
       setView('result');
@@ -474,9 +498,27 @@ function App() {
 
   const editTrip = () => { setView('form'); };
 
-  const submitWhatsapp = () => {
-    if (!/\d{6}/.test(whatsapp)) return;
-    // TODO(open item #3): waitlist has no capture endpoint yet — founder's call.
+  // Joins the waitlist with the trip just priced, so the call back starts from
+  // what the customer wants. The Worker validates the number and words the trip.
+  const submitWhatsapp = async () => {
+    if (waSending) return;
+    if (!whatsapp.trim()) { setWaError('Enter your phone number.'); return; }
+    setWaSending(true);
+    setWaError('');
+    const l = result.labels;
+    const r = await postForm('/api/waitlist', {
+      phone: whatsapp,
+      source: 'estimate',
+      website: honeypot.current?.value || '',
+      trip: {
+        type: result.hourly ? 'hourly' : l.round ? 'round' : 'one',
+        from: l.pickup, to: l.destination, date: l.date, ret: l.ret, time: l.time,
+        hours: result.hourly ? result.hours : undefined,
+        fare: result.total_fare,
+      },
+    });
+    setWaSending(false);
+    if (!r.ok) { setWaError(r.errors.phone || r.error); return; }
     setWaDone(true);
     track('whatsapp_number_submitted');
   };
@@ -627,8 +669,10 @@ function App() {
                       <h3>Join the waitlist.</h3>
                       <p>Booking opens soon. Waitlist members go first.</p>
                     </div>
-                    <Input label="WhatsApp number" icon={<Icon d={CHAT} />} type="tel" placeholder="+91 ●●●●● ●●●●●" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} />
-                    <Button onClick={submitWhatsapp}>Join the Waitlist</Button>
+                    <Input label="WhatsApp number" icon={<Icon d={CHAT} />} type="tel" placeholder="+91 ●●●●● ●●●●●" value={whatsapp}
+                      error={waError || undefined} onChange={(e) => { setWhatsapp(e.target.value); setWaError(''); }} />
+                    <input ref={honeypot} type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" className="rb-hp" />
+                    <Button onClick={submitWhatsapp} disabled={waSending}>{waSending ? 'Joining…' : 'Join the Waitlist'}</Button>
                     <small>One message when the app is live. Nothing else.</small>
                   </div>
                 )}
