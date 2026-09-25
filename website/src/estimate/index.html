@@ -32,6 +32,8 @@
   .rb-header__in {
     max-width: 1200px; margin: 0 auto; padding: 0 24px; height: 72px;
     display: flex; align-items: center; justify-content: space-between; gap: 24px;
+    /* As on /beta, whose header sizes content-box: 1200px of content plus the padding. */
+    box-sizing: content-box;
   }
   .rb-brand { display: flex; align-items: center; gap: 10px; }
   .rb-brand img { width: 34px; height: 34px; display: block; }
@@ -39,8 +41,33 @@
     font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800; font-size: 21px;
     letter-spacing: -0.01em; color: var(--color-charcoal);
   }
-  .rb-back { font-size: 15px; font-weight: 500; color: var(--color-grey-500); white-space: nowrap; }
-  .rb-back:hover { color: var(--color-charcoal); }
+  /* The main site's header (the /beta artboard's), value for value; see SiteHeader in app.jsx. */
+  .rb-nav { display: flex; align-items: center; gap: 26px; flex: 0 1 auto; min-width: 0; }
+  .rb-nav a, .rb-nav a:hover {
+    font-size: 15px; font-weight: 500; white-space: nowrap; color: var(--color-grey-500);
+    padding: 6px 0; border-bottom: 2px solid transparent;
+  }
+  .rb-nav a[aria-current="page"], .rb-nav a[aria-current="page"]:hover { color: var(--color-charcoal); border-bottom-color: var(--color-green-500); }
+  .rb-nav__cta { width: auto; flex: 0 0 auto; }
+  .rb-burger {
+    display: none; align-items: center; justify-content: center; width: 44px; height: 44px;
+    border: none; background: transparent; cursor: pointer; color: var(--color-charcoal);
+  }
+  @media (max-width: 1120px) {
+    .rb-nav { display: none; }
+    .rb-burger { display: inline-flex; }
+  }
+  .rb-menu {
+    position: fixed; inset: 0; z-index: 60; background: var(--color-parchment); display: flex; flex-direction: column;
+    padding: 24px; animation: rb-fade-up 250ms cubic-bezier(.25, .46, .45, .94);
+  }
+  .rb-menu__top { display: flex; justify-content: flex-end; }
+  .rb-menu__close { width: 44px; height: 44px; border: none; background: transparent; cursor: pointer; color: var(--color-charcoal); }
+  .rb-menu__links { display: flex; flex-direction: column; gap: 28px; margin-top: 32px; }
+  .rb-menu__links a, .rb-menu__links a:hover {
+    font-family: var(--font-display), Urbanist, sans-serif; font-weight: 700; font-size: 32px; color: var(--color-charcoal);
+  }
+  .rb-menu__cta { margin-top: 16px; }
 
   .rb-page { padding: clamp(40px, 6vw, 80px) 24px clamp(56px, 8vw, 104px); }
   .rb-intro { max-width: 720px; margin: 0 auto 40px; text-align: center; }
@@ -213,13 +240,13 @@
 </style>
 </head>
 <body>
-<header class="rb-header">
+<!-- SiteHeader (app.jsx) renders the full header here; the logo shows while scripts load. -->
+<header class="rb-header" id="rb-header">
   <div class="rb-header__in">
     <a class="rb-brand" href="/beta/" aria-label="RideBuddy home">
       <img src="/logomark.svg" alt="">
       <span>RideBuddy</span>
     </a>
-    <a class="rb-back" href="/beta/">Back to site</a>
   </div>
 </header>
 <main class="rb-page">

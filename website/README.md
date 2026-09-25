@@ -19,6 +19,15 @@ git-ignored `../.dev.vars` to open the local `/admin`).
 `/estimate/` mirrors the app: the form in `frontend/app/home.tsx` and the
 result in `frontend/app/booking/summary.tsx`.
 
+- **Header** — the main site's header, element for element: logo, Home ·
+  Estimate Fare · How It Works · About · Contact, "Get an Estimate", and the
+  full-screen menu below 1120px (`SiteHeader` in `src/estimate/app.jsx`, styles
+  in `src/estimate/index.html`, CTA from the same design-system `Button`).
+  Estimate Fare is underlined as the current page; here it and "Get an
+  Estimate" bring back the form, trip kept, instead of reloading. The links
+  point at `/beta/` through one constant, `SITE` — change it when the site
+  moves to the root. `verify.mjs` measures this header and `/beta/`'s (and both
+  phone menus) and fails if they drift apart.
 - **Form** — trip type (Round Trip / One Way / Hourly), pickup and destination
   from Google Places, pickup date and time, return date and the stay question
   for round trips, hours for hourly. No booking: the result leads to the
@@ -192,7 +201,9 @@ re-prices every estimate with the backend's `fare_breakdown` on the exact
 inputs the page used. Then the forms: joining the waitlist under an estimate,
 the `/beta` Contact waitlist and a Buddy application from `/beta/#apply`, each
 refused once with a bad number and then read back from the admin download;
-plus `/beta`'s URLs, Back, and the CTA redirect.
+plus `/beta`'s URLs, Back, and the CTA redirect. Finally the two headers are
+measured side by side at 1280px and 390px — every part's box, font and colour,
+and the open phone menu — and must match except for the current page.
 
 Tapping a place icon is exercised by firing the click Google fires for one (a
 click carrying a `placeId`) rather than hunting for the icon's pixel, which is

@@ -70,6 +70,40 @@ async function download(dev, list) {
   return text.split('\r\n').slice(1).map((line) => line.match(/("(?:[^"]|"")*"|[^,]*)(,|$)/g).map((c) => c.replace(/,$/, '').replace(/^"|"$/g, '').replace(/""/g, '"')));
 }
 
+/**
+ * The header's parts, measured the same way on /beta/ (the artboard) and
+ * /estimate/: box, and the styles that make it look the way it does.
+ */
+function headerGeometry() {
+  const box = (el) => { const b = el.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map(Math.round).join(','); };
+  const css = (el, ...props) => props.map((p) => getComputedStyle(el)[p]).join('|');
+  const shown = (el) => !!el && getComputedStyle(el).display !== 'none';
+  const header = document.querySelector('header');
+  const nav = header.querySelector('nav');
+  const brand = header.querySelector('a');
+  const burger = [...header.querySelectorAll('button')].find((b) => /menu/i.test(b.getAttribute('aria-label') || ''));
+  const links = shown(nav) ? [...nav.querySelectorAll('a')] : [];
+  const cta = shown(nav) ? nav.querySelector('button') : null;
+  return {
+    header: `${box(header)}|${css(header, 'position', 'backgroundColor', 'boxShadow', 'borderBottom')}`,
+    logo: box(brand.querySelector('img')),
+    name: `${box(brand.querySelector('span'))}|${css(brand.querySelector('span'), 'fontFamily', 'fontSize', 'fontWeight', 'color')}`,
+    links: links.map((a) => `${a.textContent.trim()}@${box(a)}|${css(a, 'fontSize', 'fontWeight')}`),
+    cta: cta && `${cta.textContent.trim()}@${box(cta)}|${css(cta, 'backgroundColor', 'color', 'borderRadius', 'fontSize')}`,
+    burger: shown(burger) ? box(burger) : null,
+    // Which page is underlined as the current one: meant to differ between the two.
+    current: links.find((a) => getComputedStyle(a).borderBottomColor !== 'rgba(0, 0, 0, 0)')?.textContent.trim() || null,
+  };
+}
+
+/** The open mobile menu (the full-screen overlay), measured the same way on both pages. */
+function menuGeometry() {
+  const box = (el) => { const b = el.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map(Math.round).join(','); };
+  const menu = [...document.querySelectorAll('div')].find((d) => getComputedStyle(d).position === 'fixed' && getComputedStyle(d).zIndex === '60');
+  if (!menu) return null;
+  return [...menu.querySelectorAll('a, button')].map((el) => `${el.textContent.trim() || el.getAttribute('aria-label')}@${box(el)}|${getComputedStyle(el).fontSize}`);
+}
+
 async function estimateAndCompare(page, name) {
   await page.getByRole('button', { name: 'Get Estimate' }).click();
   const outcome = await Promise.race([
@@ -166,8 +200,12 @@ async function main() {
     const late = await estimateAndCompare(page, 'one-way 20:30 departure');
     check(late.result.night_charge_applied === true, 'a 20:30 departure on a 3h+ drive triggers the night charge');
 
-    // Round trip, 3 days, stay not arranged.
-    await page.getByRole('button', { name: 'Edit trip details' }).click();
+    // Round trip, 3 days, stay not arranged — back to the form through the header's
+    // "Get an Estimate" this time, which keeps the trip and returns to the top.
+    await page.locator('header').getByRole('button', { name: 'Get an Estimate' }).click();
+    const refilled = await page.waitForSelector('#rb-pickup', { timeout: 5000 }).then(async () => (await page.inputValue('#rb-pickup')).length > 3).catch(() => false);
+    const atTop = await page.waitForFunction(() => window.scrollY < 5, null, { timeout: 5000 }).then(() => true).catch(() => false);
+    check(refilled && atTop, 'the header\'s "Get an Estimate" brings back the form, trip still filled in, at the top');
     await page.getByRole('button', { name: 'Round Trip' }).click();
     const depart = await page.inputValue('#rb-departure-date');
     const ret = new Date(Date.parse(depart) + 2 * 864e5).toISOString().slice(0, 10);
@@ -339,6 +377,46 @@ async function main() {
     await beta.getByRole('button', { name: 'Get an Estimate' }).first().click();
     await beta.waitForURL('**/estimate/', { timeout: 15000 }).then(() => check(true, '/beta "Get an Estimate" navigates to /estimate/')).catch(() => check(false, '/beta "Get an Estimate" navigates to /estimate/'));
     await beta.close();
+
+    // /estimate/ wears the main site's header: same parts in the same places, at
+    // desktop and phone widths, open menu included; only the current page differs.
+    for (const width of [1280, 390]) {
+      const pages = {};
+      for (const url of ['/beta/', '/estimate/']) {
+        const p = await ctx.newPage();
+        await p.setViewportSize({ width, height: 900 });
+        await p.goto(`${ORIGIN}${url}`, { waitUntil: 'networkidle' });
+        await p.waitForSelector('header nav', { state: 'attached', timeout: 30000 });
+        await p.evaluate(() => document.fonts.ready);
+        pages[url] = { p, geo: await p.evaluate(headerGeometry) };
+      }
+      const [b, e] = [pages['/beta/'].geo, pages['/estimate/'].geo];
+      const diff = Object.keys(b).filter((k) => k !== 'current' && JSON.stringify(b[k]) !== JSON.stringify(e[k]));
+      check(!diff.length, `at ${width}px the /estimate/ header matches /beta/'s${diff.length ? ` — differs in ${diff.map((k) => `${k}: ${JSON.stringify(b[k])} vs ${JSON.stringify(e[k])}`).join('; ')}` : ''}`);
+      const est = pages['/estimate/'].p;
+      if (width === 1280) {
+        check(e.current === 'Estimate Fare' && b.current === 'Home', `…with this page as the current one (${e.current})`);
+        const hrefs = await est.$$eval('header nav a', (as) => as.map((a) => `${a.textContent.trim()}=${a.getAttribute('href')}`).join(' '));
+        check(hrefs === 'Home=/beta/ Estimate Fare=/estimate/ How It Works=/beta/#how-it-works About=/beta/#about Contact=/beta/#contact', `header links lead to the main site (${hrefs})`);
+        await est.screenshot({ path: path.join(SHOTS, 'estimate-header.png'), clip: { x: 0, y: 0, width, height: 90 } });
+      } else {
+        for (const { p } of Object.values(pages)) {
+          await p.locator('header').getByRole('button', { name: 'Menu' }).click();
+          // The menu fades up over 250ms; measure where it settles.
+          await p.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'), null, { timeout: 5000 }).catch(() => {});
+        }
+        const [bm, em] = [await pages['/beta/'].p.evaluate(menuGeometry), await est.evaluate(menuGeometry)];
+        check(!!em && JSON.stringify(bm) === JSON.stringify(em), `the phone menu matches /beta/'s (${(em || []).map((x) => x.split('@')[0]).join(', ')})`);
+        await est.screenshot({ path: path.join(SHOTS, 'estimate-menu.png') });
+        await est.keyboard.press('Escape');
+        check(!(await est.evaluate(menuGeometry)), 'Escape closes it');
+        await est.locator('header').getByRole('button', { name: 'Menu' }).click();
+        await est.locator('.rb-menu').getByRole('link', { name: 'About' }).click();
+        await est.waitForURL('**/beta/#about', { timeout: 15000 }).catch(() => {});
+        check(est.url().endsWith('/beta/#about') && !!(await est.waitForSelector('#about-hero', { timeout: 30000 }).catch(() => null)), 'its About link opens /beta/#about');
+      }
+      for (const { p } of Object.values(pages)) await p.close();
+    }
 
     if (blocked.length) console.log(`  note: ${new Set(blocked).size} host path(s) unreachable from this sandbox and aborted: ${[...new Set(blocked.map((u) => new URL(u).host))].join(', ')}`);
     // Through the sandbox proxy, Google's abuse detection answers some batched
