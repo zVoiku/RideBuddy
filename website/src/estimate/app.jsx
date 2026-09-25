@@ -397,6 +397,78 @@ function RouteMap({ route, pickup, hourly }) {
   );
 }
 
+// ----- Site header: the main site's, as on /beta ----------------------------------
+
+// Where the rest of the site lives. When the beta moves to the root, change this.
+const SITE = '/beta/';
+
+const SITE_LINKS = [
+  { label: 'Home', href: SITE },
+  { label: 'Estimate Fare', href: '/estimate/', here: true },
+  { label: 'How It Works', href: `${SITE}#how-it-works` },
+  { label: 'About', href: `${SITE}#about` },
+  { label: 'Contact', href: `${SITE}#contact` },
+];
+
+/**
+ * The /beta artboard's header — logo, the five pages, "Get an Estimate", and a
+ * full-screen menu below 1120px — with this page as the current one. Here
+ * "Get an Estimate" and "Estimate Fare" stay on the page and bring back the
+ * form (inputs kept) instead of reloading it.
+ */
+function SiteHeader() {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  const toForm = (e) => {
+    e.preventDefault();
+    setOpen(false);
+    window.dispatchEvent(new CustomEvent('rb-get-estimate'));
+  };
+  const link = (l) => (
+    <a key={l.label} href={l.href} aria-current={l.here ? 'page' : undefined} onClick={l.here ? toForm : () => setOpen(false)}>{l.label}</a>
+  );
+
+  return (
+    <>
+      <div className="rb-header__in">
+        <a className="rb-brand" href={SITE} aria-label="RideBuddy home">
+          <img src="/logomark.svg" alt="" />
+          <span>RideBuddy</span>
+        </a>
+        <nav className="rb-nav" aria-label="Main">
+          {SITE_LINKS.map(link)}
+          <div className="rb-nav__cta">
+            <Button fullWidth={false} size="sm" onClick={toForm}><span style={{ whiteSpace: 'nowrap' }}>Get an Estimate</span></Button>
+          </div>
+        </nav>
+        <button type="button" className="rb-burger" aria-label="Menu" aria-expanded={open} onClick={() => setOpen(true)}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M3 12h18M3 18h18" /></svg>
+        </button>
+      </div>
+      {open && (
+        <div className="rb-menu" role="dialog" aria-modal="true" aria-label="Menu">
+          <div className="rb-menu__top">
+            <button type="button" className="rb-menu__close" aria-label="Close" onClick={() => setOpen(false)}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div className="rb-menu__links">
+            {SITE_LINKS.map(link)}
+            <div className="rb-menu__cta"><Button onClick={toForm}>Get an Estimate</Button></div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ----- The page ------------------------------------------------------------------
 
 const PRESET = new URLSearchParams(window.location.search).get('type');
@@ -437,6 +509,17 @@ function App() {
     window.addEventListener('rb-maps-auth-failure', onFail);
     maps.loadGoogleMaps().catch(() => setMapsDown('Maps are unavailable right now, so we can’t look up routes. Please try again shortly.'));
     return () => window.removeEventListener('rb-maps-auth-failure', onFail);
+  }, []);
+
+  // The header's "Get an Estimate" / "Estimate Fare": back to the top, and from a
+  // result back to the form with the trip still filled in.
+  useEffect(() => {
+    const toForm = () => {
+      setView((v) => (v === 'result' ? 'form' : v));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    window.addEventListener('rb-get-estimate', toForm);
+    return () => window.removeEventListener('rb-get-estimate', toForm);
   }, []);
 
   const err = (field, msg) => setErrors((e) => ({ ...e, [field]: msg }));
@@ -700,4 +783,5 @@ function App() {
   );
 }
 
+ReactDOM.createRoot(document.getElementById('rb-header')).render(<SiteHeader />);
 ReactDOM.createRoot(document.getElementById('app')).render(<App />);
