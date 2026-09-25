@@ -90,3 +90,7 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+
+# Cloudflare wrangler: local dev state (D1 etc.) and local secrets
+.wrangler/
+.dev.vars*

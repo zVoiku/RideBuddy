@@ -1,25 +1,27 @@
 /**
- * End-to-end check of /estimate/ against the real Google Maps APIs.
+ * End-to-end check of the site: /estimate/ against the real Google Maps APIs,
+ * and the forms on /estimate/ and /beta/ through the Worker into D1.
  *
- * Serves dist/ locally, drives the page headless, and for every estimate it
- * produces re-prices the exact same inputs with the backend's fare_breakdown.
- * Needs GOOGLE_MAPS_BROWSER_KEY (website/.env) with `localhost:*` allowed as a
- * referrer, and Chromium via Playwright.
+ * Serves dist/ and the Worker with `wrangler dev` (throwaway local D1), drives
+ * the pages headless, re-prices every estimate with the backend's
+ * fare_breakdown, and reads each form's row back through the admin download.
+ * Needs a built dist/, GOOGLE_MAPS_BROWSER_KEY (website/.env) and Chromium via
+ * Playwright.
  *
  *   NODE_PATH=/opt/node22/lib/node_modules PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers \
  *     node website/test/verify.mjs
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { startDev } from './dev-server.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium, request } = require('playwright');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..');
-const DIST = path.join(HERE, '..', 'dist');
 const SHOTS = process.env.SHOTS || path.join(HERE, '..', '..', '..', 'tmp-shots');
 // Where the built site is served for the browser. In the sandbox the Google key
 // only allows the production referrers, so the default there is the real
@@ -29,6 +31,8 @@ const HOST = process.env.VERIFY_HOST || 'www.ridebuddy.co.in';
 const PORT = Number(process.env.VERIFY_PORT || 80);
 const ORIGIN = `http://${HOST}${PORT === 80 ? '' : `:${PORT}`}`;
 const PY = path.join(ROOT, 'backend', '.venv', 'bin', 'python');
+const ADMIN_PASSWORD = 'verify-only';
+const PHONE_ERROR = 'Enter a 10-digit number. Outside India? Start with + and the country code.';
 
 function backendTotal(inputs) {
   const script = `
@@ -59,6 +63,13 @@ async function pickPlace(page, inputSel, text) {
   return label;
 }
 
+/** A list as the admin download serves it, one array per row (quoted cells kept whole). */
+async function download(dev, list) {
+  const res = await fetch(`${dev.base}/admin/${list}.csv`, { headers: { Authorization: `Basic ${Buffer.from(`admin:${ADMIN_PASSWORD}`).toString('base64')}` } });
+  const text = (await res.text()).replace(/^\uFEFF/, '').trimEnd();
+  return text.split('\r\n').slice(1).map((line) => line.match(/("(?:[^"]|"")*"|[^,]*)(,|$)/g).map((c) => c.replace(/,$/, '').replace(/^"|"$/g, '').replace(/""/g, '"')));
+}
+
 async function estimateAndCompare(page, name) {
   await page.getByRole('button', { name: 'Get Estimate' }).click();
   const outcome = await Promise.race([
@@ -83,8 +94,8 @@ async function main() {
   check(withinService('destination', { lat: 31.1048, lng: 77.1734 }).ok && withinService('destination', { lat: 26.9124, lng: 75.7873 }).ok, 'radius gate: Shimla and Jaipur are accepted as destinations');
   check(!withinService('destination', { lat: 19.076, lng: 72.8777 }).ok, 'radius gate: Mumbai is refused as a destination');
 
-  const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1'], { cwd: DIST, stdio: 'ignore' });
-  await new Promise((r) => setTimeout(r, 1200));
+  // The site as Cloudflare serves it: static files first, the Worker for /api and /admin.
+  const dev = await startDev({ port: PORT, password: ADMIN_PASSWORD });
   const browser = await chromium.launch({ args: HOST === 'localhost' ? [] : [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] });
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
   // In the Claude Code sandbox, outbound HTTPS only works through the agent
@@ -134,6 +145,20 @@ async function main() {
     await page.screenshot({ path: path.join(SHOTS, 'estimate-map-full.png') });
     await page.getByRole('button', { name: 'Close' }).click();
     check(!(await page.$('.rb-map--full')), 'map closes again');
+
+    // Joining the waitlist under the estimate saves the number with the trip just priced.
+    await page.fill('#rb-whatsapp-number', '98708 7132');
+    await page.getByRole('button', { name: 'Join the Waitlist' }).click();
+    const waErr = await page.waitForSelector('.rb-waitlist .rb-error-msg', { timeout: 10000 }).then((e) => e.textContent()).catch(() => '');
+    check(waErr === PHONE_ERROR, `a number a digit short is refused on the page ("${waErr.slice(0, 40)}…")`);
+    await page.fill('#rb-whatsapp-number', '+91 98708 71324');
+    await page.getByRole('button', { name: 'Join the Waitlist' }).click();
+    const joined = await page.waitForSelector("text=You're on the waitlist", { timeout: 10000 }).then(() => true).catch(() => false);
+    check(joined, 'estimate waitlist: joined');
+    const waRow = (await download(dev, 'clients')).at(-1) || [];
+    const wantTrip = `One way · ${pick} → ${dest} · `;
+    check(waRow[2] === '+919870871324' && waRow[3] === 'Estimate page' && waRow[4]?.startsWith(wantTrip) && waRow[4]?.endsWith(`09:00 · ${(await page.locator('[data-testid="fare-estimate"]').textContent()).trim()}`),
+      `estimate waitlist: row saved with the trip ("${waRow[4]}")`);
 
     // Late departure: 16:00 on the Shimla run should not cross midnight; check consistency only.
     await page.getByRole('button', { name: 'Edit trip details' }).click();
@@ -260,10 +285,57 @@ async function main() {
     await mobile.screenshot({ path: path.join(SHOTS, 'estimate-mobile.png'), fullPage: true });
     await mobile.close();
 
-    // /beta CTAs now lead here.
+    // /beta: real URLs for its pages, and both of its forms save.
     const beta = await ctx.newPage();
-    await beta.goto(`${ORIGIN}/beta/`, { waitUntil: 'networkidle' });
-    await beta.waitForTimeout(2500);
+    beta.on('pageerror', (e) => errors.push('PAGEERROR /beta ' + String(e).slice(0, 200)));
+    beta.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
+    await beta.goto(`${ORIGIN}/beta/#contact`, { waitUntil: 'networkidle' });
+    const contactShown = await beta.waitForSelector('#rb-phone-or-whatsapp-number', { timeout: 30000 }).then(() => true).catch(() => false);
+    check(contactShown, '/beta/#contact opens the Contact page');
+    await beta.screenshot({ path: path.join(SHOTS, 'beta-contact.png'), fullPage: true });
+    await beta.fill('#rb-phone-or-whatsapp-number', '12345');
+    await beta.getByRole('button', { name: 'Join the Waitlist' }).click();
+    const cErr = await beta.waitForSelector('.rb-error-msg', { timeout: 10000 }).then((e) => e.textContent()).catch(() => '');
+    check(cErr === PHONE_ERROR, `Contact waitlist: a short number is refused ("${cErr.slice(0, 40)}…")`);
+    await beta.fill('#rb-phone-or-whatsapp-number', '+44 7911 123456');
+    await beta.getByRole('button', { name: 'Join the Waitlist' }).click();
+    check(await beta.waitForSelector("text=You're on the waitlist. We'll message you once.", { timeout: 10000 }).then(() => true).catch(() => false), 'Contact waitlist: joined');
+    const cRow = (await download(dev, 'clients')).at(-1) || [];
+    check(cRow[2] === '+447911123456' && cRow[3] === 'Contact page', `Contact waitlist: row saved (${cRow.slice(2, 4).join(', ')})`);
+
+    const navHref = await beta.locator('header a', { hasText: 'About' }).first().getAttribute('href').catch(() => null);
+    check(navHref === '#about', `nav links carry real URLs (About -> ${navHref})`);
+    await beta.locator('header a', { hasText: 'About' }).first().click();
+    check(beta.url().endsWith('/beta/#about') && !!(await beta.waitForSelector('#about-hero', { timeout: 10000 }).catch(() => null)), `clicking About shows it at ${new URL(beta.url()).pathname}${new URL(beta.url()).hash}`);
+    await beta.goBack();
+    // (Joined already, so the page shows the confirmation rather than the field.)
+    check(beta.url().endsWith('/beta/#contact') && !!(await beta.waitForSelector("text=You're on the waitlist. We'll message you once.", { timeout: 10000 }).catch(() => null)), 'Back returns to the Contact page');
+    await beta.locator('header a', { hasText: 'Home' }).first().click();
+    check(new URL(beta.url()).hash === '' && !!(await beta.waitForSelector('#home-hero', { timeout: 10000 }).catch(() => null)), 'Home is plain /beta/');
+
+    // Apply to be a Buddy, from a shared /beta/#apply link.
+    await beta.goto(`${ORIGIN}/beta/#apply`, { waitUntil: 'networkidle' });
+    check(await beta.waitForSelector('#rb-full-name', { timeout: 30000 }).then(() => true).catch(() => false), '/beta/#apply opens the Buddy application');
+    const modalText = await beta.locator('text=Apply to be a Buddy.').locator('xpath=ancestor::div[3]').textContent();
+    check(!/email app/i.test(modalText), 'no "email app" wording left in the form');
+    await beta.getByRole('button', { name: 'Send Application' }).click();
+    check((await beta.locator('.rb-error-msg').count()) === 3, 'an empty application flags all three fields');
+    await beta.fill('#rb-full-name', 'Voiku Zavadschi');
+    await beta.fill('#rb-phone-number', '98708 7132');
+    await beta.fill('#rb-driving-licence-number', 'VNS8893');
+    await beta.getByRole('button', { name: 'Send Application' }).click();
+    const pErr = await beta.waitForSelector('#rb-phone-number >> xpath=ancestor::div[contains(@class,"rb-field")]//span[contains(@class,"rb-error-msg")]', { timeout: 10000 }).then((e) => e.textContent()).catch(() => '');
+    check(pErr === PHONE_ERROR, `Buddy application: the server's phone message shows under the field ("${pErr.slice(0, 40)}…")`);
+    await beta.fill('#rb-phone-number', '+91 98708 71324');
+    await beta.getByRole('button', { name: 'Send Application' }).click();
+    check(await beta.waitForSelector("text=Application received. We'll call you to take it forward.", { timeout: 10000 }).then(() => true).catch(() => false), 'Buddy application: received');
+    await beta.screenshot({ path: path.join(SHOTS, 'beta-apply-sent.png') });
+    const bRow = (await download(dev, 'buddies')).at(-1) || [];
+    check(bRow.slice(2, 5).join('; ') === 'Voiku Zavadschi; +919870871324; VNS8893', `Buddy application: row saved (${bRow.slice(2, 5).join('; ')})`);
+    await beta.getByRole('button', { name: 'Done' }).click();
+    check(new URL(beta.url()).hash === '', 'closing the form leaves a plain /beta/ URL');
+
+    // Every Estimate CTA still leads to /estimate/.
     await beta.getByRole('button', { name: 'Get an Estimate' }).first().click();
     await beta.waitForURL('**/estimate/', { timeout: 15000 }).then(() => check(true, '/beta "Get an Estimate" navigates to /estimate/')).catch(() => check(false, '/beta "Get an Estimate" navigates to /estimate/'));
     await beta.close();
@@ -276,12 +348,14 @@ async function main() {
     const tileSorry = (e) => process.env.HTTPS_PROXY && /^HTTP 403 https:\/\/maps\.googleapis\.com\/maps\/vt\?/.test(e);
     const sorries = errors.filter(tileSorry).length;
     if (sorries) console.log(`  note: ${sorries} batched tile request(s) got Google's rate-limit interstitial via the sandbox proxy (ignored)`);
-    const real = errors.filter((e) => !tileSorry(e) && !/deprecat|google\.maps\.Marker|image-slots\.state\.json|Marker is deprecated|gstatic\.com|fonts\.googleapis|ERR_CONNECTION|Failed to load resource/i.test(e));
+    // The forms' 400s are the refusals this run provokes on purpose (a number a digit short).
+    const provoked = (e) => /^HTTP 400 \S+\/api\/(waitlist|buddy)$/.test(e);
+    const real = errors.filter((e) => !tileSorry(e) && !provoked(e) && !/deprecat|google\.maps\.Marker|image-slots\.state\.json|Marker is deprecated|gstatic\.com|fonts\.googleapis|ERR_CONNECTION|Failed to load resource/i.test(e));
     check(real.length === 0, `no console/page/HTTP errors (${real.length})`);
     real.forEach((e) => console.log('     ', e));
   } finally {
     await browser.close();
-    server.kill();
+    await dev.stop();
   }
   console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
   process.exit(failures ? 1 : 0);

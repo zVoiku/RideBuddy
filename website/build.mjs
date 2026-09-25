@@ -20,6 +20,12 @@
  *      references rewritten. Most of our traffic is Indian mobile.
  *   4. The artboard's own estimator is superseded by /estimate/. Every CTA that
  *      opened it now navigates there, so there is one estimator, not two.
+ *   5. Its pages get real URLs (/beta/#contact, /beta/#apply), and its two
+ *      forms — the Contact-page waitlist and "Apply to be a Buddy" — save
+ *      through the site's Worker (website/worker) instead of doing nothing and
+ *      opening the mail app respectively.
+ *
+ * 4 and 5 are text patches, listed in artboard-patches.mjs.
  *
  * The Google Maps browser key comes from GOOGLE_MAPS_BROWSER_KEY — a
  * git-ignored website/.env locally, a build variable on Cloudflare.
@@ -30,6 +36,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { build as esbuild } from 'esbuild';
 import sharp from 'sharp';
+import { ARTBOARD_PATCHES } from './artboard-patches.mjs';
 
 const require = createRequire(import.meta.url);
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -56,34 +63,6 @@ const VENDOR = {
 /** Copied verbatim into beta/. Everything else in ../Webpage is authoring-only. */
 const CARRY = ['_ds', 'assets', 'image-slot.js', 'rate-config.js'];
 
-/**
- * Artboard handlers that opened the in-page estimator, and what they become.
- * Each anchor must match exactly once; a canvas re-export that changes one of
- * them fails the build here rather than silently shipping two estimators.
- */
-const ARTBOARD_PATCHES = [
-  {
-    why: 'nav "Estimate Fare" link',
-    from: "    return (e) => {\n      if (e) e.preventDefault();\n      this.setState({ page, menuOpen: false });",
-    to: "    return (e) => {\n      if (e) e.preventDefault();\n      if (page === 'estimate') { window.location.href = '/estimate/'; return; }\n      this.setState({ page, menuOpen: false });",
-  },
-  {
-    why: 'hero / nav "Get an Estimate" CTAs',
-    from: "    this.setState({ page: 'estimate', menuOpen: false });\n    window.scrollTo({ top: 0, behavior: 'auto' });\n    this.track('estimator_opened');",
-    to: "    this.track('estimator_opened');\n    window.location.href = '/estimate/';",
-  },
-  {
-    why: 'Round trips / One-way trips cards',
-    from: "    this.setState({ tripType: type, view: 'form' });\n    this.scrollToEstimator();",
-    to: "    window.location.href = '/estimate/?type=' + (type === 'round' ? 'round' : 'one');",
-  },
-  {
-    why: '"Book a Buddy" (waitlist lives under the estimate result)',
-    from: "    this.setState({ page: 'estimate', menuOpen: false });\n    this.track('book_a_buddy_clicked', { phase: String(this.props.phase ?? '1') });",
-    to: "    this.track('book_a_buddy_clicked', { phase: String(this.props.phase ?? '1') });\n    window.location.href = '/estimate/';\n    return;",
-  },
-];
-
 const kb = (n) => `${Math.round(n / 1024)} KB`;
 
 /** website/.env — KEY=VALUE lines. The process environment wins. */
@@ -108,9 +87,10 @@ function mapsKey() {
 
 function patchArtboard(html) {
   for (const p of ARTBOARD_PATCHES) {
+    const want = p.count ?? 1;
     const n = html.split(p.from).length - 1;
-    if (n !== 1) throw new Error(`artboard patch "${p.why}" matched ${n} times, expected 1 — the canvas changed; update ARTBOARD_PATCHES`);
-    html = html.replace(p.from, p.to);
+    if (n !== want) throw new Error(`artboard patch "${p.why}" matched ${n} times, expected ${want} — the canvas changed; update artboard-patches.mjs`);
+    html = html.replaceAll(p.from, () => p.to);
   }
   return html;
 }
