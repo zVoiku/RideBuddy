@@ -1,7 +1,7 @@
 {
   // The Worker for ridebuddy.co.in: the site built by `npm run build` (which
-  // delegates to website/build.mjs), plus a small script for the two forms and
-  // the password-protected downloads (website/worker/index.js).
+  // delegates to website/build.mjs), plus a small script for the two forms, the
+  // site's own analytics and the password-protected /admin (website/worker/).
   //
   // Static files are served first; the script only sees requests no file
   // matches (/api/*, /admin). Cloudflare Workers Builds runs from the
@@ -13,8 +13,8 @@
     "directory": "./website/dist",
     "binding": "ASSETS"
   },
-  // Waitlist signups and Buddy applications. The tables create themselves on
-  // first use. The id is an identifier, not a credential.
+  // Waitlist signups, Buddy applications and the analytics. The tables create
+  // themselves on first use. The id is an identifier, not a credential.
   "d1_databases": [
     {
       "binding": "DB",

@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node build.mjs",
     "test": "node test/parity.mjs",
-    "test:worker": "node test/worker.mjs",
+    "test:worker": "node --disable-warning=ExperimentalWarning test/worker.mjs",
     "preview": "node build.mjs && cd .. && npx --yes wrangler@4 dev --port 8099"
   },
   "devDependencies": {

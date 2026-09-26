@@ -27,6 +27,9 @@
  *
  * 4 and 5 are text patches, listed in artboard-patches.mjs.
  *
+ * Every page — holding page, estimator, artboard — also gets the site's own
+ * analytics, src/site.js, served as /site.js.
+ *
  * The Google Maps browser key comes from GOOGLE_MAPS_BROWSER_KEY — a
  * git-ignored website/.env locally, a build variable on Cloudflare.
  */
@@ -34,7 +37,7 @@ import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { build as esbuild } from 'esbuild';
+import { build as esbuild, transform } from 'esbuild';
 import sharp from 'sharp';
 import { ARTBOARD_PATCHES } from './artboard-patches.mjs';
 
@@ -64,6 +67,15 @@ const VENDOR = {
 const CARRY = ['_ds', 'assets', 'image-slot.js', 'rate-config.js'];
 
 const kb = (n) => `${Math.round(n / 1024)} KB`;
+
+/** Every page loads the site's own analytics (src/site.js, served as /site.js). */
+const SITE_SCRIPT = '<script src="/site.js" defer></script>';
+function withSiteScript(html, what) {
+  if (html.includes(SITE_SCRIPT)) return html;
+  const out = html.replace(/<\/head>/i, `${SITE_SCRIPT}\n</head>`);
+  if (out === html) throw new Error(`could not add /site.js to ${what}: no </head>`);
+  return out;
+}
 
 /** website/.env — KEY=VALUE lines. The process environment wins. */
 async function loadEnv() {
@@ -102,8 +114,12 @@ async function main() {
   await rm(OUT, { recursive: true, force: true });
   await mkdir(BETA, { recursive: true });
 
-  // 1. Holding page, _headers, robots.txt.
+  // 1. Holding page, _headers, robots.txt, site.js.
   await cp(SRC, OUT, { recursive: true, filter: (s) => !s.includes(`${path.sep}estimate`) });
+  const holding = path.join(OUT, 'index.html');
+  await writeFile(holding, withSiteScript(await readFile(holding, 'utf8'), 'the holding page'));
+  const site = await transform(await readFile(path.join(SRC, 'site.js'), 'utf8'), { minify: true, target: 'es2019', legalComments: 'none' });
+  await writeFile(path.join(OUT, 'site.js'), site.code);
 
   // 2. Shared React and the design system.
   await mkdir(path.join(OUT, 'vendor'), { recursive: true });
@@ -115,7 +131,10 @@ async function main() {
 
   // 3. The estimator: HTML shell + esbuild bundle with the key compiled in.
   await mkdir(path.join(OUT, 'estimate'), { recursive: true });
-  const shell = (await readFile(path.join(SRC, 'estimate', 'index.html'), 'utf8')).replaceAll('__DS_DIR__', `/_ds/${dsDir}`);
+  const shell = withSiteScript(
+    (await readFile(path.join(SRC, 'estimate', 'index.html'), 'utf8')).replaceAll('__DS_DIR__', `/_ds/${dsDir}`),
+    'the estimator',
+  );
   await writeFile(path.join(OUT, 'estimate', 'index.html'), shell);
   await esbuild({
     entryPoints: [path.join(SRC, 'estimate', 'app.jsx')],
@@ -171,7 +190,7 @@ async function main() {
     html = html.replace(/<head>/i, `<head>\n${NOINDEX}`);
     if (!html.includes(NOINDEX)) throw new Error('could not inject noindex: no <head> in the artboard');
   }
-  await writeFile(path.join(BETA, 'index.html'), html);
+  await writeFile(path.join(BETA, 'index.html'), withSiteScript(html, 'the artboard'));
 
   console.log(`\nBuilt dist/ from ${canvasFile} + src/estimate (Maps key ${key ? 'present' : 'MISSING'})`);
 }

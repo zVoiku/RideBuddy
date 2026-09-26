@@ -113,8 +113,11 @@ export function istStamp(iso) {
   return `${t.slice(0, 10)} ${t.slice(11, 16)}`;
 }
 
-/** Today's date in IST, for download filenames. */
+/** Today's date in IST ("YYYY-MM-DD"). */
 export const istDay = (ms = Date.now()) => new Date(ms + IST_MS).toISOString().slice(0, 10);
+
+/** "2026-09-26" moved by `n` days. */
+export const shiftDay = (day, n) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 
 // ----- Rate limiting ----------------------------------------------------------------
 

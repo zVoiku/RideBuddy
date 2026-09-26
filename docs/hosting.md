@@ -126,7 +126,9 @@ Split them:
 estimator at `/estimate/` (the app's estimate flow on the web, Google Maps JS +
 the same fare engine as the backend), and the design-canvas beta at `/beta/`.
 A small Worker script (`website/worker/`) saves the site's forms — the client
-waitlist and Buddy applications — to Cloudflare D1, and serves them back as CSV
-at `/admin` behind a password. Nothing is emailed.
+waitlist and Buddy applications — to Cloudflare D1, counts visits with the
+site's own cookieless analytics, and serves both back at `/admin` behind a
+password: the lists as CSV, the numbers as a dashboard. Nothing is emailed and
+no third-party analytics are used.
 Deploy settings, the Google Maps browser key, the forms and the artboard build
 are documented in `website/README.md`.

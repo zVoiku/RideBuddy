@@ -20,7 +20,6 @@ const { useState, useEffect, useRef } = React;
 const DS = window.RideBuddyDesignSystem_f63581 || {};
 const Button = DS.Button || (({ children, fullWidth, size, variant, ...rest }) => <button className="rb-btn rb-btn--primary" {...rest}>{children}</button>);
 const Chip = DS.Chip || (({ selected, children, ...rest }) => <button type="button" aria-pressed={selected} className="rb-chip" {...rest}>{children}</button>);
-const Badge = DS.Badge || (({ children }) => <span className="rb-badge">{children}</span>);
 const Input = DS.Input || (({ label, icon, error, ...rest }) => (
   <label className="rb-field"><span className="rb-label">{label}</span><input className="rb-input" {...rest} />{error && <span className="rb-error-msg">{error}</span>}</label>
 ));
@@ -117,7 +116,12 @@ function PlaceField({ label, icon, placeholder, kind, value, onChange, onSelect,
       session.current = null;
       if (!det) { onSelect(null, 'Could not load that place. Try another.'); return; }
       const check = maps.withinService(kind, det);
-      if (!check.ok) { onSelect(null, check.message); return; }
+      if (!check.ok) {
+        // Demand from outside the service area: where, by area only.
+        track('place_refused', { kind, city: det.city || '', area: det.area || '' });
+        onSelect(null, check.message);
+        return;
+      }
       onSelect({ ...det, description: s.description, main_text: s.main_text, place_id: s.place_id });
     } catch (e) {
       onSelect(null, 'Could not load that place. Try another.');
@@ -143,7 +147,7 @@ function PlaceField({ label, icon, placeholder, kind, value, onChange, onSelect,
         </button>
       )}
       {open && items.length > 0 && (
-        <div className="rb-suggest" role="listbox">
+        <div className="rb-suggest" role="listbox" data-rb-private="place suggestion">
           {items.map((s) => (
             <button type="button" key={s.place_id} className="rb-suggest__item" role="option"
               onMouseDown={(e) => e.preventDefault()} onClick={() => choose(s)}>
@@ -273,11 +277,13 @@ function MapPicker({ kind, initial, onClose, onPick }) {
       description: where,
       main_text: poi?.main_text || label?.main_text || 'Pinned location',
       place_id: poi?.place_id || null,
+      area: (poi || label)?.area || '',
+      city: (poi || label)?.city || '',
     });
   };
 
   return (
-    <div className="rb-picker" role="dialog" aria-modal="true" aria-label={`Choose ${kind === 'pickup' ? 'pickup' : 'destination'} on the map`}>
+    <div className="rb-picker" role="dialog" aria-modal="true" aria-label={`Choose ${kind === 'pickup' ? 'pickup' : 'destination'} on the map`} data-rb-region="map picker">
       <div className="rb-picker__sheet">
         <div className="rb-picker__head">
           <h3>{kind === 'pickup' ? 'Choose your pickup point' : 'Choose your destination'}</h3>
@@ -402,19 +408,18 @@ function RouteMap({ route, pickup, hourly }) {
 // Where the rest of the site lives. When the beta moves to the root, change this.
 const SITE = '/beta/';
 
+// "Get an Estimate" is this page's link, so there is no "Estimate Fare" item.
 const SITE_LINKS = [
   { label: 'Home', href: SITE },
-  { label: 'Estimate Fare', href: '/estimate/', here: true },
   { label: 'How It Works', href: `${SITE}#how-it-works` },
   { label: 'About', href: `${SITE}#about` },
   { label: 'Contact', href: `${SITE}#contact` },
 ];
 
 /**
- * The /beta artboard's header — logo, the five pages, "Get an Estimate", and a
- * full-screen menu below 1120px — with this page as the current one. Here
- * "Get an Estimate" and "Estimate Fare" stay on the page and bring back the
- * form (inputs kept) instead of reloading it.
+ * The /beta artboard's header — logo, the four pages, "Get an Estimate", and a
+ * full-screen menu below 1120px. Here "Get an Estimate" stays on the page and
+ * brings back the form (inputs kept) instead of reloading it.
  */
 function SiteHeader() {
   const [open, setOpen] = useState(false);
@@ -431,9 +436,7 @@ function SiteHeader() {
     setOpen(false);
     window.dispatchEvent(new CustomEvent('rb-get-estimate'));
   };
-  const link = (l) => (
-    <a key={l.label} href={l.href} aria-current={l.here ? 'page' : undefined} onClick={l.here ? toForm : () => setOpen(false)}>{l.label}</a>
-  );
+  const link = (l) => <a key={l.label} href={l.href} onClick={() => setOpen(false)}>{l.label}</a>;
 
   return (
     <>
@@ -499,20 +502,27 @@ function App() {
   const resolving = Object.values(busyFields).some(Boolean);
   // Which field, if any, is currently choosing a point on the map.
   const [picker, setPicker] = useState(null);
+  // Analytics: the first time the visitor touches the form, and maps failing (once each).
+  const started = useRef(false);
+  const markStarted = () => { if (!started.current) { started.current = true; track('estimate_started'); } };
+  const mapsFailed = useRef(false);
 
   const isRound = tripType === 'round';
   const isHourly = tripType === 'hourly';
 
   useEffect(() => {
     track('estimator_opened');
-    const onFail = () => setMapsDown('Maps are unavailable right now, so we can’t look up routes. Please try again shortly.');
+    const onFail = () => {
+      setMapsDown('Maps are unavailable right now, so we can’t look up routes. Please try again shortly.');
+      if (!mapsFailed.current) { mapsFailed.current = true; track('maps_failed'); }
+    };
     window.addEventListener('rb-maps-auth-failure', onFail);
-    maps.loadGoogleMaps().catch(() => setMapsDown('Maps are unavailable right now, so we can’t look up routes. Please try again shortly.'));
+    maps.loadGoogleMaps().catch(onFail);
     return () => window.removeEventListener('rb-maps-auth-failure', onFail);
   }, []);
 
-  // The header's "Get an Estimate" / "Estimate Fare": back to the top, and from a
-  // result back to the form with the trip still filled in.
+  // The header's "Get an Estimate": back to the top, and from a result back to
+  // the form with the trip still filled in.
   useEffect(() => {
     const toForm = () => {
       setView((v) => (v === 'result' ? 'form' : v));
@@ -570,9 +580,23 @@ function App() {
           : { tripType: 'point_to_point', oneWay: !isRound, distanceKm: r.distance_km, durationHours: r.duration_min / 60, days, pickup: { date: departDate, time: pickupTime }, customerStay: stayArranged },
         result: est,
       };
-      track('estimate_completed', { trip_type: tripType, amount: est.total_fare, destination: destination.place?.main_text });
+      // What people price, for the demand numbers on /admin: areas and cities,
+      // never an address.
+      track('estimate_completed', {
+        trip: tripType,
+        pickup_area: pickup.place.area || '', pickup_city: pickup.place.city || '',
+        dest_city: isHourly ? '' : destination.place.city || '',
+        km: r ? Math.round(r.distance_km) : 0,
+        fare: est.total_fare,
+        ahead: Math.round((Date.parse(departDate) - Date.parse(istDate(0))) / 864e5),
+        days: est.trip_days || 0,
+        hour: Number(pickupTime.slice(0, 2)),
+        weekday: new Date(`${departDate}T00:00:00Z`).getUTCDay(),
+        night: !!est.night_charge_applied,
+      });
     } catch (e) {
       setView('form');
+      track(e.message === 'no-route' ? 'route_not_found' : 'route_failed');
       err('destination', e.message === 'no-route'
         ? 'We couldn’t find a driving route between those places.'
         : 'We couldn’t calculate that route. Please try again.');
@@ -601,9 +625,13 @@ function App() {
       },
     });
     setWaSending(false);
-    if (!r.ok) { setWaError(r.errors.phone || r.error); return; }
+    if (!r.ok) {
+      track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'estimate' });
+      setWaError(r.errors.phone || r.error);
+      return;
+    }
     setWaDone(true);
-    track('whatsapp_number_submitted');
+    track('waitlist_joined', { source: 'estimate' });
   };
 
   // The app's inclusion lines (summary.tsx), verbatim.
@@ -644,7 +672,7 @@ function App() {
             <div>
               <h2>Know your fare. Before anything else.</h2>
               <p className="rb-lede">A specific estimate for your exact trip. No calls. No haggling.</p>
-              <div className="rb-stack">
+              <div className="rb-stack" data-rb-region="estimate form" onClickCapture={markStarted} onInputCapture={markStarted}>
                 <div className="rb-group">
                   <span className="rb-group__label">Trip type</span>
                   <div className="rb-chips">
@@ -686,8 +714,8 @@ function App() {
                   <div className="rb-stay">
                     <span className="rb-stay__q">Will you arrange your Buddy's overnight stay?</span>
                     <div className="rb-chips">
-                      <Chip selected={!stayArranged} onClick={() => setStayArranged(false)}>No</Chip>
-                      <Chip selected={stayArranged} onClick={() => setStayArranged(true)}>Yes</Chip>
+                      <Chip selected={!stayArranged} onClick={() => setStayArranged(false)} data-rb-label="Arranging the stay: No">No</Chip>
+                      <Chip selected={stayArranged} onClick={() => setStayArranged(true)} data-rb-label="Arranging the stay: Yes">Yes</Chip>
                     </div>
                     <span className="rb-stay__hint">Many hotels provide driver stay at no cost.</span>
                   </div>
@@ -708,7 +736,7 @@ function App() {
           )}
 
           {view === 'result' && result && (
-            <div className="rb-result">
+            <div className="rb-result" data-rb-region="estimate result">
               <p className="rb-result__route">{routeLine}</p>
               {routeMeta && <p className="rb-result__meta">{routeMeta}</p>}
 
@@ -735,12 +763,6 @@ function App() {
               </button>
 
               <div className="rb-book">
-                <div className="rb-book__row">
-                  <div style={{ width: 'auto' }}>
-                    <Button fullWidth={false} size="lg" onClick={() => { track('book_a_buddy_clicked'); document.getElementById('waitlist')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>Book a Buddy</Button>
-                  </div>
-                  <Badge status="pending">Coming soon</Badge>
-                </div>
                 {waDone ? (
                   <div className="rb-done">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1B5E20" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="m20 6-11 11-5-5" /></svg>
