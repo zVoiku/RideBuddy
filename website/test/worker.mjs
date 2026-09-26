@@ -142,15 +142,17 @@ function analyticsUnits() {
       { n: 'place_refused', p: '/estimate/', d: { kind: 'pickup', area: 'Connaught Place', city: 'New Delhi' } },
     ] },
     { vid: 'C', device: 'Phone', city: 'Panchkula', events: [{ n: 'pageview', p: '/estimate/', f: 1, r: '(internal)' }] },
+    // E's page view never arrived, but a fare did: E still reached every step before it.
+    { vid: 'E', device: 'Phone', city: 'Zirakpur', events: [{ n: 'estimate_completed', p: '/estimate/', d: { trip: 'round', dest_city: 'Manali', fare: 6200 } }] },
     // Another day: not part of this one's totals.
     { day: '2026-09-25', vid: 'D', device: 'Phone', city: 'Delhi', events: [{ n: 'pageview', p: '/', f: 1 }] },
   ], '2026-09-26').map(([m, k, v]) => [`${m}|${k}`, v]));
   const got = (k) => totals.get(k) || 0;
-  same([got('visitors|'), got('pageviews|'), got('page_views|/estimate/'), got('page_visitors|/estimate/')].join(' '), '3 3 2 2', 'a day: visitors, views, per page');
-  same([got('source|Instagram'), got('source|WhatsApp'), got(`source|${DIRECT}`), got('campaign|whatsapp\tgroup\tdrivers')].join(' '), '1 1 1 1', 'a day: sources and the campaign');
-  same(['1 opened', '2 started', '3 saw a fare', '4 joined the waitlist'].map((s) => got(`funnel_estimate|${s}`)).join(' '), '2 1 1 1', 'a day: the estimator funnel, in people');
+  same([got('visitors|'), got('pageviews|'), got('page_views|/estimate/'), got('page_visitors|/estimate/')].join(' '), '4 3 2 2', 'a day: visitors, views, per page');
+  same([got('source|Instagram'), got('source|WhatsApp'), got(`source|${DIRECT}`), got('campaign|whatsapp\tgroup\tdrivers')].join(' '), '1 1 2 1', 'a day: sources and the campaign');
+  same(['1 opened', '2 started', '3 saw a fare', '4 joined the waitlist'].map((s) => got(`funnel_estimate|${s}`)).join(' '), '3 2 2 1', 'a day: the estimator funnel, in people; a later step implies the earlier ones');
   same([got('funnel_buddy|1 opened the form'), got('funnel_buddy|2 sent it'), got('buddy_source|WhatsApp'), got('signup_source|Instagram')].join(' '), '1 1 1 1', 'a day: Buddy recruitment and who signed up from where');
-  same([got('dest|Shimla'), got('pickup|Sector 17, Chandigarh'), got('trip|One way'), got('ahead|1–3 days ahead'), got('weekday|Saturday'), got('fare_sum|'), got('km_sum|')].join(' '), '1 1 1 1 1 1611 114', 'a day: what was priced');
+  same([got('dest|Shimla'), got('pickup|Sector 17, Chandigarh'), got('trip|One way'), got('ahead|1–3 days ahead'), got('weekday|Saturday'), got('fare_sum|'), got('km_sum|')].join(' '), '1 1 1 1 1 7811 114', 'a day: what was priced');
   same([got('refused|Pickup\tConnaught Place, New Delhi'), got('problem|Mistyped phone number (Buddy application)'), got('speed|/beta/\tSlow'), got('speed_net|3g\tSlow')].join(' '), '1 1 1 1', 'a day: refusals, problems and speed');
   same(got('click|/estimate/\testimate result\tJoin the Waitlist'), 1, 'a day: clicks by page, place and label');
 

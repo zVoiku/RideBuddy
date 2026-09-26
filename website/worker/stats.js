@@ -238,12 +238,14 @@ export function summarize([counts, pages, clicks, perf, fares, details, people])
     add('city', v.city || 'Unknown');
     add('source', source);
     if (u) add('campaign', `${u.source || '—'}\t${u.medium || '—'}\t${u.campaign || '—'}`);
-    // The estimator, step by step, in people rather than clicks.
-    if (v.opened) add('funnel_estimate', '1 opened');
-    if (v.started) add('funnel_estimate', '2 started');
-    if (v.fare) add('funnel_estimate', '3 saw a fare');
-    if (v.joined_here) add('funnel_estimate', '4 joined the waitlist');
-    if (v.b_open) add('funnel_buddy', '1 opened the form');
+    // The estimator, step by step, in people rather than clicks. Reaching a
+    // step implies the ones before it (a page-view beacon can be lost, a visit
+    // can straddle midnight), so each step counts at least those after it.
+    const est = [v.opened, v.started, v.fare, v.joined_here];
+    ['1 opened', '2 started', '3 saw a fare', '4 joined the waitlist'].forEach((step, i) => {
+      if (est.slice(i).some(Boolean)) add('funnel_estimate', step);
+    });
+    if (v.b_open || v.b_sent) add('funnel_buddy', '1 opened the form');
     if (v.b_sent) { add('funnel_buddy', '2 sent it'); add('buddy_source', source); }
     if (v.joined) add('signup_source', source);
   }

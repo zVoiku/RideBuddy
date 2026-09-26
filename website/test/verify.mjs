@@ -491,9 +491,14 @@ async function main() {
     const tileSorry = (e) => process.env.HTTPS_PROXY && /^HTTP 403 https:\/\/maps\.googleapis\.com\/maps\/vt\?/.test(e);
     const sorries = errors.filter(tileSorry).length;
     if (sorries) console.log(`  note: ${sorries} batched tile request(s) got Google's rate-limit interstitial via the sandbox proxy (ignored)`);
+    // Google's own internal Maps RPCs (map viewport/attribution info) now and then
+    // answer 5xx through the proxy — Google's side, not the key (which fails 403) or this page.
+    const googleRpc = (e) => process.env.HTTPS_PROXY && /^HTTP 5\d\d https:\/\/maps\.googleapis\.com\/\$rpc\//.test(e);
+    const rpcs = errors.filter(googleRpc).length;
+    if (rpcs) console.log(`  note: ${rpcs} internal Google Maps RPC(s) answered 5xx via the sandbox proxy (ignored)`);
     // The forms' 400s are the refusals this run provokes on purpose (a number a digit short).
     const provoked = (e) => /^HTTP 400 \S+\/api\/(waitlist|buddy)$/.test(e);
-    const real = errors.filter((e) => !tileSorry(e) && !provoked(e) && !/deprecat|google\.maps\.Marker|image-slots\.state\.json|Marker is deprecated|gstatic\.com|fonts\.googleapis|ERR_CONNECTION|Failed to load resource/i.test(e));
+    const real = errors.filter((e) => !tileSorry(e) && !googleRpc(e) && !provoked(e) && !/deprecat|google\.maps\.Marker|image-slots\.state\.json|Marker is deprecated|gstatic\.com|fonts\.googleapis|ERR_CONNECTION|Failed to load resource/i.test(e));
     check(real.length === 0, `no console/page/HTTP errors (${real.length})`);
     real.forEach((e) => console.log('     ', e));
   } finally {

@@ -81,7 +81,7 @@ function funnel(steps, empty) {
     return `<tr>
       <th scope="row">${h(label)}${kept}</th>
       <td class="num">${num(n)}</td>
-      <td class="meter" aria-hidden="true"><span style="width:${Math.max(1, pct(n, first))}%"></span></td>
+      <td class="meter" aria-hidden="true"><span style="width:${Math.min(100, Math.max(1, pct(n, first)))}%"></span></td>
     </tr>`;
   }).join('');
   return `<table class="bars funnel"><thead><tr><th scope="col">Step</th><th scope="col" class="num">People</th><th aria-hidden="true"></th></tr></thead><tbody>${body}</tbody></table>`;
