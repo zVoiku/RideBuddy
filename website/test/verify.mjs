@@ -51,6 +51,21 @@ print(json.dumps({"total": b["total"], "trip_days": b["trip_days"], "night": b["
 
 let failures = 0;
 const check = (ok, msg) => { console.log(`${ok ? '  ok ' : '  FAIL'} ${msg}`); if (!ok) failures += 1; };
+let faresShown = 0; // estimates this run produced, to match against /admin
+
+/** Everything the analytics stored (the beacons' events), read from the local D1's files. */
+function storedBeacons(dir) {
+  const py = `
+import glob, sqlite3, sys
+out = []
+for p in glob.glob(sys.argv[1] + '/**/*.sqlite', recursive=True):
+    try:
+        out += [r[0] for r in sqlite3.connect('file:' + p + '?mode=ro', uri=True).execute('SELECT events FROM beacons')]
+    except sqlite3.Error:
+        pass
+print('\\n'.join(out))`;
+  return spawnSync('python3', ['-c', py, dir], { encoding: 'utf8' }).stdout || '';
+}
 
 async function pickPlace(page, inputSel, text) {
   await page.fill(inputSel, text);
@@ -113,6 +128,7 @@ async function estimateAndCompare(page, name) {
   if (outcome !== 'fare') throw new Error(`${name}: ${outcome}`);
   const shown = (await page.locator('[data-testid="fare-estimate"]').textContent()).trim();
   const last = await page.evaluate(() => window.__rbLastEstimate);
+  faresShown += 1;
   const py = backendTotal(last.inputs);
   check(last.result.total_fare === py.total, `${name}: page ₹${last.result.total_fare} == backend ₹${py.total} (shown "${shown}", ${last.inputs.distanceKm?.toFixed?.(2) ?? 0} km, ${(last.inputs.durationHours || 0).toFixed(2)} h)`);
   check(last.result.trip_days === py.trip_days && last.result.night_charge_applied === py.night, `${name}: days ${last.result.trip_days}/${py.trip_days}, night ${last.result.night_charge_applied}/${py.night}`);
@@ -131,7 +147,13 @@ async function main() {
   // The site as Cloudflare serves it: static files first, the Worker for /api and /admin.
   const dev = await startDev({ port: PORT, password: ADMIN_PASSWORD });
   const browser = await chromium.launch({ args: HOST === 'localhost' ? [] : [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] });
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+  // Counted like a visitor: a browser that doesn't call itself headless, and
+  // site.js's opt-in for automation (it skips navigator.webdriver otherwise).
+  const probe = await browser.newPage();
+  const userAgent = (await probe.evaluate(() => navigator.userAgent)).replace('HeadlessChrome', 'Chrome');
+  await probe.close();
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 }, userAgent });
+  await ctx.addInitScript(() => { window.__rbCountAutomation = true; });
   // In the Claude Code sandbox, outbound HTTPS only works through the agent
   // proxy, and Chromium's tunnels through it die while Node's succeed. So the
   // browser talks to localhost directly and every other request is replayed
@@ -179,6 +201,9 @@ async function main() {
     await page.screenshot({ path: path.join(SHOTS, 'estimate-map-full.png') });
     await page.getByRole('button', { name: 'Close' }).click();
     check(!(await page.$('.rb-map--full')), 'map closes again');
+
+    // Booking isn't open: the result leads straight to the waitlist.
+    check(await page.getByText('Book a Buddy').count() === 0 && await page.getByText('Join the waitlist.').count() === 1, 'the result offers the waitlist and no "Book a Buddy"');
 
     // Joining the waitlist under the estimate saves the number with the trip just priced.
     await page.fill('#rb-whatsapp-number', '98708 7132');
@@ -351,6 +376,14 @@ async function main() {
     await beta.locator('header a', { hasText: 'Home' }).first().click();
     check(new URL(beta.url()).hash === '' && !!(await beta.waitForSelector('#home-hero', { timeout: 10000 }).catch(() => null)), 'Home is plain /beta/');
 
+    // The hero's "Book a Buddy · Coming soon" is information: shown, not a button, inert on hover.
+    const bookInfo = beta.locator('div', { hasText: /^\s*Book a Buddy\s*Coming soon\s*$/ }).last();
+    const before = await bookInfo.evaluate((el) => getComputedStyle(el).backgroundColor).catch(() => null);
+    await bookInfo.hover().catch(() => {});
+    const hovered = await bookInfo.evaluate((el) => ({ bg: getComputedStyle(el).backgroundColor, cursor: getComputedStyle(el).cursor, tab: el.tabIndex })).catch(() => null);
+    check(!!hovered && (await beta.getByRole('button', { name: /Book a Buddy/ }).count()) === 0 && hovered.bg === before && hovered.cursor === 'default' && hovered.tab === -1,
+      `the hero's "Book a Buddy · Coming soon" is shown but inert (${JSON.stringify(hovered)})`);
+
     // Apply to be a Buddy, from a shared /beta/#apply link.
     await beta.goto(`${ORIGIN}/beta/#apply`, { waitUntil: 'networkidle' });
     check(await beta.waitForSelector('#rb-full-name', { timeout: 30000 }).then(() => true).catch(() => false), '/beta/#apply opens the Buddy application');
@@ -395,9 +428,9 @@ async function main() {
       check(!diff.length, `at ${width}px the /estimate/ header matches /beta/'s${diff.length ? ` — differs in ${diff.map((k) => `${k}: ${JSON.stringify(b[k])} vs ${JSON.stringify(e[k])}`).join('; ')}` : ''}`);
       const est = pages['/estimate/'].p;
       if (width === 1280) {
-        check(e.current === 'Estimate Fare' && b.current === 'Home', `…with this page as the current one (${e.current})`);
+        check(b.current === 'Home' && e.current === null, `…Home underlined on /beta/, nothing on /estimate/ (${b.current}, ${e.current})`);
         const hrefs = await est.$$eval('header nav a', (as) => as.map((a) => `${a.textContent.trim()}=${a.getAttribute('href')}`).join(' '));
-        check(hrefs === 'Home=/beta/ Estimate Fare=/estimate/ How It Works=/beta/#how-it-works About=/beta/#about Contact=/beta/#contact', `header links lead to the main site (${hrefs})`);
+        check(hrefs === 'Home=/beta/ How It Works=/beta/#how-it-works About=/beta/#about Contact=/beta/#contact', `header links lead to the main site, no "Estimate Fare" (${hrefs})`);
         await est.screenshot({ path: path.join(SHOTS, 'estimate-header.png'), clip: { x: 0, y: 0, width, height: 90 } });
       } else {
         for (const { p } of Object.values(pages)) {
@@ -417,6 +450,38 @@ async function main() {
       }
       for (const { p } of Object.values(pages)) await p.close();
     }
+
+    // Analytics: this whole run, as /admin counts it. Pages send beacons as
+    // they go and when they close; give the last ones a moment to land.
+    await new Promise((r) => setTimeout(r, 3000));
+    const adminCtx = await browser.newContext({ viewport: { width: 1280, height: 900 }, httpCredentials: { username: 'admin', password: ADMIN_PASSWORD } });
+    try {
+      const a = await adminCtx.newPage();
+      a.on('pageerror', (e) => errors.push('PAGEERROR /admin ' + String(e).slice(0, 200)));
+      a.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
+      await a.goto(`${dev.base}/admin?days=7`, { waitUntil: 'load' });
+      const text = (await a.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ');
+      check(/Visitors 1 /.test(text), `the run counts as one visitor (${text.match(/Visitors [^A-Z]*/)?.[0]})`);
+      check(new RegExp(`Fares shown ${faresShown} `).test(text), `every fare shown is counted (${faresShown}; ${text.match(/Fares shown [^A-Z]*/)?.[0]})`);
+      check(/Waitlist signups 2 /.test(text) && /Buddy applications 1 /.test(text), 'signups and applications, counted from the lists');
+      check(/Saw a fare \d+% of the step before 1 Joined the waitlist there \d+% of the step before 1 /.test(text), 'the estimator funnel reaches the waitlist');
+      check(/Opened the application 1 Sent it 100% of the step before 1 /.test(text), 'Buddy recruitment: opened from the shared #apply link, then sent');
+      check(/Shimla \d/.test(text) && /Kasauli \d/.test(text), `destinations priced (${text.match(/Destinations .{0,60}/)?.[0]})`);
+      check(['estimate page', 'Contact page', 'Buddy application'].every((f) => text.includes(`Mistyped phone number (${f}) 1`)), 'mistyped numbers, per form');
+      check(/Get Estimate Estimate · estimate form \d/.test(text) && /place suggestion Estimate · estimate form \d/.test(text), 'clicks by label and place; suggestions counted without their text');
+      await a.hover('#daily .col:last-child');
+      const tip = (await a.locator('#daily .tip').textContent()).trim();
+      check(/^1 visitor\d+ page views/.test(tip), `hovering a day shows its numbers ("${tip}")`);
+      await a.screenshot({ path: path.join(SHOTS, 'admin.png'), fullPage: true });
+      await a.setViewportSize({ width: 390, height: 844 });
+      await a.screenshot({ path: path.join(SHOTS, 'admin-mobile.png'), fullPage: true });
+    } finally {
+      await adminCtx.close();
+    }
+    // Privacy: the analytics hold no phone numbers, names, licences or addresses.
+    const stored = storedBeacons(dev.dir);
+    const leaks = ['98708', '71324', '7911', 'Voiku', 'VNS8893', pinned, pinned.split(',').slice(0, 2).join(',')].filter((x) => x && stored.includes(x));
+    check(stored.includes('estimate_completed') && !leaks.length, `analytics store no phone numbers, names, licences or addresses (${leaks.join(', ') || 'none found'})`);
 
     if (blocked.length) console.log(`  note: ${new Set(blocked).size} host path(s) unreachable from this sandbox and aborted: ${[...new Set(blocked.map((u) => new URL(u).host))].join(', ')}`);
     // Through the sandbox proxy, Google's abuse detection answers some batched

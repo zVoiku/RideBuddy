@@ -83,6 +83,8 @@ class Component extends DCLogic {`,
       this.setState({ page: pageFromHash(), menuOpen: false, applyOpen: false });
       window.scrollTo({ top: 0, behavior: 'auto' });
     });
+    // Opened straight from a shared /beta/#apply link: counts as opening the form.
+    if (this.state.applyOpen) this.track('buddy_application_opened', { via: 'link' });
   }`,
   },
   {
@@ -146,6 +148,27 @@ class Component extends DCLogic {`,
   { why: '"Estimate this trip" links', from: '<a href="#" onClick="{{ s.go }}"', to: '<a href="{{ s.href }}" onClick="{{ s.go }}"' },
   { why: 'About page "Get an Estimate" link', from: '<a href="#" onClick="{{ goEstimatorFromPage }}"', to: '<a href="/estimate/" onClick="{{ goEstimatorFromPage }}"' },
   { why: 'footer links', from: '<a href="#" onClick="{{ it.go }}"', to: '<a href="{{ it.href }}" onClick="{{ it.go }}"' },
+];
+
+// ----- Booking isn't open yet ------------------------------------------------------
+
+const BOOKING = [
+  {
+    why: 'home hero "Book a Buddy · Coming soon": information, not a button — same look, no hover, press, focus or click',
+    from: `<button type="button" onClick="{{ bookBuddy }}" style="display:inline-flex;align-items:center;justify-content:center;gap:10px;white-space:nowrap;min-height:52px;padding:0 20px 0 26px;cursor:pointer;background:transparent;border:1.5px solid rgba(245,240,232,.72);border-radius:var(--radius-lg);font-family:var(--font-body),DM Sans,sans-serif;font-size:16px;font-weight:500;color:var(--color-parchment)" style-hover="background:rgba(245,240,232,.14);border-color:var(--color-parchment)" style-active="transform:scale(0.98)" style-focus="box-shadow:0 0 0 3px rgba(245,240,232,.28);outline:none">
+                Book a Buddy
+                <span style="display:inline-flex;align-items:center;padding:3px 9px;border-radius:var(--radius-sm);background:rgba(245,240,232,.16);font-family:var(--font-body),DM Sans,sans-serif;font-size:11px;font-weight:500;letter-spacing:0.02em;color:rgba(245,240,232,.92)">Coming soon</span>
+              </button>`,
+    to: `<div style="display:inline-flex;align-items:center;justify-content:center;gap:10px;white-space:nowrap;min-height:52px;padding:0 20px 0 26px;cursor:default;box-sizing:border-box;line-height:normal;background:transparent;border:1.5px solid rgba(245,240,232,.72);border-radius:var(--radius-lg);font-family:var(--font-body),DM Sans,sans-serif;font-size:16px;font-weight:500;color:var(--color-parchment)">
+                Book a Buddy
+                <span style="display:inline-flex;align-items:center;padding:3px 9px;border-radius:var(--radius-sm);background:rgba(245,240,232,.16);font-family:var(--font-body),DM Sans,sans-serif;font-size:11px;font-weight:500;letter-spacing:0.02em;color:rgba(245,240,232,.92)">Coming soon</span>
+              </div>`,
+  },
+  {
+    why: 'no "Estimate Fare" in the header or phone menu: "Get an Estimate" is the same page',
+    from: "navLinks: [link('home', 'Home'), link('estimate', 'Estimate Fare'), link('how', 'How It Works'), ",
+    to: "navLinks: [link('home', 'Home'), link('how', 'How It Works'), ",
+  },
 ];
 
 // ----- The forms save through the Worker (website/worker) ---------------------------
@@ -224,6 +247,8 @@ const FORMS = [
       name: applyName, phone: applyPhone, licence: applyLicence, website: this.honeypot('rb-hp-apply'),
     });
     if (!r.ok) {
+      // For the site's analytics: a mistyped number, another field, or a save that failed.
+      this.track(r.errors.phone ? 'phone_invalid' : Object.keys(r.errors).length ? 'form_invalid' : 'save_failed', { form: 'buddy' });
       this.setState({ applySending: false, applyErrors: Object.keys(r.errors).length ? r.errors : { form: r.error } });
       return;
     }
@@ -248,7 +273,11 @@ const FORMS = [
     if (!contactPhone.trim()) { this.setState({ contactError: 'Enter your phone number.' }); return; }
     this.setState({ contactSending: true, contactError: '' });
     const r = await this.postForm('/api/waitlist', { phone: contactPhone, source: 'contact', website: this.honeypot('rb-hp-contact') });
-    if (!r.ok) { this.setState({ contactSending: false, contactError: r.errors.phone || r.error }); return; }
+    if (!r.ok) {
+      this.track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'contact' });
+      this.setState({ contactSending: false, contactError: r.errors.phone || r.error });
+      return;
+    }
     this.setState({ contactSending: false, contactDone: true });
     this.track('waitlist_joined', { source: 'contact' });
   };`,
@@ -286,4 +315,4 @@ const FORMS = [
   },
 ];
 
-export const ARTBOARD_PATCHES = [...ESTIMATE, ...URLS, ...FORMS];
+export const ARTBOARD_PATCHES = [...ESTIMATE, ...URLS, ...BOOKING, ...FORMS];

@@ -28,7 +28,8 @@ RideBuddy-partner/     Driver app — self-contained Expo project, own package.j
   README.md            Lifecycle, privacy rules, and on-device run instructions
 website/               ridebuddy.co.in on Cloudflare Workers (see website/README.md)
   build.mjs            builds dist/: holding page, /estimate/, /beta/ artboard
-  worker/              Worker script: form endpoints -> D1, /admin CSV downloads
+  src/site.js          the site's own cookieless analytics (added to every page)
+  worker/              Worker script: forms and analytics -> D1, /admin lists + dashboard
 scripts/capture.js     Playwright script: screenshots the whole flow (web build)
 .claude/               SessionStart hook that installs deps + scaffolds .env
 ```

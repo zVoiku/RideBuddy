@@ -54,6 +54,27 @@ export function withinService(kind, place) {
   return { ok: true };
 }
 
+/**
+ * The area and city a place lies in — "Sector 17", "Chandigarh" — from Google's
+ * address parts (Places `addressComponents` or Geocoder `address_components`).
+ * Coarse on purpose: this is what the site's analytics counts for demand,
+ * never a street address.
+ */
+function areaOf(components) {
+  const parts = (components || []).map((c) => ({ name: c.longText || c.long_name || '', types: c.types || [] }));
+  const find = (...types) => {
+    for (const t of types) {
+      const hit = parts.find((c) => c.types.includes(t));
+      if (hit && hit.name) return hit.name;
+    }
+    return '';
+  };
+  return {
+    area: find('sublocality_level_1', 'sublocality', 'neighborhood'),
+    city: find('locality', 'postal_town', 'administrative_area_level_3', 'administrative_area_level_2'),
+  };
+}
+
 // ----- Loader ---------------------------------------------------------------
 
 let loading = null;
@@ -125,13 +146,14 @@ export async function placesAutocomplete(input, { kind, sessionToken }) {
 /** Mirrors getPlaceDetails(): the coordinates and address for a suggestion. */
 export async function getPlaceDetails(suggestion) {
   const place = suggestion.prediction.toPlace();
-  await place.fetchFields({ fields: ['location', 'formattedAddress', 'displayName'] });
+  await place.fetchFields({ fields: ['location', 'formattedAddress', 'displayName', 'addressComponents'] });
   const loc = place.location;
   if (!loc) return null;
   return {
     address: place.formattedAddress || suggestion.description,
     lat: typeof loc.lat === 'function' ? loc.lat() : loc.lat,
     lng: typeof loc.lng === 'function' ? loc.lng() : loc.lng,
+    ...areaOf(place.addressComponents),
   };
 }
 
@@ -186,7 +208,11 @@ export async function reverseGeocode({ lat, lng }) {
     // Prefer a street address over the plus-code/locality entries Google also returns.
     const best = results.find((r) => !r.types.includes('plus_code')) || results[0];
     if (!best) return null;
-    return { address: best.formatted_address, main_text: best.address_components?.[0]?.long_name || best.formatted_address.split(',')[0] };
+    return {
+      address: best.formatted_address,
+      main_text: best.address_components?.[0]?.long_name || best.formatted_address.split(',')[0],
+      ...areaOf(best.address_components),
+    };
   } catch (e) {
     return null;
   }
@@ -205,7 +231,7 @@ export async function getPlaceById(placeId) {
     const g = await loadGoogleMaps();
     const { Place } = await g.importLibrary('places');
     const place = new Place({ id: placeId });
-    await place.fetchFields({ fields: ['location', 'formattedAddress', 'displayName'] });
+    await place.fetchFields({ fields: ['location', 'formattedAddress', 'displayName', 'addressComponents'] });
     const loc = place.location;
     if (!loc) return null;
     const name = place.displayName || '';
@@ -217,6 +243,7 @@ export async function getPlaceById(placeId) {
       address: name && addr && !addr.startsWith(name) ? `${name}, ${addr}` : (addr || name),
       main_text: name || addr.split(',')[0],
       place_id: placeId,
+      ...areaOf(place.addressComponents),
     };
   } catch (e) {
     return null;

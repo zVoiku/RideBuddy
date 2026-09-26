@@ -5,8 +5,9 @@
 | `/` | Holding page — "RideBuddy — Coming soon" | `src/index.html` |
 | `/estimate/` | The fare estimator — the customer app's estimate flow, on the web | `src/estimate/` |
 | `/beta/` | The design-canvas artboard, shared by link (`noindex`) | `../Webpage`, assembled by `build.mjs` |
-| `/api/waitlist`, `/api/buddy` | Where the site's forms save | `worker/index.js` → D1 |
-| `/admin` | The two lists as CSV downloads, behind a password | `worker/index.js` |
+| `/api/waitlist`, `/api/buddy` | Where the site's forms save | `worker/forms.js` → D1 |
+| `/site.js`, `/api/e` | The site's own analytics: the script on every page, and where it reports | `src/site.js`, `worker/analytics.js` → D1 |
+| `/admin` | The two lists as CSV downloads and the analytics dashboard, behind a password | `worker/admin.js`, `worker/dashboard.js` |
 
 From the repo root, `npm run build` installs this folder's dependencies and
 writes `website/dist` — the directory Cloudflare uploads. From here,
@@ -20,14 +21,15 @@ git-ignored `../.dev.vars` to open the local `/admin`).
 result in `frontend/app/booking/summary.tsx`.
 
 - **Header** — the main site's header, element for element: logo, Home ·
-  Estimate Fare · How It Works · About · Contact, "Get an Estimate", and the
-  full-screen menu below 1120px (`SiteHeader` in `src/estimate/app.jsx`, styles
-  in `src/estimate/index.html`, CTA from the same design-system `Button`).
-  Estimate Fare is underlined as the current page; here it and "Get an
-  Estimate" bring back the form, trip kept, instead of reloading. The links
-  point at `/beta/` through one constant, `SITE` — change it when the site
-  moves to the root. `verify.mjs` measures this header and `/beta/`'s (and both
-  phone menus) and fails if they drift apart.
+  How It Works · About · Contact, "Get an Estimate", and the full-screen menu
+  below 1120px (`SiteHeader` in `src/estimate/app.jsx`, styles in
+  `src/estimate/index.html`, CTA from the same design-system `Button`). There
+  is no "Estimate Fare" link — "Get an Estimate" goes to the same page — so
+  nothing is underlined here; on this page "Get an Estimate" brings back the
+  form, trip kept, instead of reloading. The links point at `/beta/` through
+  one constant, `SITE` — change it when the site moves to the root.
+  `verify.mjs` measures this header and `/beta/`'s (and both phone menus) and
+  fails if they drift apart.
 - **Form** — trip type (Round Trip / One Way / Hourly), pickup and destination
   from Google Places, pickup date and time, return date and the stay question
   for round trips, hours for hourly. No booking: the result leads to the
@@ -51,9 +53,10 @@ result in `frontend/app/booking/summary.tsx`.
   half-to-even rounding. `npm test` runs 1,690 trips through both and fails on
   the first differing field.
 - **Result** — one number and the app's inclusion lines verbatim, the route on
-  an interactive map with tap-to-expand, "Edit trip details", then Book a
-  Buddy → waitlist. No deposit line, no itemisation (§2.4). Joining the
-  waitlist here saves the trip just priced with the number (see below).
+  an interactive map with tap-to-expand, "Edit trip details", then the
+  waitlist. No "Book a Buddy" until booking opens; no deposit line, no
+  itemisation (§2.4). Joining the waitlist here saves the trip just priced
+  with the number (see below).
 
 **Service area.** Pickups within 25 km of Chandigarh (the Tricity);
 destinations within 600 km (Delhi, Amritsar, Manali, Dharamshala, Rishikesh,
@@ -71,7 +74,7 @@ browser `Geocoder`, not the web service, so the referrer-restricted key works).
 API is optional on the key.
 
 **Design.** Same tokens and components as the artboard: `_ds/` is copied to
-`dist/_ds/` and `Button`, `Input`, `Chip`, `Badge` come from the design-system
+`dist/_ds/` and `Button`, `Input`, `Chip` come from the design-system
 bundle, with plain fallbacks so a bundle hiccup degrades to unstyled inputs
 rather than a blank page.
 
@@ -125,6 +128,72 @@ is imported as text.
   Console**, then `DELETE FROM waitlist WHERE id = 17;` (or `buddies`), using the
   ID column of the download.
 
+## Analytics
+
+The site counts its own visits: no Google Analytics, no cookies on visitors,
+nothing sent anywhere but this Worker. `build.mjs` adds `/site.js` (from
+`src/site.js`, minified, ~1.6 KB gzipped) to every page; it batches events and
+posts them to `POST /api/e`, and `/admin` shows the numbers.
+
+**What is recorded**
+
+| Event | When | Details kept |
+|---|---|---|
+| `pageview` | every page, and each `/beta/#…` page | the page; on arrival, the referring site and any `utm_*` |
+| `click` | any link or button | its own label, the page, the part of the page (header, footer, the artboard's section, the estimate form…), a link's target page |
+| named events | the pages' existing `dataLayer` pushes | e.g. `estimate_completed` with trip type, pickup area and city, destination city, distance, fare, days ahead, weekday, hour |
+| `perf` | when a page is left | largest-paint time, load time, connection type |
+| `js_error` | a script error | the message (first 120 characters) |
+
+Named events: `estimator_opened`, `estimate_started`, `estimate_completed`,
+`place_refused` (pickup outside the Tricity, destination past 600 km — area and
+city only), `route_not_found`, `route_failed`, `maps_failed`, `map_point_picked`,
+`waitlist_joined` (`source: contact | estimate`), `phone_invalid`,
+`form_invalid`, `save_failed` (`form: …`), `buddy_application_opened`
+(including from a `/beta/#apply` link), `buddy_application_submitted`.
+
+**Never recorded:** anything typed into a form — phone numbers, names,
+licences — and no street addresses: places are reduced to their area and city
+("Sector 17", "Chandigarh") from Google's address parts in `maps.js`, and
+suggestion lists are marked `data-rb-private`, so a click on one counts as
+"place suggestion" without its text. `verify.mjs` reads the stored events back
+after a full run and fails if a phone number, name, licence or address appears.
+
+**Visitors without cookies or IPs.** A visitor is a hash of the day's random
+salt, their network (IPv4 address, or IPv6 /64) and their browser's user agent.
+The salt changes daily and old ones are deleted, so visitors are counted per
+day and can't be followed across days or traced back; no IP is stored.
+Crawlers (by user agent), automated browsers (`navigator.webdriver`) and
+browsers marked "Don't count this browser" on `/admin` (an `rb_exclude` cookie
+set only there, for both `ridebuddy.co.in` and `www`) aren't counted. Script
+blockers hide visits, as with any analytics.
+
+**Storage.** One D1 row per beacon (`beacons`), kept 13 months. Finished days
+are summed into `daily_totals` — kept for good — the first time `/admin` is
+opened after them, newest first and at most eight days per page load (Workers'
+free plan allows ~50 D1 calls a request); the page says so while older days
+are still waiting. D1 does the adding up (`DAY_SQL` in `worker/stats.js`), so
+the Worker's CPU stays small however busy a day was. Analytics stop writing
+for the day at 30,000 beacons, well inside D1's free 100,000 rows written a
+day, so a spike or a flood can never leave the forms unable to save.
+
+**The dashboard** (`/admin?days=1|7|30|90`): headline numbers against the
+previous period (signups and applications counted from the lists themselves),
+visitors per day (hover a day; a table twin below), the estimator step by step
+(opened → started → saw a fare → joined the waitlist) and Buddy recruitment
+(opened → sent) in people, where visitors came from and who signed up from
+where, pages, campaign links, devices, cities, what people price (destinations,
+pickup areas, trip types, how far ahead, fares, travel day, pickup time,
+refused places), clicks, problems (mistyped numbers per form, failed saves,
+map and route failures, script errors) and page speed (by page and
+connection). Below: the campaign-link maker, "Don't count this browser", and
+`/admin/daily.csv` — one row a day since the first visit.
+
+**Campaign links.** The link maker on `/admin` adds `utm_source`,
+`utm_medium`, `utm_campaign` to a page's address (before any `#`). Visits
+through such a link show under the source you named ("WhatsApp") and in the
+campaign table with the details.
+
 ## The Google Maps key
 
 `src/estimate/maps.js` reads `GOOGLE_MAPS_BROWSER_KEY`, which `build.mjs`
@@ -170,8 +239,15 @@ canvas into `Webpage/` and rebuild.
    (before: it did nothing); Apply to be a Buddy posts to `/api/buddy` (before:
    it opened the visitor's mail app, and most phones have none set up) and
    confirms "Application received. We'll call you to take it forward."
+8. **Booking isn't open yet.** The home hero's "Book a Buddy · Coming soon"
+   stays as information — same look, but a plain element: no hover, press,
+   focus or click. And the header and phone menu have no "Estimate Fare" link,
+   since "Get an Estimate" goes to the same page (the footer keeps its links).
+9. **Analytics.** The forms report mistyped numbers and failed saves, and a
+   Buddy form opened from a `/beta/#apply` link counts as opened. `/site.js` is
+   added to the page like every other.
 
-5–7 are text patches listed in `artboard-patches.mjs`. Each must match the
+5–9 are text patches listed in `artboard-patches.mjs`. Each must match the
 artboard an exact number of times (once, unless it says otherwise). A canvas
 re-export that changes one of those spots fails the build here, loudly,
 instead of shipping a half-patched page.
@@ -188,10 +264,17 @@ NODE_PATH=/opt/node22/lib/node_modules PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 ```
 
 `test:worker` covers phone formats, the trip wording, CSV quoting and formula
-neutralising, then over HTTP: the locked `/admin` without a password, saving
-and refusing (field messages, wrong origin, non-JSON, oversize, honeypot),
-`(repeat)` marking, the CSV layout, Basic auth and its lockout, the HTTPS
-redirect, and the flood cap.
+neutralising, the analytics' event cleaning, devices, sources and bands, and a
+day's totals computed by running `DAY_SQL` on Node's own SQLite; then over
+HTTP: the locked `/admin` without a password, saving and refusing (field
+messages, wrong origin, non-JSON, oversize, honeypot), `(repeat)` marking, the
+CSV layout, Basic auth and its lockout, the HTTPS redirect, the flood cap —
+and, with a test clock (`RB_TEST=1` plus an `X-RB-Now` header, test servers
+only), analytics across days: what is and isn't counted (crawlers, excluded
+browsers, other sites' pages), yesterday summed plus today live, every
+dashboard section, a label sent to inject HTML shown escaped, the daily CSV,
+"Don't count this browser", the campaign link maker, totals outliving 13
+months, and a backlog summed eight days at a time.
 
 `verify.mjs` serves `dist/` and the Worker with `wrangler dev`, drives the
 pages headless — one way, a late departure, a three-day round trip, hourly, an
@@ -201,9 +284,13 @@ re-prices every estimate with the backend's `fare_breakdown` on the exact
 inputs the page used. Then the forms: joining the waitlist under an estimate,
 the `/beta` Contact waitlist and a Buddy application from `/beta/#apply`, each
 refused once with a bad number and then read back from the admin download;
-plus `/beta`'s URLs, Back, and the CTA redirect. Finally the two headers are
-measured side by side at 1280px and 390px — every part's box, font and colour,
-and the open phone menu — and must match except for the current page.
+plus `/beta`'s URLs, Back, the CTA redirect, and the hero's "Book a Buddy ·
+Coming soon" being inert. The two headers are measured side by side at 1280px
+and 390px — every part's box, font and colour, and the open phone menu — and
+must match except for the current page. Last, `/admin` must count the run
+exactly (one visitor, every fare shown, the funnels, destinations, mistyped
+numbers per form, clicks), its chart must show a day on hover, and the stored
+events must hold no phone number, name, licence or address.
 
 Tapping a place icon is exercised by firing the click Google fires for one (a
 click carrying a `placeId`) rather than hunting for the icon's pixel, which is
@@ -246,6 +333,15 @@ Validate config changes locally with `npx wrangler deploy --dry-run`.
 
 - **One shared admin password**, no per-person accounts or audit trail. If
   more people need the lists, put `/admin` behind Cloudflare Access instead.
+- **Analytics are a floor, not a census**: script blockers and browsers that
+  never ran `/site.js` aren't counted, and WhatsApp and other apps usually
+  hide where a visit came from ("Direct or an app") — campaign links fix that.
+  Cities come from the visitor's connection, so mobile data often shows a big
+  city nearby.
+- **Free-plan headroom.** The dashboard's work per load is bounded (eight days
+  summed, D1 doing the adding up) and analytics cap their own writes, but a
+  very busy site is better served by Workers Paid ($5/month): 30 s CPU, 1,000
+  D1 calls a request, 50M rows written a month.
 - The artboard's own estimator (unreachable since every Estimate link goes to
   `/estimate/`) still has its unwired waitlist; it is dead code, left as is.
 - **Hourly is priced at the legacy ₹249/h** and is not in Rate Table v1.7; the
