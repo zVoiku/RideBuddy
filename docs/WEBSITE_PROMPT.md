@@ -16,9 +16,8 @@ Full context is in the repo at docs/WEBSITE_CONTEXT.md — read it first. It
 covers the product, the locked pricing (Rate Table v1.7), brand tokens,
 vocabulary, what's actually shipped, and what must not be claimed.
 
-Two warnings from that file worth repeating: memory/PRD.md is stale and wrong
-about branding and pricing — ignore it. And backend/server.py is the source of
-truth for any number.
+One warning from that file worth repeating: backend/server.py is the source of
+truth for any number — don't take pricing or branding from older docs.
 
 Before writing code, ask me:
 - Stack (Next.js / Astro / something else)

@@ -4,10 +4,10 @@ Written as a handoff for a separate session that will build the public/marketing
 website. Everything here is taken from the shipped code and the locked Rate
 Table v1.7, not from memory.
 
-> **Do not trust `memory/PRD.md`.** It is the first iteration and is now wrong on
-> nearly everything a website would copy: it says teal `#0E9B9B`, a 30% advance,
-> ₹1,499/day, and new-user discounts. All superseded. This file and
-> `backend/server.py` are the sources of truth.
+> **Sources of truth are this file and `backend/server.py`.** The original
+> `memory/PRD.md` has been deleted — it described teal branding, a 30% advance,
+> ₹1,499/day and new-user discounts, none of which survived. If you find that
+> content quoted anywhere, it is the first iteration and is wrong.
 
 ---
 
