@@ -160,10 +160,11 @@ driver_id?, start_code?, end_code?, created_at, started_at?, completed_at?`
 
 - **Google Maps.** Native map = `react-native-maps` w/ `PROVIDER_GOOGLE` (both platforms).
   Key set at **build time** via `app.config.js` → react-native-maps config plugin
-  (needs a **clean prebuild** to take effect). REST (autocomplete/directions/static) via
-  `src/maps.ts` reading `EXPO_PUBLIC_GOOGLE_MAPS_KEY` from the JS bundle. In Expo Go
-  (no native module) `LiveMap` falls back to a Google **Static Map** image, then SVG.
-  Required APIs on the key: Maps SDK iOS + Android, Directions, Places, Geocoding, Static.
+  (needs a **clean prebuild** to take effect). REST (Places (New) autocomplete/details,
+  Routes, Geocoding, static) via `src/maps.ts` reading `EXPO_PUBLIC_GOOGLE_MAPS_KEY` from
+  the JS bundle. In Expo Go (no native module) `LiveMap` falls back to a Google **Static
+  Map** image, then SVG. Required APIs on the key: Maps SDK iOS + Android, Places API
+  (New), Routes, Geocoding, Static.
 - **Razorpay.** Backend creates an order and verifies the signature (secret stays
   server-side). Frontend opens `checkout.js` in a WebView (`RazorpayCheckout.tsx`),
   posts the result back, backend verifies, then the booking is created. Falls back to a

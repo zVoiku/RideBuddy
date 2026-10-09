@@ -5,8 +5,8 @@
 // or from an EAS secret in cloud builds) into the react-native-maps config plugin,
 // which links the native Google Maps SDK and sets the key on both iOS and Android.
 //
-// The same env var is read by src/maps.ts for the Places/Directions/Static REST
-// APIs, so a single variable powers the whole Google Maps integration.
+// This app makes no Maps REST calls of its own: the key only serves the native
+// map (src/TripMap.tsx). It is the same key as the customer app's.
 module.exports = ({ config }) => {
   const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY || '';
 

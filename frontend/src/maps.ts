@@ -1,7 +1,23 @@
 // Google Maps helpers — uses REST APIs only (no native module needed for Expo preview)
 // API key from EXPO_PUBLIC_GOOGLE_MAPS_KEY in .env
+//
+// Search, place lookup and routing use Places API (New) and the Routes API: the
+// legacy Places and Directions web services aren't available on the apps' key.
 
 const KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_KEY || '';
+
+// Places API (New) and the Routes API take the key and a field mask (which
+// response fields to return) as headers, and answer errors as { error: { message } }.
+async function googleJson(url: string, fieldMask: string, body?: object): Promise<any> {
+  const res = await fetch(url, {
+    method: body ? 'POST' : 'GET',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': KEY, 'X-Goog-FieldMask': fieldMask },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  return data;
+}
 
 export interface PlaceSuggestion {
   description: string;
@@ -24,25 +40,26 @@ export interface RouteInfo {
   end: { lat: number; lng: number };
 }
 
-// ----- Places Autocomplete -----
+// ----- Places Autocomplete (Places API (New)) -----
 export async function placesAutocomplete(input: string): Promise<PlaceSuggestion[]> {
   if (!input || input.length < 2 || !KEY) return [];
-  const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(input)}&components=country:in&key=${KEY}`;
   try {
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      console.warn('Places autocomplete error', data.status, data.error_message);
-      return [];
-    }
-    return (data.predictions || []).map((p: any) => ({
-      description: p.description,
-      place_id: p.place_id,
-      main_text: p.structured_formatting?.main_text || p.description,
-      secondary_text: p.structured_formatting?.secondary_text || '',
-    }));
+    const data = await googleJson(
+      'https://places.googleapis.com/v1/places:autocomplete',
+      'suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat',
+      { input, includedRegionCodes: ['in'] }
+    );
+    return (data.suggestions || [])
+      .map((s: any) => s.placePrediction)
+      .filter((p: any) => p?.placeId)
+      .map((p: any) => ({
+        description: p.text?.text || '',
+        place_id: p.placeId,
+        main_text: p.structuredFormat?.mainText?.text || p.text?.text || '',
+        secondary_text: p.structuredFormat?.secondaryText?.text || '',
+      }));
   } catch (e) {
-    console.warn('Places autocomplete fetch failed', e);
+    console.warn('Places autocomplete failed', e);
     return [];
   }
 }
@@ -50,13 +67,10 @@ export async function placesAutocomplete(input: string): Promise<PlaceSuggestion
 // ----- Place details (lat/lng for a place_id) -----
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails | null> {
   if (!placeId || !KEY) return null;
-  const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=geometry,formatted_address&key=${KEY}`;
   try {
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.status !== 'OK') return null;
-    const loc = data.result.geometry?.location;
-    return loc ? { address: data.result.formatted_address, lat: loc.lat, lng: loc.lng } : null;
+    const data = await googleJson(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, 'formattedAddress,location');
+    const loc = data.location;
+    return loc ? { address: data.formattedAddress, lat: loc.latitude, lng: loc.longitude } : null;
   } catch {
     return null;
   }
@@ -77,22 +91,30 @@ export async function geocodeAddress(addr: string): Promise<PlaceDetails | null>
   }
 }
 
-// ----- Directions API (gets distance/duration + encoded polyline) -----
+// "30.7333,76.7794" -> a lat/lng waypoint; anything else is sent as an address.
+function waypoint(s: string) {
+  const m = s.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+  return m ? { location: { latLng: { latitude: Number(m[1]), longitude: Number(m[2]) } } } : { address: s };
+}
+
+// ----- Routes API (gets distance/duration + encoded polyline) -----
 export async function getDirections(originLatLng: string, destLatLng: string): Promise<RouteInfo | null> {
   if (!originLatLng || !destLatLng || !KEY) return null;
-  const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${encodeURIComponent(originLatLng)}&destination=${encodeURIComponent(destLatLng)}&mode=driving&key=${KEY}`;
   try {
-    const res = await fetch(url);
-    const data = await res.json();
-    if (data.status !== 'OK' || !data.routes?.length) return null;
-    const r = data.routes[0];
-    const leg = r.legs[0];
+    const data = await googleJson(
+      'https://routes.googleapis.com/directions/v2:computeRoutes',
+      'routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline,routes.legs.startLocation,routes.legs.endLocation',
+      { origin: waypoint(originLatLng), destination: waypoint(destLatLng), travelMode: 'DRIVE' }
+    );
+    const r = data.routes?.[0];
+    const leg = r?.legs?.[0];
+    if (!r || !leg) return null;
     return {
-      distance_km: leg.distance.value / 1000,
-      duration_min: Math.round(leg.duration.value / 60),
-      polyline: r.overview_polyline?.points || '',
-      start: { lat: leg.start_location.lat, lng: leg.start_location.lng },
-      end: { lat: leg.end_location.lat, lng: leg.end_location.lng },
+      distance_km: (r.distanceMeters || 0) / 1000,
+      duration_min: Math.round(parseFloat(r.duration || '0') / 60), // "1253s"
+      polyline: r.polyline?.encodedPolyline || '',
+      start: { lat: leg.startLocation.latLng.latitude, lng: leg.startLocation.latLng.longitude },
+      end: { lat: leg.endLocation.latLng.latitude, lng: leg.endLocation.latLng.longitude },
     };
   } catch {
     return null;

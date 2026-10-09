@@ -110,10 +110,10 @@ and `adb reverse tcp:8001 tcp:8001`, then use `localhost` URLs.)
 - **"Network request failed" in the app** → backend not running, or `EXPO_PUBLIC_BACKEND_URL`
   has the wrong IP. Phone + Mac must be on the same Wi-Fi. Test from the phone's browser:
   `http://<mac-ip>:8001/api/` → should show `{"message":"RideBuddy API"}`.
-- **Map is blank** → the Google Maps key is missing/invalid, or these APIs aren't enabled on
-  it: **Maps SDK for Android, Directions, Places, Geocoding, Maps Static**. If the key is
-  restricted to specific apps, either use an unrestricted key or add this build's package
-  `com.ridebuddy.app` + its SHA-1.
+- **Map is blank** → the Google Maps key is missing/invalid, or these APIs aren't allowed on
+  it: **Maps SDK for Android, Places API (New), Routes API, Geocoding API** (plus **Maps
+  Static API** for the Expo Go fallback image). Don't restrict the key to specific apps:
+  the app's search and routing calls send no package name, so Google would refuse them.
 - **"No development servers found"** → enter the Metro URL manually: `http://<mac-ip>:8081`.
 - **Mac's Wi-Fi IP changed** → update the IP in `frontend/.env` and restart Metro with
   `npx expo start --dev-client --clear`.
