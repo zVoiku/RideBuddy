@@ -49,10 +49,19 @@ Not committed (git-ignored). The SessionStart hook scaffolds safe defaults.
 
 `frontend/.env`
 - `EXPO_PUBLIC_BACKEND_URL` — backend base URL (default `http://localhost:8001`)
+- `EXPO_PUBLIC_GOOGLE_MAPS_KEY` — the apps' Google Maps key, shared with the partner app:
+  the native map, plus the Places (New), Routes and Geocoding calls in `src/maps.ts`
 
 `RideBuddy-partner/.env` (template committed as `.env.example`)
 - `EXPO_PUBLIC_BACKEND_URL` — must be a LAN IP, not `localhost`, when running on a phone
 - `EXPO_PUBLIC_GOOGLE_MAPS_KEY` — optional; blank ⇒ the map renders blank on device
+
+`website/.env`
+- `GOOGLE_MAPS_BROWSER_KEY` — the site's own key, restricted to its web addresses;
+  on Cloudflare it is a build variable (see `website/README.md`)
+
+Never commit a Google key: the repo is public. The apps' key is built into the
+native app, so after changing it run `npx expo prebuild --clean` and rebuild.
 
 ## Run locally
 

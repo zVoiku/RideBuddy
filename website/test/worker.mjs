@@ -315,6 +315,8 @@ async function analytics() {
     method: 'POST', path: '/api/e', body: typeof events === 'string' ? events : JSON.stringify({ e: events }),
     headers: { 'Content-Type': 'text/plain;charset=UTF-8', Origin: B, 'User-Agent': ua, 'CF-Connecting-IP': ip, 'X-RB-Now': now, ...headers },
   });
+  // Every request here carries the test clock. One on the real clock would sum
+  // TODAY as a finished day once the real date has moved past it.
   const at = (now) => ({ headers: { 'X-RB-Now': now } });
   try {
     // Yesterday: A lands from Google and joins the waitlist under a fare.
@@ -359,14 +361,14 @@ async function analytics() {
     const daily = await admin(B, '/admin/daily.csv', at(TODAY));
     same(csvRows(daily.text).join(' | '), 'Date,Visitors,Page views,Fares shown,Waitlist signups,Buddy applications | 2026-09-25,1,1,1,0,0 | 2026-09-26,2,3,0,0,0', 'the daily CSV: one row a day');
 
-    const off = await admin(B, '/admin/exclude?on=1&days=7');
+    const off = await admin(B, '/admin/exclude?on=1&days=7', at(TODAY));
     check(off.status === 303 && off.headers.location === '/admin?days=7#counting'
       && /^rb_exclude=1; Path=\/; Max-Age=157680000; HttpOnly; SameSite=Lax$/.test(off.headers['set-cookie']?.[0] || ''),
       `"Don't count this browser" sets a long-lived cookie (${off.headers['set-cookie']?.[0]})`);
-    check(visible((await admin(B, '/admin', { headers: { Cookie: 'rb_exclude=1' } })).text).includes('This browser is not counted'), '…and the dashboard says so');
-    check(/Max-Age=0/.test((await admin(B, '/admin/exclude?on=0')).headers['set-cookie']?.[0] || ''), '"Count it again" clears it');
+    check(visible((await admin(B, '/admin', { headers: { Cookie: 'rb_exclude=1', 'X-RB-Now': TODAY } })).text).includes('This browser is not counted'), '…and the dashboard says so');
+    check(/Max-Age=0/.test((await admin(B, '/admin/exclude?on=0', at(TODAY))).headers['set-cookie']?.[0] || ''), '"Count it again" clears it');
 
-    const made = await admin(B, `/admin?days=7&lm_page=${encodeURIComponent('/beta/#apply')}&lm_source=WhatsApp+Group&lm_medium=status&lm_campaign=Drivers+Oct!`);
+    const made = await admin(B, `/admin?days=7&lm_page=${encodeURIComponent('/beta/#apply')}&lm_source=WhatsApp+Group&lm_medium=status&lm_campaign=Drivers+Oct!`, at(TODAY));
     const want = `${B}/beta/?utm_source=whatsapp-group&utm_medium=status&utm_campaign=drivers-oct#apply`;
     check(made.text.includes(`value="${want.replaceAll('&', '&#38;')}"`), `the campaign link maker: ${want}`);
 

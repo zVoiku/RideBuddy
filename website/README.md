@@ -204,6 +204,9 @@ on it. It is **never committed**:
 - locally, put `GOOGLE_MAPS_BROWSER_KEY=…` in `website/.env` (git-ignored);
 - on Cloudflare, add it under **Workers → Settings → Build → Variables**.
 
+It is compiled in, so a changed variable takes effect only with the next build
+— a push to `main` starts one.
+
 The build **fails** in CI when the variable is missing, rather than deploying
 an estimator whose map cannot load. Locally it warns and builds without it.
 

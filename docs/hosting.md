@@ -103,10 +103,12 @@ Split them:
    an explicit list: `["https://ridebuddy.co.in", "https://www.ridebuddy.co.in"]`.
    (Auth travels as an `Authorization: Bearer` header, not a cookie, so nothing else
    needs to change.)
-5. **Split the Google Maps key.** `src/maps.ts` reads `EXPO_PUBLIC_GOOGLE_MAPS_KEY`
-   from the JS bundle, so on web that key is **publicly readable**. Issue a *separate*
-   browser key restricted by HTTP referrer to `*.ridebuddy.co.in`, and keep the
-   existing native key restricted by bundle ID / package name.
+5. **Google Maps keys.** Split: the site has its own browser key
+   (`GOOGLE_MAPS_BROWSER_KEY`, a Cloudflare build variable) restricted by HTTP
+   referrer to the site's addresses, and the apps share `EXPO_PUBLIC_GOOGLE_MAPS_KEY`.
+   Restrict the apps' key by API, not by app: `frontend/src/maps.ts` calls Places
+   (New), Routes and Geocoding with plain `fetch`, which sends no bundle ID or
+   package name, so an iOS/Android app restriction would refuse search and routing.
 6. **Point the apps at production.** `EXPO_PUBLIC_BACKEND_URL=https://api.ridebuddy.co.in`
    in both `frontend/.env` and `RideBuddy-partner/.env`. These are baked in at Metro
    start / build time, so rebuild — don't just edit and reload.

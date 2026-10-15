@@ -65,7 +65,9 @@ EXPO_PUBLIC_BACKEND_URL=http://<your-lan-ip>:8001
 EXPO_PUBLIC_GOOGLE_MAPS_KEY=...
 ```
 
-Both are baked in when Metro starts — restart with `--clear` after changing them.
+The backend URL is baked in when Metro starts — restart with `--clear` after
+changing it. The Maps key is built into the native app: after changing it, run
+`npx expo prebuild --clean` and rebuild.
 
 ## Run
 
