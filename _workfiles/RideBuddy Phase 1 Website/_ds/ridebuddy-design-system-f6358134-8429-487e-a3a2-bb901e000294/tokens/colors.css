@@ -1,0 +1,68 @@
+/* ============================================================
+   RideBuddy — Colors
+   Trail Green primary · Charcoal text · Parchment base
+   "We've got you." — warm, grounded, never cold.
+   ============================================================ */
+
+:root {
+
+  /* ── Trail Green — Primary Brand Color (7-stop tint scale) ── */
+  --color-green-50:  #EDF0E8;   /* Lightest fill, app backgrounds */
+  --color-green-100: #C5D4A8;   /* Light fills, hover states, placeholders */
+  --color-green-300: #8FA96A;   /* Mid tone, secondary accents */
+  --color-green-500: #4A5C2F;   /* PRIMARY BRAND COLOR */
+  --color-green-700: #384522;   /* Dark fills, hover-pressed */
+  --color-green-800: #262F17;   /* Very dark */
+  --color-green-900: #131A0C;   /* Near-black with green undertone */
+
+  /* ── Neutrals ── */
+  --color-charcoal:  #1E1E1A;   /* Charcoal — text, dark backgrounds */
+  --color-parchment: #F5F0E8;   /* Parchment — background, base neutral */
+  --color-white:     #FFFFFF;
+
+  /* Greys used across components (cool, muted) */
+  --color-grey-line:  rgba(100, 100, 100, 0.10);  /* hairline borders, dividers */
+  --color-grey-line-2:rgba(100, 100, 100, 0.20);  /* chip / input borders */
+  --color-grey-500:   #888888;  /* secondary text, labels */
+  --color-grey-400:   #A8A39A;  /* placeholder text (warm grey) */
+  --color-grey-nav:   #AAAA9F;  /* inactive nav icon/label */
+  --color-fill-soft:  #F7F7F5;  /* detail pill background */
+
+  /* ── Semantic / Functional ── */
+  --color-success: #2E7D32;
+  --color-warning: #E65100;
+  --color-error:   #C62828;
+  --color-info:    #1565C0;
+
+  /* ── Semantic ALIASES (use these in product code) ── */
+  --brand-primary:        var(--color-green-500);
+  --brand-primary-hover:  var(--color-green-700);
+  --brand-primary-press:  var(--color-green-800);
+
+  --surface-page:    var(--color-green-50);    /* app background */
+  --surface-card:    var(--color-white);       /* cards, sheets */
+  --surface-input:   var(--color-parchment);   /* filled inputs, OTP */
+  --surface-soft:    var(--color-fill-soft);   /* detail pills */
+  --surface-accent:  var(--color-green-50);    /* selected / highlighted fills */
+  --surface-dark:    var(--color-charcoal);    /* dark headers, scrims */
+
+  --text-primary:    var(--color-charcoal);    /* headings, values */
+  --text-secondary:  var(--color-grey-500);    /* labels, meta, captions */
+  --text-placeholder:var(--color-grey-400);
+  --text-on-brand:   var(--color-parchment);   /* text on Trail Green */
+  --text-accent:     var(--color-green-500);   /* links, active labels */
+
+  --border-hairline: var(--color-grey-line);
+  --border-control:  var(--color-grey-line-2);
+  --border-focus:    var(--color-green-500);
+
+  /* Status badge fills + text (booking & trip states) */
+  --badge-confirmed-bg:   #E8F5E9;  --badge-confirmed-fg:   #1B5E20;
+  --badge-pending-bg:     #FFF3E0;  --badge-pending-fg:     #E65100;
+  --badge-assigned-bg:    var(--color-green-50);  --badge-assigned-fg: var(--color-green-700);
+  --badge-cancelled-bg:   #FFEBEE;  --badge-cancelled-fg:   #B71C1C;
+  --badge-inprogress-bg:  #E3F2FD;  --badge-inprogress-fg:  #0D47A1;
+  --badge-completed-bg:   #F3E5F5;  --badge-completed-fg:   #4A148C;
+
+  --star: #F59E0B;  /* amber rating stars */
+}

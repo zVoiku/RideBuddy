@@ -1,0 +1,42 @@
+/* ============================================================
+   RideBuddy — Spacing & Radius
+   Base unit 4px. Generous scale = calm, spacious feel.
+   ============================================================ */
+
+:root {
+
+  /* ── Spacing scale (4px base) ── */
+  --space-1:  4px;    /* Icon gap, tight inline pairs */
+  --space-2:  8px;    /* Label–value gap, badge padding */
+  --space-3:  12px;   /* Inner card padding (compact) */
+  --space-4:  16px;   /* Standard card padding, list item height */
+  --space-5:  20px;   /* Between form fields */
+  --space-6:  24px;   /* Section gap, button horizontal padding */
+  --space-8:  32px;   /* Between major sections */
+  --space-10: 40px;   /* Screen horizontal padding */
+  --space-12: 48px;   /* Bottom nav height, CTA button height */
+  --space-16: 64px;   /* Hero top padding, large gaps */
+
+  /* ── Border radius ── */
+  --radius-sm:   4px;     /* Tags, badges, chips */
+  --radius-md:   8px;     /* Inputs reference, dropdowns, tooltips, detail pills */
+  --radius-lg:   12px;    /* Cards, buttons, inputs, sheets — DEFAULT */
+  --radius-xl:   16px;    /* Bottom sheets, modals */
+  --radius-full: 9999px;  /* Pill labels, avatar rings, chips */
+
+  /* ── Z-index scale ── */
+  --z-base:     0;      /* @kind other */
+  --z-raised:   10;     /* @kind other */ /* Elevated cards, sticky headers */
+  --z-dropdown: 100;    /* @kind other */ /* Dropdowns, autocomplete */
+  --z-sticky:   200;    /* @kind other */ /* Bottom nav, sticky CTAs */
+  --z-sheet:    300;    /* @kind other */ /* Bottom sheets */
+  --z-modal:    400;    /* @kind other */ /* Modals, dialogs */
+  --z-toast:    500;    /* @kind other */ /* Toasts, alerts */
+  --z-top:      9999;   /* @kind other */ /* Critical overlays */
+
+  /* ── Breakpoints (reference values) ── */
+  --bp-mobile:   375px;   /* @kind other */ /* PRIMARY — all design starts here */
+  --bp-mobile-l: 430px;   /* @kind other */
+  --bp-tablet:   768px;   /* @kind other */
+  --bp-desktop:  1280px;  /* @kind other */ /* Web booking flow */
+}

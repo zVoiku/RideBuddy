@@ -1,0 +1,13 @@
+/* ============================================================
+   RideBuddy — Fonts
+   Urbanist (headings/display/logo) + DM Sans (body/UI)
+   Loaded from Google Fonts. PowerPoint sources substitute
+   Trebuchet MS / Calibri — those are NOT the brand fonts.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Urbanist:wght@500;600;700;800&family=DM+Sans:wght@400;500;600&display=swap');
+
+:root {
+  --font-display: 'Urbanist', system-ui, -apple-system, 'Segoe UI', sans-serif; /* headings, logo */
+  --font-body:    'DM Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;   /* body, UI, captions */
+}

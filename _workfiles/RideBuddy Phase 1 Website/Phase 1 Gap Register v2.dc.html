@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/tokens/colors.css">
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/tokens/typography.css">
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/tokens/elevation.css">
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/styles.css">
+<script src="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/_ds_bundle.js"></script>
+<style>
+  body { margin: 0; background: var(--color-parchment); color: var(--color-charcoal); font-family: var(--font-body), "DM Sans", sans-serif; -webkit-font-smoothing: antialiased; }
+  a { color: var(--color-green-500); text-decoration: none; }
+  a:hover { color: var(--color-green-700); }
+</style>
+</helmet>
+
+<div style="max-width:1200px;margin:0 auto;padding:clamp(32px,5vw,64px) 24px 96px">
+
+  <header style="display:flex;flex-direction:column;gap:14px;padding-bottom:32px;border-bottom:0.5px solid var(--border-hairline)">
+    <div style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:700;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--color-green-700)">Audit v3 · 11 Oct 2026</div>
+    <h1 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:clamp(30px,4.4vw,46px);line-height:1.06;letter-spacing:-0.025em;margin:0">Phase 1 Gap Register</h1>
+    <p style="font-size:16px;line-height:1.6;color:var(--color-grey-500);margin:0;max-width:76ch;text-wrap:pretty">RideBuddy Website Phase 1.dc.html checked against RideBuddy_Phase1_Website_PRD_v1_7 (11 Oct). Row IDs carry over from earlier audits; new rows start at N. Rows marked <strong style="color:#1565C0">Update PRD</strong> are website decisions the PRD doesn't yet reflect.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:20px;font-size:13px;color:var(--color-grey-500)">
+      <span><strong style="color:var(--color-charcoal)">P0</strong> blocks a decision band, an acceptance check or go-live</span>
+      <span><strong style="color:var(--color-charcoal)">P1</strong> PRD requirement, not band-critical</span>
+      <span><strong style="color:var(--color-charcoal)">P2</strong> copy or polish</span>
+    </div>
+  </header>
+
+  <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:32px">
+    <sc-for list="{{ tiles }}" as="t" hint-placeholder-count="6">
+      <div style="background:var(--color-white);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);border:0.5px solid var(--border-hairline);padding:20px;display:flex;flex-direction:column;gap:4px">
+        <span style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:34px;line-height:1;letter-spacing:-0.02em;color:{{ t.color }}">{{ t.n }}</span>
+        <span style="font-size:13px;color:var(--color-grey-500)">{{ t.label }}</span>
+      </div>
+    </sc-for>
+  </section>
+
+  <section style="margin-top:48px">
+    <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.015em;margin:0">Update the PRD</h2>
+    <p style="font-size:15px;line-height:1.6;color:var(--color-grey-500);margin:8px 0 20px;max-width:76ch">These are decisions you made on the website. Each one needs a PRD edit to bring the two back in sync, and a few need Product to confirm a knock-on rule.</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <sc-for list="{{ prdRows }}" as="d" hint-placeholder-count="8">
+        <div style="display:grid;grid-template-columns:56px minmax(0,1fr);gap:16px;align-items:start;background:var(--color-white);border-radius:var(--radius-lg);border:0.5px solid var(--border-hairline);padding:16px 20px">
+          <a href="#{{ d.id }}" style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:14px">{{ d.id }}</a>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <span style="font-size:15px;font-weight:500;color:var(--color-charcoal)">{{ d.edit }}</span>
+            <span style="font-size:13px;color:var(--color-grey-500)">PRD {{ d.ref }}</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="margin-top:48px">
+    <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.015em;margin:0">Fare engine acceptance (§14)</h2>
+    <p style="font-size:15px;line-height:1.6;color:var(--color-grey-500);margin:8px 0 20px">rate-config.js run against T1–T15. No engine changes since v1, so the results haven't moved.</p>
+    <div style="background:var(--color-white);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);border:0.5px solid var(--border-hairline);overflow:hidden">
+      <sc-for list="{{ tests }}" as="t" hint-placeholder-count="15">
+        <div style="display:grid;grid-template-columns:52px minmax(0,2fr) minmax(0,1.3fr) minmax(0,1.3fr) 78px;gap:12px;align-items:center;padding:12px 20px;border-top:0.5px solid var(--border-hairline);font-size:14px">
+          <span style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800">{{ t.id }}</span>
+          <span style="color:var(--color-charcoal)">{{ t.case }}</span>
+          <span style="color:var(--color-grey-500)">{{ t.expected }}</span>
+          <span style="color:{{ t.gotColor }}">{{ t.got }}</span>
+          <span style="justify-self:start;padding:3px 10px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;background:{{ t.bg }};color:{{ t.fg }}">{{ t.status }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="margin-top:56px">
+    <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.015em;margin:0">Register</h2>
+    <p style="font-size:14px;color:var(--color-grey-500);margin:6px 0 0">{{ shownLabel }}</p>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:20px">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:500;color:#888;width:72px">Status</span>
+        <sc-for list="{{ statusFilters }}" as="c" hint-placeholder-count="5">
+          <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Chip" selected="{{ c.selected }}" onClick="{{ c.pick }}" hint-size="90px,34px">{{ c.label }}</x-import>
+        </sc-for>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:500;color:#888;width:72px">Priority</span>
+        <sc-for list="{{ priFilters }}" as="c" hint-placeholder-count="4">
+          <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Chip" selected="{{ c.selected }}" onClick="{{ c.pick }}" hint-size="64px,34px">{{ c.label }}</x-import>
+        </sc-for>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:500;color:#888;width:72px">Fix layer</span>
+        <sc-for list="{{ layerFilters }}" as="c" hint-placeholder-count="5">
+          <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Chip" selected="{{ c.selected }}" onClick="{{ c.pick }}" hint-size="90px,34px">{{ c.label }}</x-import>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:36px;margin-top:32px">
+      <sc-for list="{{ groups }}" as="g" hint-placeholder-count="4">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:baseline;gap:10px">
+            <h3 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:700;font-size:18px;margin:0">{{ g.area }}</h3>
+            <span style="font-size:13px;color:var(--color-grey-500)">{{ g.count }}</span>
+          </div>
+          <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+            <article id="{{ r.id }}" style="background:var(--color-white);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);border:0.5px solid var(--border-hairline);padding:20px 24px;display:flex;flex-direction:column;gap:14px;opacity:{{ r.opacity }}">
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+                <span style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:15px;margin-right:4px">{{ r.id }}</span>
+                <span style="padding:3px 10px;border-radius:var(--radius-sm);font-size:12px;font-weight:600;background:{{ r.stBg }};color:{{ r.stFg }}">{{ r.status }}</span>
+                <span style="padding:3px 10px;border-radius:var(--radius-sm);font-size:12px;font-weight:600;background:{{ r.priBg }};color:{{ r.priFg }}">{{ r.pri }}</span>
+                <sc-for list="{{ r.layers }}" as="l" hint-placeholder-count="1">
+                  <span style="padding:3px 10px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;background:#F7F7F5;color:var(--color-charcoal)">{{ l }}</span>
+                </sc-for>
+                <span style="margin-left:auto;font-size:12px;color:var(--color-grey-500)">PRD {{ r.ref }}</span>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <span style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--color-green-700)">PRD requires</span>
+                  <p style="font-size:14px;line-height:1.6;margin:0;color:var(--color-charcoal);text-wrap:pretty">{{ r.prd }}</p>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <span style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--color-grey-500)">Website today</span>
+                  <p style="font-size:14px;line-height:1.6;margin:0;color:var(--color-grey-500);text-wrap:pretty">{{ r.now }}</p>
+                </div>
+              </div>
+            </article>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const PRI = { P0: { bg: '#FDECEA', fg: '#C62828' }, P1: { bg: '#FFF3E0', fg: '#B23C00' }, P2: { bg: '#EEF2E6', fg: '#3A4A24' } };
+const ST = {
+  'Open': { bg: '#FDECEA', fg: '#C62828' },
+  'Partial': { bg: '#FFF3E0', fg: '#B23C00' },
+  'Closed': { bg: '#E8F5E9', fg: '#1B5E20' },
+  'Update PRD': { bg: '#E3F2FD', fg: '#1565C0' },
+};
+
+// R(id, area, ref, status, pri, layers, prd, now, prdEdit)
+const R = (id, area, ref, status, pri, layers, prd, now, edit) => ({ id, area, ref, status, pri, layers, prd, now, edit: edit || null });
+
+const ROWS = [
+  // ── Site structure & navigation
+  R('G01', 'Site structure & navigation', 'D1, L8', 'Closed', 'P1', ['Product'],
+    'Nav: Home · Estimate Fare · About · Contact, plus a Get Estimate button. Mobile menu. Become a Buddy in footer and Contact only.',
+    'Matches. Button label is "Get an Estimate" (see G07).'),
+  R('G02', 'Site structure & navigation', 'D1, 5A', 'Closed', 'P1', ['Product'],
+    'About at /about: hero, what RideBuddy will be, what you can do today, When booking opens with FAQ, closing band.',
+    'Matches. FAQ copy not yet in §12 (N10).'),
+  R('G03', 'Site structure & navigation', 'L3, §12', 'Closed', 'P1', ['Product'],
+    'How it works is a landing-page section with no anchor and no nav link. Three numbered steps with title and line per §12.',
+    'Matches. "driver" in step 02 stays open under G08.'),
+  R('G04', 'Site structure & navigation', 'D1, 5B', 'Closed', 'P1', ['Product'],
+    'Contact at /contact: H1 "Write to us." with support email, Join the waitlist card, Become a Buddy band.',
+    'Matches.'),
+  R('G05', 'Site structure & navigation', 'L8, X2', 'Open', 'P0', ['Prototype'],
+    'No link on any page points to # or to a missing anchor.',
+    'Footer Terms and Privacy still go to "#". Logo, nav, footer and card links are href="#" with click handlers.'),
+  R('G06', 'Site structure & navigation', 'D1, L4, L11', 'Open', 'P1', ['Build'],
+    'Real routes /, /estimate, /buddy. ?type= deep links. Query string carried until the visitor ID is set.',
+    'Pages are in-memory state in one file. No URLs.'),
+
+  // ── Landing page
+  R('G07', 'Landing page', 'L2, L6, L8, §12', 'Closed', 'P1', ['Product'],
+    'Hero: Get an Estimate plus secondary Join the Waitlist. Hero, nav and closing band read "Get an Estimate"; estimator button, About card and no-trip confirmation read "Get Estimate".',
+    'Matches.'),
+  R('G08', 'Landing page', 'L3, §12', 'Open', 'P2', ['Prototype'],
+    'H2 "Your car. Your Buddy. That\u2019s it." Three steps per §12.',
+    'H2 still "Your car. Our Buddy. That\u2019s it." ("Our" breaks you-first). Step 02 says "A verified, trained driver arrives\u2026" ("driver" is banned).'),
+  R('G09', 'Landing page', 'L4', 'Open', 'P1', ['Build'],
+    'Trip-type cards deep-link to /estimate?type=round|one.',
+    'Cards preset the trip type in state. No URL to share or track.'),
+  R('G10', 'Landing page', 'L5, §12, LG5', 'Closed', 'P1', ['Product', 'Legal'],
+    'Trust block: H2 "Verified. Trained. Rated." with three pillars (Background-verified, Formally trained, Continuously rated) per §12. CL-05 sign-off before go-live.',
+    'Matches. Legal review still required (R4).'),
+  R('G11', 'Landing page', 'L6, §12', 'Closed', 'P1', ['Prototype'],
+    'Waitlist band: "Booking opens soon. Get one message when it does." CTA Get Estimate.',
+    'Closing band on every page: "Your trip. Your fare." / "Booking opens soon. Get one message when it does." CTA label is "Get an Estimate".'),
+  R('G12', 'Landing page', 'L7, CT4', 'Closed', 'P1', ['Product'],
+    'Become a Buddy band on Contact, CTA "Apply to be a Buddy".',
+    'Matches.'),
+  R('G13', 'Landing page', 'L9', 'Open', 'P1', ['Prototype'],
+    'Shared footer: support email, Contact, Privacy Policy, Terms of Use, Become a Buddy, © RideBuddy Private Limited.',
+    'Contact and Become a Buddy present. No support email. Privacy and Terms are dead links. Company line has no ©. Extra Services column.'),
+  R('G14', 'Landing page', 'L10, X4, §13.3', 'Open', 'P1', ['Build'],
+    'Final images, no dashed placeholders. LCP under 2.5 s.',
+    'Final images in place, loaded through the drop-in slot component. PNGs are 1.2\u20131.8 MB each.'),
+  R('G15', 'Landing page', '§3 out of scope', 'Open', 'P2', ['Prototype'],
+    'Only round and one-way trips are in scope.',
+    'Services section still ends with "Monthly and scheduled Buddies \u2014 coming soon." Round-trip card still names Shimla, Manali, Kasauli.'),
+  R('N01', 'Landing page', 'L2, §12', 'Closed', 'P2', ['Product'],
+    'Hero sub-line "Verified, trained Buddies for outstation trips from the Chandigarh Tricity, in your own car." No destination names.',
+    'Matches.'),
+
+  // ── Estimator inputs
+  R('G16', 'Estimator inputs', 'D2, M1', 'Open', 'P0', ['Prototype'],
+    'Departure date empty on load and required.',
+    'Pre-filled to today + 7, return to today + 9.'),
+  R('G17', 'Estimator inputs', '§6.2, M1', 'Open', 'P0', ['Prototype'],
+    'Get Estimate disabled until every required field is valid.',
+    'Always enabled. Errors appear after the click.'),
+  R('G18', 'Estimator inputs', '§6.2', 'Open', 'P1', ['Prototype'],
+    'Departure today to today + 180. Pickup time in 15-minute steps.',
+    'No min or max on dates. No time step.'),
+  R('G19', 'Estimator inputs', '§6.2', 'Open', 'P1', ['Prototype'],
+    'Stay question only for round trips longer than one day.',
+    'Shows on every round trip, including same-day.'),
+  R('G20', 'Estimator inputs', '§12', 'Open', 'P2', ['Prototype'],
+    'Stay hint "Many hotels give your Buddy a room at no cost." Stay line "Arranging the stay? Switch to Yes to remove it."',
+    'Hint still "Many hotels provide driver stay at no cost." No stay line.'),
+  R('G21', 'Estimator inputs', '§6.2, BE-02', 'Open', 'P0', ['Build'],
+    'Pickup via Google Places, map pin, within 25 km.',
+    'Free text with a 13-area list. No radius check.'),
+  R('G22', 'Estimator inputs', '§6.2, BE-02, T4', 'Open', 'P0', ['Build'],
+    'Destination via Google Places, map pin, within 600 km.',
+    '10-city table. Jaipur at 520 km; T4 expects 500.'),
+  R('G23', 'Estimator inputs', '§6.2', 'Closed', 'P1', ['Prototype'],
+    'Changing any input clears result, feedback and estimate ID.',
+    'Each estimate gets an ID. Edit trip details and Get Another Estimate clear the vote, comment and sign-up state.'),
+
+  // ── Refusals & engine
+  R('G24', 'Refusals & fare engine', '§6.3', 'Open', 'P0', ['Prototype', 'Build'],
+    'Seven refusals with set copy, each firing estimate_refused with a reason.',
+    'One generic error: "Pick a destination from the list above, or type a city we serve." ("we").'),
+  R('G25', 'Refusals & fare engine', 'D4, T13', 'Open', 'P0', ['Prototype'],
+    'Routes under 40 km refused.',
+    'No minimum.'),
+  R('G26', 'Refusals & fare engine', 'D3, T12', 'Open', 'P0', ['Prototype'],
+    'Same-day round trip over 12 h refused.',
+    'Same-day Manali returns \u20b92,695.'),
+  R('G27', 'Refusals & fare engine', '§6.4, T11', 'Open', 'P0', ['Prototype'],
+    'Round-trip night check on both legs.',
+    'Outbound only. Shimla same day 4 PM: \u20b91,498 vs \u20b91,747.'),
+  R('G28', 'Refusals & fare engine', '§6.4', 'Open', 'P1', ['Prototype'],
+    'Config adds min_trip_km, pickup_radius_km, destination_radius_km.',
+    'Missing. The engine now returns a secondDay flag.'),
+  R('G29', 'Refusals & fare engine', 'Inputs', 'Open', 'P2', ['Product'],
+    'Rate Table v1.4.',
+    'rate-config.js cites v1.7. Values identical.'),
+
+  // ── Result
+  R('G30', 'Estimate result', '§6.5', 'Open', 'P1', ['Prototype', 'Build'],
+    'Route line "[Pickup short] \u2192 [Destination short]", km and drive-time meta, route map.',
+    '"Chandigarh \u2192 Shimla · Round Trip · 3 days". No km, time or map.'),
+  R('G31', 'Estimate result', '§6.5, D6', 'Open', 'P1', ['Prototype'],
+    'PRD condition lines, plus night, stay and second-day lines.',
+    'Concept-spec wording. No second-day line. Extra one-way "return to Chandigarh" line. Tolls line excludes parking, unlike the About FAQ.'),
+  R('G32', 'Estimate result', '§6.5, LG4, CL-04', 'Open', 'P0', ['Prototype', 'Legal'],
+    'Indicative-fare disclaimer under every fare, linked to Terms.',
+    'Missing.'),
+  R('G33', 'Estimate result', '§6.1, §6.5, X2', 'Closed', 'P1', ['Prototype'],
+    'Result → fare feedback → Join the waitlist → greyed, non-clickable app badges captioned "App coming soon".',
+    'Matches.'),
+  R('G34', 'Estimate result', '§6.4 Not shown', 'Closed', 'P1', ['Prototype'],
+    'The 20% deposit is never shown.',
+    'Only appeared on How It Works, which is gone from Phase 1.'),
+  R('G35', 'Estimate result', '§12', 'Open', 'P2', ['Prototype'],
+    'Estimator H1 "Your trip. Your fare."',
+    'Page H1 "What will your trip cost." plus card H2 "Know your fare. Before anything else."'),
+
+  // ── Fare feedback
+  R('G36', 'Fare feedback', '§7 F5–F8, M2, M3', 'Partial', 'P0', ['Build'],
+    'One vote per estimate, changeable, stored server-side (F6), fare_feedback on every vote or change, linked to the lead.',
+    'UI and rules match §7 v1.3. Storage is localStorage; server endpoint (BE-04) pending.'),
+  R('N02', 'Fare feedback', 'F1, F2, §12', 'Closed', 'P1', ['Product'],
+    'Icon-only thumbs beside the fare, no visible prompt, accessible labels, 44 px targets.',
+    'Matches.'),
+  R('N03', 'Fare feedback', 'F3, F4, F9, §12', 'Closed', 'P1', ['Product'],
+    'No message on thumbs up. Comment panel closes after Send with no message. Link-only error "Add a few words. Links alone aren’t saved."',
+    'Matches.'),
+
+  // ── Sign-up
+  R('G37', 'Waitlist sign-up', '§8 S4\u2013S7, M4, M5', 'Partial', 'P0', ['Build'],
+    'Mobile + consent \u2192 Get OTP \u2192 6-digit code \u2192 Verify Number. Twilio SMS, 5-min expiry, 30 s resend, send limits, 3-attempt lock.',
+    'Full flow built with all client rules and S7 attempt storage. No real SMS: code is 246810. Twilio, DLT (R1) and the 10-per-IP limit are server-side work.'),
+  R('G38', 'Waitlist sign-up', 'S2', 'Closed', 'P0', ['Prototype'],
+    '"Mobile number", fixed +91, 10 digits starting 6\u20139.',
+    'Done. Error copy is "Enter a valid mobile number." (see N06).'),
+  R('G39', 'Waitlist sign-up', 'S3, CL-03', 'Partial', 'P0', ['Legal'],
+    'Consent checkbox, unchecked, required, PRD wording.',
+    'Done with PRD wording, stored as version "draft-2026-10-10 (pending CL-03)". Final text from Legal outstanding. Links go to /privacy and /terms, which don\u2019t exist yet.'),
+  R('G40', 'Waitlist sign-up', '§8.1, §12', 'Closed', 'P1', ['Prototype'],
+    'Header "Join the waitlist", subtext, CTA Get OTP.',
+    'Matches.'),
+  R('G41', 'Waitlist sign-up', 'S8, §12', 'Closed', 'P1', ['Prototype'],
+    'Confirmation copy. With a trip: saved trip and Get Another Estimate. Without a trip: Get Estimate.',
+    'Matches both cases.'),
+  R('G42', 'Waitlist sign-up', 'S1', 'Closed', 'P0', ['Prototype'],
+    'No sign-up that bypasses OTP.',
+    'The old Contact form without OTP is gone. Every sign-up now runs the OTP flow. See N04 for sign-ups without a trip.'),
+  R('N04', 'Waitlist sign-up', 'S1, S8, S9, 10.3, §11', 'Closed', 'P0', ['Product'],
+    'Two entry points: after an estimate (source estimate) or Join the waitlist CTAs (source hero, no trip). Band 3 counts only sign-ups with a trip.',
+    'Matches. Hero, About and Contact sign-ups are verified with an empty trips array and source "hero".'),
+  R('N05', 'Waitlist sign-up', 'S10', 'Open', 'P1', ['Prototype'],
+    'Skip the OTP if verified in the last 7 days on the same visitor ID.',
+    'The prototype uses 30 days. The PRD on Drive now says 7.'),
+  R('N06', 'Waitlist sign-up', 'S2, S6, §12, M13', 'Closed', 'P2', ['Product'],
+    '"Enter a valid mobile number." (no starting digits listed) and "This code has expired. Get a new OTP."',
+    'Matches on waitlist and Buddy forms.'),
+  R('N07', 'Waitlist sign-up', 'Go-live', 'Open', 'P0', ['Build'],
+    'No test affordances in production.',
+    '"Prototype only. No SMS is sent. Use code 246810." shows under both OTP forms.'),
+  R('G43', 'Waitlist sign-up', 'S9\u2013S12', 'Partial', 'P0', ['Build'],
+    'Lead record, repeat sign-up appends a trip, encrypted at rest.',
+    'Record shape built (E.164, consent version, visitor ID, first-touch UTMs, trips with feedback vote) in localStorage. Encryption and admin logging are server-side.'),
+
+  // ── Become a Buddy
+  R('G44', 'Become a Buddy', 'D8, B1, B2, B8', 'Open', 'P1', ['Prototype', 'Legal'],
+    '/buddy page, indexable job-post landing URL. Terms subtext. Entry rules (incl. police verification).',
+    'A modal opened from the Contact band and footer. No page, terms subtext or entry rules.'),
+  R('G45', 'Become a Buddy', 'B3, B5, B6, §12', 'Closed', 'P1', ['Product', 'Legal'],
+    'Fields: full name, mobile, driving licence number, consent (unchecked, required, links to Privacy Policy and Terms of Use). Final consent wording from CL-03.',
+    'Matches. Consent stored with version.'),
+  R('G46', 'Become a Buddy', 'B4, B6, B7', 'Partial', 'P1', ['Build'],
+    'OTP-verified submit, confirmation copy, buddy_interest records deduped by phone with phone_verified_at, buddy_interest_submitted with buddy_interest_id and UTMs.',
+    'UI, CTAs, confirmation, dedupe and event match. Storage is localStorage; server-side record and real SMS pending (BE-03, BE-04).'),
+  R('N08', 'Become a Buddy', 'D8, B3, B4, 10.2, R1', 'Closed', 'P1', ['Product'],
+    'Buddy applications require OTP with the waitlist phone rules. CTAs Get OTP, then Verify & Submit Application. OTP events carry source = buddy.',
+    'Matches.'),
+  R('G47', 'Become a Buddy', 'L9', 'Closed', 'P1', ['Product'],
+    'One support email.',
+    'support@ridebuddy.co.in everywhere.'),
+
+  // ── About page (new)
+  R('N09', 'About page', 'L5, B2, §12, X6', 'Closed', 'P1', ['Product', 'Legal'],
+    'Trust copy says "verified", never "police-verified". No customer- or Buddy-facing copy mentions police.',
+    'Matches. CL-05 sign-off still applies (G10).'),
+  R('N10', 'About page', 'AB5, §12.1', 'Closed', 'P2', ['Product'],
+    'Eight-question About FAQ recorded verbatim in §12.1, subject to CL-05.',
+    'Matches.'),
+  R('N11', 'About page', '§3 out of scope', 'Open', 'P2', ['Product'],
+    'Fare breakdown is out of scope (itemisation stays internal).',
+    'The stay FAQ says the stay cost "will be shown in your price breakdown when booking opens", which commits Phase 2 to a customer-facing breakdown.'),
+
+  // ── Analytics
+  R('G48', 'Analytics & attribution', '§10.2', 'Partial', 'P0', ['Prototype', 'Build'],
+    'The full event list in §10.2, with source on signup_started, otp_sent, otp_verified, otp_failed, signup_completed.',
+    'Firing: estimator_opened, estimate_completed, fare_feedback, signup_started, otp_sent, otp_verified, otp_failed, signup_completed, phone_invalid, buddy_interest_submitted. source is sent on signup_started and signup_completed only; waitlist otp_sent and otp_verified omit it. Missing: page_view, click, estimate_started, estimate_refused, save_failed. Off-plan: buddy_application_opened, book_a_buddy_clicked (dead code).'),
+  R('G49', 'Analytics & attribution', '§10.1 A1\u2013A5', 'Partial', 'P0', ['Build', 'Legal'],
+    'First-party visitor_id cookie, first-touch and last-touch UTMs, ?internal=1, cookie notice.',
+    'visitor_id and first-touch UTMs stored in localStorage as stand-ins. No cookie, last-touch, internal flag or cookie notice.'),
+  R('G50', 'Analytics & attribution', '§11', 'Open', 'P0', ['Build'],
+    'Internal demand dashboard, including sign-ups by source (DB5) and band 3 counted on sign-ups with a trip.',
+    'Not built.'),
+
+  // ── Legal, SEO, NFR
+  R('G51', 'Legal, SEO & non-functional', 'LG1\u2013LG3, X3', 'Open', 'P0', ['Legal', 'Build'],
+    '/privacy and /terms pages.',
+    'Missing. Consent links point at them.'),
+  R('G52', 'Legal, SEO & non-functional', '§13.2', 'Open', 'P1', ['Build'],
+    'Per-page titles, canonical, sitemap, OG.',
+    'One document, one title.'),
+  R('G53', 'Legal, SEO & non-functional', '§13.3', 'Partial', 'P1', ['Prototype'],
+    'Touch targets at least 44 px.',
+    'Feedback, OTP and sign-up controls meet it. Estimator chips are about 34 px; some footer links are under 44 px.'),
+  R('G54', 'Legal, SEO & non-functional', 'X6', 'Partial', 'P1', ['Prototype'],
+    'No "we", Buddy capitalised, never "driver".',
+    'Fixed: waitlist, closing band, About, Contact band. Remaining: "Write to us." (Contact H1, kept by you), "We\u2019ll take it from there." (Buddy modal), "a city we serve" (estimator error), "Our Buddy" (Home H2), "driver" (Home step 02, stay hint).'),
+  R('G55', 'Legal, SEO & non-functional', '§3', 'Closed', 'P2', ['Prototype'],
+    'Phase 1 ships without Phase 2 states.',
+    'Split into separate Phase 1 and Phase 2 files.'),
+];
+
+const TESTS = [
+  ['T1', 'One-way Shimla, 115 km, 9 AM', '₹1,612', '₹1,612', 'pass'],
+  ['T2', 'One-way Delhi, 250 km', '₹1,746', '₹1,746', 'pass'],
+  ['T3', 'One-way Manali, 300 km', '₹1,795', '₹1,795', 'pass'],
+  ['T4', 'One-way Jaipur, 500 km', '₹2,791', '₹2,791 at 500 km · ₹2,891 from table', 'data'],
+  ['T5', 'One-way Shimla, 5 AM pickup', '₹1,861 + night', '₹1,861 + night', 'pass'],
+  ['T6', 'One-way Manali, arrival 11 PM', '₹2,044 + night', '₹2,044 + night', 'pass'],
+  ['T7', 'One-way Manali, 6 PM pickup', '₹3,542 + 2nd day + night', '₹3,542, 2 days, night. No 2nd-day line', 'partial'],
+  ['T8', 'Round trip Manali, 3 days, stay not arranged', '₹5,492 + stay', '₹5,492 + stay', 'pass'],
+  ['T9', 'Round trip Manali, 3 days, stay arranged', '₹4,494', '₹4,494', 'pass'],
+  ['T10', 'Round trip Shimla, same day, 9 AM', '₹1,498', '₹1,498', 'pass'],
+  ['T11', 'Round trip Shimla, same day, 4 PM', '₹1,747 + night', '₹1,498, no night', 'fail'],
+  ['T12', 'Round trip Manali, same day', 'Refused: same_day_over_12h', '₹2,695', 'fail'],
+  ['T13', 'Sector 17 \u2192 Mohali', 'Refused: too_short', 'Generic error', 'fail'],
+  ['T14', 'Pickup in Ambala', 'Refused: pickup_out_of_area', 'Accepted', 'fail'],
+  ['T15', 'Trip type chips', 'Round Trip, One Way only', 'Round Trip, One Way', 'pass'],
+];
+const TST = {
+  pass: { label: 'Pass', bg: '#E8F5E9', fg: '#1B5E20', got: 'var(--color-charcoal)' },
+  partial: { label: 'Partial', bg: '#FFF3E0', fg: '#B23C00', got: 'var(--color-charcoal)' },
+  data: { label: 'Data', bg: '#FFF3E0', fg: '#B23C00', got: 'var(--color-charcoal)' },
+  fail: { label: 'Fail', bg: '#FDECEA', fg: '#C62828', got: '#C62828' },
+};
+
+class Component extends DCLogic {
+  state = { status: 'Not closed', pri: 'All', layer: 'All' };
+
+  renderVals() {
+    const { status, pri, layer } = this.state;
+    const rows = ROWS.filter((r) =>
+      (status === 'All' || (status === 'Not closed' ? r.status !== 'Closed' : r.status === status))
+      && (pri === 'All' || r.pri === pri)
+      && (layer === 'All' || r.layers.includes(layer)));
+
+    const groups = [];
+    rows.forEach((r) => {
+      let g = groups.find((a) => a.area === r.area);
+      if (!g) { g = { area: r.area, rows: [] }; groups.push(g); }
+      g.rows.push(Object.assign({}, r, {
+        priBg: PRI[r.pri].bg, priFg: PRI[r.pri].fg, stBg: ST[r.status].bg, stFg: ST[r.status].fg,
+        opacity: r.status === 'Closed' ? '0.7' : '1',
+      }));
+    });
+    groups.forEach((g) => { g.count = g.rows.length + (g.rows.length === 1 ? ' row' : ' rows'); });
+
+    const n = (s) => ROWS.filter((r) => r.status === s).length;
+    const pass = TESTS.filter((t) => t[4] === 'pass').length;
+    const pick = (key, v) => () => this.setState({ [key]: v });
+
+    return {
+      tiles: [
+        { n: n('Open'), label: 'Open', color: '#C62828' },
+        { n: n('Partial'), label: 'Partly done', color: '#B23C00' },
+        { n: n('Closed'), label: 'Closed', color: '#1B5E20' },
+        { n: n('Update PRD'), label: 'Update the PRD', color: '#1565C0' },
+        { n: ROWS.filter((r) => r.status !== 'Closed' && r.pri === 'P0').length, label: 'P0 still open or partial', color: 'var(--color-charcoal)' },
+        { n: pass + ' / ' + TESTS.length, label: 'Engine cases passing', color: 'var(--color-charcoal)' },
+      ],
+      prdRows: ROWS.filter((r) => r.edit && r.status === 'Update PRD').map((r) => ({ id: r.id, edit: r.edit, ref: r.ref })),
+      tests: TESTS.map(([id, c, expected, got, st]) => ({ id, case: c, expected, got, status: TST[st].label, bg: TST[st].bg, fg: TST[st].fg, gotColor: TST[st].got })),
+      statusFilters: ['Not closed', 'All', 'Open', 'Partial', 'Update PRD', 'Closed'].map((s) => ({ label: s, selected: status === s, pick: pick('status', s) })),
+      priFilters: ['All', 'P0', 'P1', 'P2'].map((p) => ({ label: p, selected: pri === p, pick: pick('pri', p) })),
+      layerFilters: ['All', 'Prototype', 'Build', 'Legal', 'Product'].map((l) => ({ label: l, selected: layer === l, pick: pick('layer', l) })),
+      groups,
+      shownLabel: 'Showing ' + rows.length + ' of ' + ROWS.length + ' rows',
+    };
+  }
+}
+
+</script>
+</body>
+</html>

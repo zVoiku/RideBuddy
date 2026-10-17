@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/tokens/colors.css">
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/tokens/typography.css">
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/tokens/elevation.css">
+<link rel="stylesheet" href="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/styles.css">
+<script src="_ds/ridebuddy-design-system-f6358134-8429-487e-a3a2-bb901e000294/_ds_bundle.js"></script>
+<style>
+  body { margin: 0; background: var(--color-parchment); color: var(--color-charcoal); font-family: var(--font-body), "DM Sans", sans-serif; -webkit-font-smoothing: antialiased; }
+  a { color: var(--color-green-500); text-decoration: none; }
+  a:hover { color: var(--color-green-700); }
+</style>
+</helmet>
+
+<div style="max-width:1200px;margin:0 auto;padding:clamp(32px,5vw,64px) 24px 96px">
+
+  <header style="display:flex;flex-direction:column;gap:14px;padding-bottom:32px;border-bottom:0.5px solid var(--border-hairline)">
+    <div style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:700;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--color-green-700)">Audit · 10 Oct 2026</div>
+    <h1 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:clamp(30px,4.4vw,46px);line-height:1.06;letter-spacing:-0.025em;margin:0">Phase 1 Gap Register</h1>
+    <p style="font-size:16px;line-height:1.6;color:var(--color-grey-500);margin:0;max-width:72ch;text-wrap:pretty">The website prototype (RideBuddy Website Phase 1.dc.html) checked against RideBuddy_Phase1_Website_PRD_v1_0, signed off 10 Oct 2026. Each row names the PRD clause, what the prototype does today, a priority and the layer where the fix belongs.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:20px;font-size:13px;color:var(--color-grey-500)">
+      <span><strong style="color:var(--color-charcoal)">P0</strong> blocks a decision band, an acceptance check or go-live</span>
+      <span><strong style="color:var(--color-charcoal)">P1</strong> PRD requirement, not band-critical</span>
+      <span><strong style="color:var(--color-charcoal)">P2</strong> copy or polish</span>
+    </div>
+  </header>
+
+  <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:32px">
+    <sc-for list="{{ tiles }}" as="t" hint-placeholder-count="5">
+      <div style="background:var(--color-white);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);border:0.5px solid var(--border-hairline);padding:20px;display:flex;flex-direction:column;gap:4px">
+        <span style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:34px;line-height:1;letter-spacing:-0.02em;color:{{ t.color }}">{{ t.n }}</span>
+        <span style="font-size:13px;color:var(--color-grey-500)">{{ t.label }}</span>
+      </div>
+    </sc-for>
+  </section>
+
+  <section style="margin-top:48px">
+    <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.015em;margin:0">Decisions needed first</h2>
+    <p style="font-size:15px;line-height:1.6;color:var(--color-grey-500);margin:8px 0 20px;max-width:72ch">These rows contradict direction given during this project. The PRD is signed off and postdates that direction, so the register follows the PRD. Confirm before I change them.</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <sc-for list="{{ decisions }}" as="d" hint-placeholder-count="6">
+        <div style="display:grid;grid-template-columns:56px minmax(0,1fr);gap:16px;align-items:start;background:var(--color-white);border-radius:var(--radius-lg);border:0.5px solid var(--border-hairline);padding:16px 20px">
+          <a href="#{{ d.id }}" style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:14px">{{ d.id }}</a>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <span style="font-size:15px;font-weight:500;color:var(--color-charcoal)">{{ d.title }}</span>
+            <span style="font-size:14px;line-height:1.55;color:var(--color-grey-500)">{{ d.note }}</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="margin-top:48px">
+    <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.015em;margin:0">Fare engine acceptance (§14)</h2>
+    <p style="font-size:15px;line-height:1.6;color:var(--color-grey-500);margin:8px 0 20px">rate-config.js run against T1–T15. Pickup Sector 17 in every case.</p>
+    <div style="background:var(--color-white);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);border:0.5px solid var(--border-hairline);overflow:hidden">
+      <sc-for list="{{ tests }}" as="t" hint-placeholder-count="15">
+        <div style="display:grid;grid-template-columns:52px minmax(0,2fr) minmax(0,1.3fr) minmax(0,1.3fr) 78px;gap:12px;align-items:center;padding:12px 20px;border-top:0.5px solid var(--border-hairline);font-size:14px">
+          <span style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800">{{ t.id }}</span>
+          <span style="color:var(--color-charcoal)">{{ t.case }}</span>
+          <span style="color:var(--color-grey-500)">{{ t.expected }}</span>
+          <span style="color:{{ t.gotColor }}">{{ t.got }}</span>
+          <span style="justify-self:start;padding:3px 10px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;background:{{ t.bg }};color:{{ t.fg }}">{{ t.status }}</span>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="margin-top:56px">
+    <div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:20px">
+      <div>
+        <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.015em;margin:0">Register</h2>
+        <p style="font-size:14px;color:var(--color-grey-500);margin:6px 0 0">{{ shownLabel }}</p>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:20px">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:500;color:#888;width:72px">Priority</span>
+        <sc-for list="{{ priFilters }}" as="c" hint-placeholder-count="4">
+          <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Chip" selected="{{ c.selected }}" onClick="{{ c.pick }}" hint-size="64px,34px">{{ c.label }}</x-import>
+        </sc-for>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:500;color:#888;width:72px">Fix layer</span>
+        <sc-for list="{{ layerFilters }}" as="c" hint-placeholder-count="5">
+          <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Chip" selected="{{ c.selected }}" onClick="{{ c.pick }}" hint-size="90px,34px">{{ c.label }}</x-import>
+        </sc-for>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:36px;margin-top:32px">
+      <sc-for list="{{ groups }}" as="g" hint-placeholder-count="4">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:baseline;gap:10px">
+            <h3 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:700;font-size:18px;margin:0">{{ g.area }}</h3>
+            <span style="font-size:13px;color:var(--color-grey-500)">{{ g.count }}</span>
+          </div>
+          <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+            <article id="{{ r.id }}" style="background:var(--color-white);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm);border:0.5px solid var(--border-hairline);padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+                <span style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:15px;margin-right:4px">{{ r.id }}</span>
+                <span style="padding:3px 10px;border-radius:var(--radius-sm);font-size:12px;font-weight:600;background:{{ r.priBg }};color:{{ r.priFg }}">{{ r.pri }}</span>
+                <sc-for list="{{ r.layers }}" as="l" hint-placeholder-count="1">
+                  <span style="padding:3px 10px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;background:#F7F7F5;color:var(--color-charcoal)">{{ l }}</span>
+                </sc-for>
+                <sc-if value="{{ r.decision }}">
+                  <span style="padding:3px 10px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;background:#E3F2FD;color:#1565C0">Decision needed</span>
+                </sc-if>
+                <span style="margin-left:auto;font-size:12px;color:var(--color-grey-500)">PRD {{ r.ref }}</span>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <span style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--color-green-700)">PRD requires</span>
+                  <p style="font-size:14px;line-height:1.6;margin:0;color:var(--color-charcoal);text-wrap:pretty">{{ r.prd }}</p>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:4px">
+                  <span style="font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--color-grey-500)">Prototype today</span>
+                  <p style="font-size:14px;line-height:1.6;margin:0;color:var(--color-grey-500);text-wrap:pretty">{{ r.now }}</p>
+                </div>
+              </div>
+            </article>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="margin-top:56px;padding-top:28px;border-top:0.5px solid var(--border-hairline)">
+    <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:700;font-size:18px;margin:0">Already compliant</h2>
+    <ul style="margin:12px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px;line-height:1.55;color:var(--color-grey-500)">
+      <li>All rates live in config, named as the PRD's §6.4 table. Nothing hardcoded in the page.</li>
+      <li>One-way and round-trip formulas, day rules and midnight second day match §6.4 (T1–T3, T5–T10 pass).</li>
+      <li>Single fare number. No itemisation, no toll figure, no deposit in the estimator.</li>
+      <li>Trip types are Round Trip and One Way only. No Hourly (D7, T15).</li>
+      <li>Trip type defaults to Round Trip, pickup time to 7:00 AM, stay to No.</li>
+      <li>Hero headline matches L2 verbatim.</li>
+      <li>Mobile layout reflows at 390 px with no horizontal scroll.</li>
+    </ul>
+  </section>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const PRI = {
+  P0: { bg: '#FDECEA', fg: '#C62828' },
+  P1: { bg: '#FFF3E0', fg: '#B23C00' },
+  P2: { bg: '#EEF2E6', fg: '#3A4A24' },
+};
+
+const R = (id, area, ref, pri, layers, prd, now, decision) => ({ id, area, ref, pri, layers, prd, now, decision: !!decision });
+
+const ROWS = [
+  // ── Site structure & navigation
+  R('G01', 'Site structure & navigation', 'D1, L8', 'P1', ['Prototype'],
+    'Nav: How it works (#how-it-works) · Fares (/estimate) · Become a Buddy (/buddy) · Contact (#contact). About removed.',
+    'Nav: Home · Estimate Fare · How It Works · About · Contact, plus a Get an Estimate button. No Become a Buddy item. "Estimate Fare" was chosen on 10 Oct; the PRD names it "Fares".', true),
+  R('G02', 'Site structure & navigation', 'D1, L8', 'P1', ['Prototype'],
+    'No About page.',
+    'About page exists, with mission copy and a Buddy Standard grid.', false),
+  R('G03', 'Site structure & navigation', 'L3', 'P1', ['Prototype'],
+    'How it works is a three-step section on the landing page, reached by the #how-it-works anchor.',
+    'How It Works is its own page: a six-step journey, phone mock and six-question FAQ. The FAQ has no home in the PRD.', true),
+  R('G04', 'Site structure & navigation', 'L8, L9', 'P1', ['Prototype'],
+    'Contact is the shared footer, reached by #contact.',
+    'Contact is its own page: email card, waitlist card and recruit band.', false),
+  R('G05', 'Site structure & navigation', 'L8, X2', 'P0', ['Prototype'],
+    'No link on any page points to # or to a missing anchor.',
+    'Footer Terms and Privacy go to "#" and do nothing. Logo and nav links are href="#" with click handlers.', false),
+  R('G06', 'Site structure & navigation', 'D1, L4, L11', 'P1', ['Build'],
+    'Real routes: / , /estimate, /buddy. /estimate?type=round|one deep links. Query string carried on internal links until the visitor ID is set. /beta and www 301.',
+    'Pages are in-memory state in one file. No URLs, no ?type= parameter, no query carry.', false),
+
+  // ── Landing page
+  R('G07', 'Landing page', 'L2', 'P1', ['Prototype'],
+    'One primary hero CTA, "Get Estimate". Remove the "Book a Buddy · Coming soon" button.',
+    'Hero has "Get an Estimate" plus an outlined "Book a Buddy" button with a Coming soon pill, added 10 Oct.', true),
+  R('G08', 'Landing page', 'L3, §12', 'P2', ['Prototype'],
+    'H2 "Your car. Your Buddy. That\u2019s it." Steps: "Get a specific fare in seconds." · "A verified, trained Buddy arrives at your door." · "Sit back. Your Buddy drives your car, there and back."',
+    'H2 reads "Your car. Our Buddy. That\u2019s it." ("Our" also breaks you-first). Step copy is the concept-spec version, with titles and longer bodies.', false),
+  R('G09', 'Landing page', 'L4', 'P1', ['Build'],
+    'Round trip and One-way cards deep-link to /estimate?type=round and /estimate?type=one.',
+    'Cards preset the trip type in state and switch page. Works in the prototype, but no URL exists to share or track.', false),
+  R('G10', 'Landing page', 'L5, §12, CL-05', 'P1', ['Prototype', 'Legal'],
+    'Standards stated as entry rules: "Every Buddy is police-verified before their first trip." · "\u2026trained before their first trip." · "\u2026rated after every trip." Goes live only after CL-05.',
+    'Copy reads as facts about an existing fleet: "Only trusted Buddies stay on the road", "trained for all of it". About\u2019s Buddy Standard makes the same claims.', false),
+  R('G11', 'Landing page', 'L6, §12', 'P1', ['Prototype'],
+    'Waitlist band: "Booking opens soon. Get one message when it does." CTA Get Estimate.',
+    'No waitlist band. The closing band reads "Your fare is one scroll away." / "Estimate your next trip. We\u2019ll message you when booking opens."', false),
+  R('G12', 'Landing page', 'L7', 'P1', ['Prototype'],
+    'Become a Buddy band: one line and CTA "Apply as a Buddy" \u2192 /buddy.',
+    'Removed from Home on 10 Oct at your request. The band survives only on Contact, with CTA "Apply to be a Buddy".', true),
+  R('G13', 'Landing page', 'L9', 'P1', ['Prototype'],
+    'Shared footer: support email, Privacy Policy, Terms of Use, Become a Buddy, \u00a9 RideBuddy Private Limited.',
+    'No support email. No \u00a9. Privacy and Terms are dead links. Extra Pages and Services columns.', false),
+  R('G14', 'Landing page', 'L10, X4, §13.3', 'P1', ['Build'],
+    'Final images, no dashed placeholders. LCP under 2.5 s on mid-range Android over 4G.',
+    'Images are final but load through the drop-in slot component, which shows a dashed outline if a file fails. PNGs are 1.2\u20131.8 MB each.', false),
+  R('G15', 'Landing page', '§3 out of scope', 'P2', ['Prototype'],
+    'Only round and one-way trips are in scope.',
+    'Services section ends with "Monthly and scheduled Buddies \u2014 coming soon."', false),
+
+  // ── Estimator inputs
+  R('G16', 'Estimator inputs', 'D2, M1', 'P0', ['Prototype'],
+    'Departure date empty on load and required. Sign-up inherits it. Feeds decision band 3.',
+    'Departure pre-filled to today + 7 days, return to today + 9.', false),
+  R('G17', 'Estimator inputs', '§6.2, M1', 'P0', ['Prototype'],
+    'Get Estimate disabled until every required field is valid.',
+    'Get Estimate is always enabled. Errors appear only after the click.', false),
+  R('G18', 'Estimator inputs', '§6.2', 'P1', ['Prototype'],
+    'Departure earliest today, latest today + 180 days. Pickup time in 15-minute steps.',
+    'No min or max on the date fields. Time input has no step.', false),
+  R('G19', 'Estimator inputs', '§6.2', 'P1', ['Prototype'],
+    'Stay question shows only for round trips longer than one day.',
+    'Shows on every round trip, including same-day.', false),
+  R('G20', 'Estimator inputs', '§12', 'P2', ['Prototype'],
+    'Stay hint: "Many hotels give your Buddy a room at no cost." Stay line: "Arranging the stay? Switch to Yes to remove it."',
+    'Hint reads "Many hotels provide driver stay at no cost." ("driver" is banned by Brand Kit §5). No stay line.', false),
+  R('G21', 'Estimator inputs', '§6.2, BE-02', 'P0', ['Build'],
+    'Pickup: Google Places, Tricity-biased, map-pin picker, within 25 km of Chandigarh centre. Session tokens and 250 ms debounce.',
+    'Free text with a 13-area suggestion list. No radius check.', false),
+  R('G22', 'Estimator inputs', '§6.2, BE-02, T4', 'P0', ['Build'],
+    'Destination: Google Places, map-pin picker, within 600 km straight line.',
+    'Lookup table of 10 cities. Table has Jaipur at 520 km; T4 expects 500.', false),
+  R('G23', 'Estimator inputs', '§6.2', 'P1', ['Prototype'],
+    'Changing any input clears the result, the feedback and the estimate ID.',
+    'There is no estimate ID. "Edit trip details" returns to the form and keeps the old result in state.', false),
+
+  // ── Refusals & engine
+  R('G24', 'Refusals & fare engine', '§6.3', 'P0', ['Prototype', 'Build'],
+    'Seven refusals with set copy, each firing estimate_refused with a reason: pickup_out_of_area, destination_too_far, too_short, same_day_over_12h, route_not_found, route_failed, maps_failed.',
+    'One generic error: "Pick a destination from the list above, or type a city we serve." ("we" breaks voice.) No reasons are tracked.', false),
+  R('G25', 'Refusals & fare engine', 'D4, T13', 'P0', ['Prototype'],
+    'Routes under 40 km one-way are refused (min_trip_km).',
+    'No minimum. Sector 17 \u2192 Mohali gets the generic error only because Mohali is missing from the table.', false),
+  R('G26', 'Refusals & fare engine', 'D3, T12', 'P0', ['Prototype'],
+    'Same-day round trip over 12 h of driving is refused.',
+    'Same-day Manali round trip returns \u20b92,695.', false),
+  R('G27', 'Refusals & fare engine', '§6.4, T11', 'P0', ['Prototype'],
+    'Round-trip night check runs on both legs. Same-day return departs on arrival; multi-day return departs at the pickup time on the return date.',
+    'Night check runs on the outbound leg only. Shimla same day at 4 PM gives \u20b91,498; expected \u20b91,747 with the night line.', false),
+  R('G28', 'Refusals & fare engine', '§6.4', 'P1', ['Prototype'],
+    'Config adds min_trip_km 40, pickup_radius_km 25, destination_radius_km 600.',
+    'All three are missing from rate-config.js.', false),
+  R('G29', 'Refusals & fare engine', 'Inputs', 'P2', ['Product'],
+    'PRD cites Rate Table v1.4.',
+    'rate-config.js cites v1.7, which the concept spec named. Values are identical; the reference needs reconciling.', false),
+
+  // ── Result
+  R('G30', 'Estimate result', '§6.5', 'P1', ['Prototype', 'Build'],
+    'Route line "[Pickup short name] \u2192 [Destination short name]". Meta: "112 km · about 3 h 10 min" or "\u2026each way · 3 days". Route polyline map.',
+    'Route line "Chandigarh \u2192 Shimla · Round Trip · 3 days", using the city rather than the pickup. No km or drive time. No map.', false),
+  R('G31', 'Estimate result', '§6.5, D6', 'P1', ['Prototype'],
+    'Conditions: "Includes 300 km and 12 hours per day." · "Includes your Buddy\u2019s food." · "Tolls are extra, paid by you on the road." · "Final fare is calculated when your trip ends." Conditional night, stay ("\u2026for 2 nights.") and second-day lines.',
+    'Concept-spec wording. No second-day line. Adds a one-way "Includes your Buddy\u2019s return to Chandigarh." line the PRD doesn\u2019t have. Final-fare line sits in a separate callout.', false),
+  R('G32', 'Estimate result', '§6.5, LG4, CL-04', 'P0', ['Prototype', 'Legal'],
+    'Indicative-fare disclaimer under every fare, linked to Terms of Use.',
+    'Missing.', false),
+  R('G33', 'Estimate result', '§6.1', 'P1', ['Prototype'],
+    'Result \u2192 fare feedback \u2192 Join the waitlist. Nothing else in between.',
+    'Result shows "Book a Buddy · Coming soon" and greyed store badges captioned "App coming soon", added 10 Oct. Both sit above the sign-up.', true),
+  R('G34', 'Estimate result', '§6.4 Not shown', 'P1', ['Prototype'],
+    'The 20% deposit is internal and never shown.',
+    'How It Works step 2 says "A 20% deposit confirms the trip".', false),
+  R('G35', 'Estimate result', '§12', 'P2', ['Prototype'],
+    'Estimator H1: "Your trip. Your fare."',
+    'Page H1 "What will your trip cost." plus a card H2 "Know your fare. Before anything else."', false),
+
+  // ── Fare feedback
+  R('G36', 'Fare feedback', '§7 F1\u2013F9, M2, M3', 'P0', ['Prototype', 'Build'],
+    '"Does this fare work for you?" with 44 px thumbs up/down, directly under the fare. Up: "Noted." Down: optional 280-character comment and Send. One vote per estimate ID, changeable. Stored server-side. Fires fare_feedback. Decision band 2.',
+    'Not built.', false),
+
+  // ── Sign-up
+  R('G37', 'Waitlist sign-up', '§8 S4\u2013S7, M4, M5', 'P0', ['Prototype', 'Build'],
+    'Three steps: mobile + consent \u2192 Get OTP \u2192 6-digit code \u2192 Verify Number \u2192 confirmation. Twilio SMS, 5-minute expiry, 30 s resend, send limits, 3-attempt lock. Lead counts only once verified. Decision band 1.',
+    'One step. The number is "saved" on click with no verification. DLT registration (R1) blocks the live version.', false),
+  R('G38', 'Waitlist sign-up', 'S2', 'P0', ['Prototype'],
+    'Label "Mobile number". Fixed +91 prefix. 10 digits starting 6\u20139, validated client and server side.',
+    'Label "WhatsApp number". No fixed prefix. The estimator check accepts any 6 digits.', false),
+  R('G39', 'Waitlist sign-up', 'S3, CL-03', 'P0', ['Prototype', 'Legal'],
+    'Consent checkbox, unchecked by default, required: "Send me an SMS or WhatsApp when booking opens. I agree to the Privacy Policy and Terms of Use."',
+    'No consent checkbox.', false),
+  R('G40', 'Waitlist sign-up', '§8.1, §12', 'P1', ['Prototype'],
+    'Header "Join the waitlist", subtext "Get one message when booking opens." CTA "Get OTP".',
+    'Subtext "Booking opens soon. Waitlist members go first." CTA "Join the Waitlist".', false),
+  R('G41', 'Waitlist sign-up', 'S8, §12', 'P1', ['Prototype'],
+    'Confirmation: "You\u2019re on the waitlist. One message when booking opens." Below it, the saved trip (route, type, date) and "Get Another Estimate".',
+    'Reads "You\u2019re on the waitlist. We\u2019ll message you once." ("we"). No trip summary, no Get Another Estimate.', false),
+  R('G42', 'Waitlist sign-up', 'S1', 'P0', ['Prototype'],
+    'Sign-up only after a completed estimate, carrying that trip.',
+    'The Contact page waitlist (added 10 Oct) takes a number with no trip. Those leads can\u2019t count towards band 3.', true),
+  R('G43', 'Waitlist sign-up', 'S9\u2013S12', 'P0', ['Build'],
+    'Lead record with E.164 phone, consent version, visitor ID, first-touch UTMs and trips array. Repeat sign-up appends a trip. Encrypted at rest.',
+    'Nothing stored. The endpoint is a TODO stub.', false),
+
+  // ── Become a Buddy
+  R('G44', 'Become a Buddy', 'D8, §9 B1, B2, B8', 'P1', ['Prototype', 'Legal'],
+    '/buddy page, indexable, also the job-post landing URL. Headline "Drive with RideBuddy." Terms subtext (no joining fee, allowances paid in full, insurance from the first trip; CL-05). Entry rules listed.',
+    'A modal opened from the Contact band and the footer. No page, no terms subtext, no entry rules.', false),
+  R('G45', 'Become a Buddy', 'B3, B5', 'P1', ['Prototype'],
+    'Fields: Full name · Mobile (+91, no OTP) · Years of driving (Under 3, 3\u20135, 5\u201310, 10+) · Licence type (Private, Commercial, Both) · Area you live in · Consent, unchecked.',
+    'Fields: Full name, Phone number, Driving licence number (your 10 Oct spec). The PRD doesn\u2019t ask for the licence number.', true),
+  R('G46', 'Become a Buddy', 'B4, B6, B7', 'P1', ['Prototype', 'Build'],
+    'CTA "Apply as a Buddy". Confirmation "Application received. One call or message when onboarding opens." Stored as buddy_interest, deduped by phone. Fires buddy_interest_submitted with UTMs.',
+    'CTA "Send Application". Opens a mailto to support@ridebuddy.co.in. Confirmation copy differs. Nothing stored.', false),
+  R('G47', 'Become a Buddy', 'L9', 'P1', ['Product'],
+    'One support email across the site.',
+    'Contact shows support@ridebuddy.in. The Buddy form sends to support@ridebuddy.co.in.', false),
+
+  // ── Analytics
+  R('G48', 'Analytics & attribution', '§10.2', 'P0', ['Prototype', 'Build'],
+    'Plan events: page_view, click, estimator_opened, estimate_started, estimate_completed (+ estimate_id, flags), estimate_refused, fare_feedback, signup_started, otp_sent, otp_verified, otp_failed, signup_completed, phone_invalid, buddy_interest_submitted, save_failed.',
+    'Pushed to dataLayer: estimator_opened, estimate_completed (partial props), whatsapp_number_submitted, waitlist_joined, book_a_buddy_clicked, buddy_application_opened, buddy_application_submitted. Four names aren\u2019t in the plan; eleven plan events are missing.', false),
+  R('G49', 'Analytics & attribution', '§10.1 A1\u2013A5', 'P0', ['Build', 'Legal'],
+    'First-party visitor_id cookie (12 months). First-touch UTMs, referrer and landing page stored once. ?internal=1 exclusion. Cookie notice (CL-01). Decision band 4.',
+    'None.', false),
+  R('G50', 'Analytics & attribution', '§11 DB1\u2013DB9', 'P0', ['Build'],
+    'Internal demand dashboard: four band tiles, cuts, comments with CSV export, spend entry, Buddy interest, reconciliation check. P1.0 entry criterion.',
+    'Not built. No roadmap card yet (R6).', false),
+
+  // ── Legal, SEO, NFR
+  R('G51', 'Legal, SEO & non-functional', 'LG1\u2013LG3, X3', 'P0', ['Legal', 'Build'],
+    '/privacy and /terms pages with version and effective date, linked from every footer and both consents. Deletion path through the support email.',
+    'No legal pages. CL-01 and CL-02 are not started (R2).', false),
+  R('G52', 'Legal, SEO & non-functional', '§13.2', 'P1', ['Build'],
+    'Unique title and meta per page, lang="en-IN", canonical on the bare domain, sitemap.xml, favicon, OG image, Search Console.',
+    'One document, so one title for every page. None of the rest.', false),
+  R('G53', 'Legal, SEO & non-functional', '§13.3', 'P1', ['Prototype'],
+    'Touch targets at least 44 px.',
+    'Trip-type, destination and stay chips are about 34 px tall. Footer links and the FAQ chevron are under 44 px.', false),
+  R('G54', 'Legal, SEO & non-functional', 'X6, Brand Kit §5', 'P1', ['Prototype'],
+    'No "we", no exclamation marks, Buddy always capitalised, never "driver".',
+    '"we/us": "Talk to us." (Contact H1), "We\u2019ll take it from there." (Buddy modal), "Leave a number and we\u2019ll reach out" (Contact waitlist), "We\u2019ll message you once." (success). "drivers": "Verified drivers earn on their terms" (recruit band) and the stay hint.', false),
+  R('G55', 'Legal, SEO & non-functional', '§3 out of scope', 'P2', ['Prototype'],
+    'Phase 1 ships without app badges or booking.',
+    'Phase 2 states ("Get the App", live store badges) sit behind the Phase tweak. Fine in the prototype; must not ship.', false),
+];
+
+const TESTS = [
+  ['T1', 'One-way Shimla, 115 km, 9 AM', '₹1,612', '₹1,612', 'pass'],
+  ['T2', 'One-way Delhi, 250 km', '₹1,746', '₹1,746', 'pass'],
+  ['T3', 'One-way Manali, 300 km', '₹1,795', '₹1,795', 'pass'],
+  ['T4', 'One-way Jaipur, 500 km', '₹2,791', '₹2,791 at 500 km · ₹2,891 from table (520 km)', 'data'],
+  ['T5', 'One-way Shimla, 5 AM pickup', '₹1,861 + night', '₹1,861 + night', 'pass'],
+  ['T6', 'One-way Manali, arrival 11 PM', '₹2,044 + night', '₹2,044 + night', 'pass'],
+  ['T7', 'One-way Manali, 6 PM pickup', '₹3,542 + 2nd day + night', '₹3,542, 2 days, night. No 2nd-day line', 'partial'],
+  ['T8', 'Round trip Manali, 3 days, stay not arranged', '₹5,492 + stay', '₹5,492 + stay', 'pass'],
+  ['T9', 'Round trip Manali, 3 days, stay arranged', '₹4,494', '₹4,494', 'pass'],
+  ['T10', 'Round trip Shimla, same day, 9 AM', '₹1,498', '₹1,498', 'pass'],
+  ['T11', 'Round trip Shimla, same day, 4 PM', '₹1,747 + night', '₹1,498, no night', 'fail'],
+  ['T12', 'Round trip Manali, same day', 'Refused: same_day_over_12h', '₹2,695', 'fail'],
+  ['T13', 'Sector 17 \u2192 Mohali', 'Refused: too_short', 'Generic error (not in table)', 'fail'],
+  ['T14', 'Pickup in Ambala', 'Refused: pickup_out_of_area', 'Accepted (free text)', 'fail'],
+  ['T15', 'Trip type chips', 'Round Trip, One Way only', 'Round Trip, One Way', 'pass'],
+];
+
+const STATUS = {
+  pass: { label: 'Pass', bg: '#E8F5E9', fg: '#1B5E20', got: 'var(--color-charcoal)' },
+  partial: { label: 'Partial', bg: '#FFF3E0', fg: '#B23C00', got: 'var(--color-charcoal)' },
+  data: { label: 'Data', bg: '#FFF3E0', fg: '#B23C00', got: 'var(--color-charcoal)' },
+  fail: { label: 'Fail', bg: '#FDECEA', fg: '#C62828', got: '#C62828' },
+};
+
+class Component extends DCLogic {
+  state = { pri: 'All', layer: 'All' };
+
+  renderVals() {
+    const { pri, layer } = this.state;
+    const rows = ROWS.filter((r) => (pri === 'All' || r.pri === pri)
+      && (layer === 'All' || (layer === 'Decision' ? r.decision : r.layers.includes(layer))));
+
+    const areas = [];
+    rows.forEach((r) => {
+      let g = areas.find((a) => a.area === r.area);
+      if (!g) { g = { area: r.area, rows: [] }; areas.push(g); }
+      g.rows.push(Object.assign({}, r, { priBg: PRI[r.pri].bg, priFg: PRI[r.pri].fg }));
+    });
+    areas.forEach((g) => { g.count = g.rows.length + (g.rows.length === 1 ? ' gap' : ' gaps'); });
+
+    const n = (fn) => ROWS.filter(fn).length;
+    const failing = TESTS.filter((t) => t[4] !== 'pass').length;
+
+    return {
+      tiles: [
+        { n: ROWS.length, label: 'Gaps logged', color: 'var(--color-charcoal)' },
+        { n: n((r) => r.pri === 'P0'), label: 'P0 · band or go-live blockers', color: '#C62828' },
+        { n: n((r) => r.layers.includes('Prototype')), label: 'Fixable in the prototype', color: 'var(--color-green-500)' },
+        { n: n((r) => r.decision), label: 'Need your decision', color: '#1565C0' },
+        { n: (TESTS.length - failing) + ' / ' + TESTS.length, label: 'Engine cases passing', color: 'var(--color-charcoal)' },
+      ],
+      decisions: ROWS.filter((r) => r.decision).map((r) => ({ id: r.id, title: r.prd, note: r.now })),
+      tests: TESTS.map(([id, c, expected, got, st]) => ({
+        id, case: c, expected, got, status: STATUS[st].label, bg: STATUS[st].bg, fg: STATUS[st].fg, gotColor: STATUS[st].got,
+      })),
+      priFilters: ['All', 'P0', 'P1', 'P2'].map((p) => ({ label: p, selected: pri === p, pick: () => this.setState({ pri: p }) })),
+      layerFilters: ['All', 'Prototype', 'Build', 'Legal', 'Product', 'Decision'].map((l) => ({ label: l, selected: layer === l, pick: () => this.setState({ layer: l }) })),
+      groups: areas,
+      shownLabel: rows.length === ROWS.length ? 'Showing all ' + ROWS.length + ' gaps' : 'Showing ' + rows.length + ' of ' + ROWS.length + ' gaps',
+    };
+  }
+}
+
+</script>
+</body>
+</html>
