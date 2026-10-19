@@ -5,9 +5,9 @@
 | `/` | Holding page — "RideBuddy — Coming soon" | `src/index.html` |
 | `/estimate/` | The fare estimator — the customer app's estimate flow, on the web | `src/estimate/` |
 | `/beta/` | The design-canvas artboard, shared by link (`noindex`) | `../Webpage`, assembled by `build.mjs` |
-| `/api/waitlist`, `/api/buddy` | Where the site's forms save | `worker/forms.js` → D1 |
+| `/api/waitlist`, `/api/feedback`, `/api/buddy` | Where the site's forms and the fare 👍/👎 save | `worker/forms.js` → D1 |
 | `/site.js`, `/api/e` | The site's own analytics: the script on every page, and where it reports | `src/site.js`, `worker/analytics.js` → D1 |
-| `/admin` | The two lists as CSV downloads and the analytics dashboard, behind a password | `worker/admin.js`, `worker/dashboard.js` |
+| `/admin` | The three lists as CSV downloads and the analytics dashboard, behind a password | `worker/admin.js`, `worker/dashboard.js` |
 
 From the repo root, `npm run build` installs this folder's dependencies and
 writes `website/dist` — the directory Cloudflare uploads. From here,
@@ -52,11 +52,23 @@ result in `frontend/app/booking/summary.tsx`.
   §2.2 day rounding, the legacy ₹249/h hourly rate, and Python's
   half-to-even rounding. `npm test` runs 1,690 trips through both and fails on
   the first differing field.
-- **Result** — one number and the app's inclusion lines verbatim, the route on
-  an interactive map with tap-to-expand, "Edit trip details", then the
-  waitlist. No "Book a Buddy" until booking opens; no deposit line, no
-  itemisation (§2.4). Joining the waitlist here saves the trip just priced
-  with the number (see below).
+- **Get Estimate** stays disabled until the trip is complete, with one line
+  under it saying what is still missing (a pickup chosen from the suggestions
+  or the map, a destination, a date that hasn't passed, a return on or after
+  the departure, a time, the hours).
+- **Result** — the route on an interactive map with tap-to-expand, and under
+  it two tiles: EST. TRIP TIME and EST. DISTANCE (rounded to the km; a round
+  trip shows the total and "… each way", one way says "One way"; none for
+  hourly). Then one number, "Inclusive of all taxes", and 👍/👎 beside it
+  ("Does this fare work for you?"): a 👎 opens an optional comment (280
+  characters, Send, then "Thank you. Noted."). The app's inclusion lines
+  follow verbatim, minus the two "Extra … is added to the final fare" lines,
+  then "Final fare is calculated when your trip ends." and the disclaimer
+  ("Indicative fare for the route, date and time you entered, … Terms of Use
+  apply."; hourly has its own wording). Then "Edit trip details" and the
+  waitlist (+91 field and the consent tick). No "Book a Buddy" until booking
+  opens; no deposit line, no itemisation (§2.4). A vote and a signup made on
+  the same fare land on the same row of the clients list (see below).
 
 **Service area.** Pickups within 25 km of Chandigarh (the Tricity);
 destinations within 600 km (Delhi, Amritsar, Manali, Dharamshala, Rishikesh,
@@ -80,39 +92,70 @@ rather than a blank page.
 
 ## Forms, the lists and `/admin`
 
-The site has three forms and nothing is emailed: they post JSON to the Worker
+The site's forms email nothing: they post JSON to the Worker
 (`worker/index.js`), which validates, stores a row in Cloudflare D1 and
 answers `{ ok: true }` — or an error the page shows under the field, so a
-failed save is never shown as a success.
+failed save is never shown as a success. No form sends a code by SMS.
 
 | Form | Where | Endpoint | D1 table |
 |---|---|---|---|
+| Join the Waitlist pop-up | `/beta/`'s hero and the closing band on every page | `POST /api/waitlist` (`source: home \| how \| about \| contact`, the page it was opened on) | `waitlist` |
 | Join the waitlist | `/beta/#contact` | `POST /api/waitlist` (`source: contact`) | `waitlist` |
-| Join the waitlist | under an `/estimate/` result | `POST /api/waitlist` (`source: estimate`, plus the trip) | `waitlist` |
-| Apply to be a Buddy | `/beta/#contact`, the footer's "Become a Buddy", or `/beta/#apply` | `POST /api/buddy` | `buddies` |
+| Join the waitlist | under an `/estimate/` result | `POST /api/waitlist` (`source: estimate`, the trip and its `estimate_id`) | `waitlist` |
+| 👍/👎 on a fare, and a 👎's comment | an `/estimate/` result | `POST /api/feedback` (`estimate_id`, `vote: up \| down`, optional `comment`, the trip) | `waitlist` |
+| Apply to be a Buddy — Individual Buddy | `/beta/#contact`, the footer's "Become a Buddy", or `/beta/#apply` | `POST /api/buddy` (`type: individual`) | `buddies` |
+| Apply to be a Buddy — Driver agency | the same form, "Driver agency" chosen | `POST /api/buddy` (`type: agency`) | `agencies` |
 
-- **Phone numbers** (`normalizePhone` in `worker/lib.js`): any format. Indian
-  numbers must come to 10 digits once `+91` / `91` / `0` is gone and are stored
-  as `+91XXXXXXXXXX`; a number starting with `+` or `00` and a country code other
-  than 91 is foreign, accepted in any format and stored as `+` and its digits.
-  Name and licence are required, free text, never format-checked.
-- **The trip** of an estimate-page signup is worded by the Worker, not the
-  page: `Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00 · ₹5,492`.
+- **Phone numbers** (`normalizePhone` in `worker/lib.js`): Indian mobiles only.
+  Every form shows a fixed `+91` beside a 10-digit field; whatever is typed or
+  pasted must come to 10 digits once a `+91` / `0091` / `91` / `0` prefix is
+  gone, and is stored as `+91XXXXXXXXXX`. Any other country code is refused.
+- **Consent.** Every waitlist form has the tick "Send me an SMS or WhatsApp
+  when booking opens. I agree to the Privacy Policy and Terms of Use." and
+  can't be sent without it; the row's Consent column says Yes. A page cached
+  from before the tick sends no `consent` at all: that signup is kept with
+  Consent blank. The Buddy form has no tick.
+- **Buddy applications.** Individual: full name, mobile, driving licence
+  number, city or base — all required, free text. Agency: agency name, contact
+  person, mobile and city or base (required); drivers you can supply (1–5,
+  6–20, 21–50, 50+), work email and GSTIN (optional; an email must look like
+  one, a GSTIN must be 15 characters in the GST pattern). A page cached from
+  before the city field is still accepted without it.
+- **Votes on fares.** `/estimate/` gives each fare it shows a random
+  `estimate_id`. The first 👍/👎 on that fare adds a waitlist row with Phone
+  blank; changing it updates the row (the latest vote wins, a comment stays).
+  Joining the waitlist from the same fare fills in that row's phone, so vote
+  and number sit on one line; a vote cast after joining lands on the signup's
+  row. A 👎 comment from someone who never joins stays on its row with no
+  phone. A comment that is only a link is refused. Votes are never counted as
+  signups.
+- **The trip** of an estimate-page row is worded by the Worker, not the page:
+  `Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00`, with the fare in its
+  own column. Rows saved before that column existed carry the fare at the end
+  of the trip; the download splits it off.
 - **Every submission is kept.** The downloads mark a phone number already on
   the same list as `(repeat)`; nothing is merged or dropped.
 - **Spam:** a hidden `website` field only bots fill in (the Worker answers 200
-  and keeps nothing), same-origin JSON only, and at most 20 submissions per
-  network per hour across both forms (IPv6 counted per /64). The network is
-  stored as a salted hash and forgotten after an hour. If junk still gets
-  through, Cloudflare Turnstile is the next step.
+  and keeps nothing), same-origin JSON only, and at most 20 form submissions
+  per network per hour across the forms, plus 60 votes (IPv6 counted per /64).
+  The network is stored as a salted hash and forgotten after an hour. If junk
+  still gets through, Cloudflare Turnstile is the next step.
 - **Tables create themselves** on first use (`CREATE TABLE IF NOT EXISTS`), so
-  the database needed no setup step.
+  the database needed no setup step. Columns added since are added to an older
+  database in place the first time the Worker opens it (`ADDED_COLUMNS` in
+  `worker/db.js`); existing rows keep their data, with the new columns blank.
 
 **`/admin`** (username `admin`, password the `ADMIN_PASSWORD` secret) shows
 each list's count and a **Download CSV** button:
-`ridebuddy-clients-YYYY-MM-DD.csv` (ID, Submitted (IST), Phone, Source, Trip,
-Repeat) and `ridebuddy-buddies-YYYY-MM-DD.csv` (ID, Submitted (IST), Name,
-Phone, Licence, Repeat). The CSVs are UTF-8 with a byte-order mark so Excel
+
+| File | Columns |
+|---|---|
+| `ridebuddy-clients-YYYY-MM-DD.csv` | ID, Submitted (IST), Phone, Source, Trip, Fare (₹), 👍/👎, Comment, Consent, Repeat |
+| `ridebuddy-buddies-YYYY-MM-DD.csv` | ID, Submitted (IST), Name, Phone, Licence, City or base, Repeat |
+| `ridebuddy-agencies-YYYY-MM-DD.csv` | ID, Submitted (IST), Agency name, Contact person, Phone, City or base, Drivers, Work email, GSTIN, Repeat |
+
+In the clients list, Phone is blank on a vote from someone who didn't join;
+Comment is only ever a 👎's. The CSVs are UTF-8 with a byte-order mark so Excel
 shows ₹ and non-Latin names correctly, and a cell starting `=`, `+`, `-` or `@`
 is prefixed with `'` so it opens as text (phone numbers excepted). Note that
 Excel and Google Sheets display `+919870871324` as a number unless the column
@@ -125,8 +168,8 @@ is imported as text.
 - Ten wrong passwords lock that network out of `/admin` for an hour. Plain
   HTTP redirects to HTTPS first, since Basic auth sends the password each time.
 - To delete a row: Cloudflare → **Storage & databases → D1 → ridebuddy →
-  Console**, then `DELETE FROM waitlist WHERE id = 17;` (or `buddies`), using the
-  ID column of the download.
+  Console**, then `DELETE FROM waitlist WHERE id = 17;` (or `buddies`,
+  `agencies`), using the ID column of the download.
 
 ## Analytics
 
@@ -148,16 +191,20 @@ posts them to `POST /api/e`, and `/admin` shows the numbers.
 Named events: `estimator_opened`, `estimate_started`, `estimate_completed`,
 `place_refused` (pickup outside the Tricity, destination past 600 km — area and
 city only), `route_not_found`, `route_failed`, `maps_failed`, `map_point_picked`,
-`waitlist_joined` (`source: contact | estimate`), `phone_invalid`,
-`form_invalid`, `save_failed` (`form: …`), `buddy_application_opened`
-(including from a `/beta/#apply` link), `buddy_application_submitted`.
+`fare_feedback` (`vote: up | down`, and whether a comment was sent — never
+its text), `waitlist_opened` (the pop-up, and the page it was opened on),
+`waitlist_joined` (`source: home | how | about | contact | estimate`),
+`phone_invalid`, `form_invalid`, `save_failed` (`form: …`),
+`buddy_application_opened` (including from a `/beta/#apply` link),
+`buddy_application_submitted` (`type: individual | agency`).
 
 **Never recorded:** anything typed into a form — phone numbers, names,
-licences — and no street addresses: places are reduced to their area and city
+licences, agency details, comments — and no street addresses: places are reduced to their area and city
 ("Sector 17", "Chandigarh") from Google's address parts in `maps.js`, and
 suggestion lists are marked `data-rb-private`, so a click on one counts as
 "place suggestion" without its text. `verify.mjs` reads the stored events back
-after a full run and fails if a phone number, name, licence or address appears.
+after a full run and fails if a phone number, name, licence, agency detail,
+comment or address appears.
 
 **Visitors without cookies or IPs.** A visitor is a hash of the day's random
 salt, their network (IPv4 address, or IPv6 /64) and their browser's user agent.
@@ -178,7 +225,9 @@ for the day at 30,000 beacons, well inside D1's free 100,000 rows written a
 day, so a spike or a flood can never leave the forms unable to save.
 
 **The dashboard** (`/admin?days=1|7|30|90`): headline numbers against the
-previous period (signups and applications counted from the lists themselves),
+previous period (signups, Buddy and agency applications counted from the lists
+themselves), the 👍/👎 on fares (the latest vote on each fare, and how many
+came with a comment),
 visitors per day (hover a day; a table twin below), the estimator step by step
 (opened → started → saw a fare → joined the waitlist) and Buddy recruitment
 (opened → sent) in people, where visitors came from and who signed up from
@@ -187,7 +236,8 @@ pickup areas, trip types, how far ahead, fares, travel day, pickup time,
 refused places), clicks, problems (mistyped numbers per form, failed saves,
 map and route failures, script errors) and page speed (by page and
 connection). Below: the campaign-link maker, "Don't count this browser", and
-`/admin/daily.csv` — one row a day since the first visit.
+`/admin/daily.csv` — one row a day since the first visit (visitors, page
+views, fares shown, waitlist signups, Buddy applications, agency applications).
 
 **Campaign links.** The link maker on `/admin` adds `utm_source`,
 `utm_medium`, `utm_campaign` to a page's address (before any `#`). Visits
@@ -232,25 +282,33 @@ canvas into `Webpage/` and rebuild.
 4. **`noindex` injected** — a browser-compiled "coming soon" artboard must not
    rank for the brand.
 5. **Every "Estimate" CTA navigates to `/estimate/`** — nav link, hero button,
-   the Round/One-way cards, Book a Buddy. The artboard's own estimator is
+   the Round/One-way cards, the closing band. The artboard's own estimator is
    superseded; there is one estimator, not two.
 6. **Real URLs.** Its pages switch in place, so they get hashes:
    `/beta/#how-it-works`, `#about`, `#contact` (Home is plain `/beta/`), with
    Back and Forward working and real `href`s on the links. `/beta/#apply`
    opens the Buddy application — one link to share with drivers.
-7. **The forms save.** The Contact-page waitlist posts to `/api/waitlist`
-   (before: it did nothing); Apply to be a Buddy posts to `/api/buddy` (before:
-   it opened the visitor's mail app, and most phones have none set up) and
-   confirms "Application received. We'll call you to take it forward."
+7. **The forms save, as in the Phase 1 design.** The Contact-page waitlist
+   (a fixed `+91` field and the consent tick) posts to `/api/waitlist`. Apply
+   to be a Buddy is the Phase 1 pop-up — "Individual Buddy" or "Driver agency"
+   and their fields — without its consent tick and verification code: "Send
+   Application" posts to `/api/buddy` and confirms "Application received.
+   We’ll contact you when onboarding opens."
 8. **Booking isn't open yet.** The home hero's "Book a Buddy · Coming soon"
-   stays as information — same look, but a plain element: no hover, press,
-   focus or click. And the header and phone menu have no "Estimate Fare" link,
-   since "Get an Estimate" goes to the same page (the footer keeps its links).
-9. **Analytics.** The forms report mistyped numbers and failed saves, and a
+   becomes the design's "Join the Waitlist", which opens a pop-up: the `+91`
+   field and the tick, no code ("You're on the waitlist. We'll message you
+   once."). Every page ends with the design's closing band, "Plan the trip
+   now. Book it soon." — "Get an Estimate" and "Join the Waitlist". The
+   header and phone menu have no "Estimate Fare" link, since "Get an
+   Estimate" goes to the same page (the footer keeps its links). Escape
+   closes the pop-ups.
+9. **The FAQ** on How It Works is the Phase 1 design's eight questions, less
+   its "The stay cost will be shown in your price breakdown" sentence.
+10. **Analytics.** The forms report mistyped numbers and failed saves, and a
    Buddy form opened from a `/beta/#apply` link counts as opened. `/site.js` is
    added to the page like every other.
 
-5–9 are text patches listed in `artboard-patches.mjs`. Each must match the
+5–10 are text patches listed in `artboard-patches.mjs`. Each must match the
 artboard an exact number of times (once, unless it says otherwise). A canvas
 re-export that changes one of those spots fails the build here, loudly,
 instead of shipping a half-patched page.
@@ -266,12 +324,18 @@ NODE_PATH=/opt/node22/lib/node_modules PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
   node test/verify.mjs   # end to end in a browser against real Google APIs
 ```
 
-`test:worker` covers phone formats, the trip wording, CSV quoting and formula
-neutralising, the analytics' event cleaning, devices, sources and bands, and a
+`test:worker` covers phone formats (foreign numbers refused), the trip
+wording and its fare, comments (links alone refused), email and GSTIN checks,
+CSV quoting and formula neutralising, the dashboard's lists and votes, the analytics' event cleaning, devices, sources and bands, and a
 day's totals computed by running `DAY_SQL` on Node's own SQLite; then over
 HTTP: the locked `/admin` without a password, saving and refusing (field
-messages, wrong origin, non-JSON, oversize, honeypot), `(repeat)` marking, the
-CSV layout, Basic auth and its lockout, the HTTPS redirect, the flood cap —
+messages, the consent tick, every waitlist source, wrong origin, non-JSON,
+oversize, honeypot), votes saved without a phone and joined to the signup made
+from the same fare (either order, the latest vote winning, the comment kept),
+individual and agency applications, `(repeat)` marking, all three CSV layouts,
+Basic auth and its lockout, the HTTPS redirect, the flood cap; an older
+database (the columns and rows production had before votes, consent, cities
+and agencies) upgraded in place with its rows intact —
 and, with a test clock (`RB_TEST=1` plus an `X-RB-Now` header, test servers
 only), analytics across days: what is and isn't counted (crawlers, excluded
 browsers, other sites' pages), yesterday summed plus today live, every
@@ -284,16 +348,20 @@ pages headless — one way, a late departure, a three-day round trip, hourly, an
 out-of-area pickup, the map picker (open, drag, re-caption, tap a place,
 confirm, then price the pinned point), fullscreen map, mobile viewport — and
 re-prices every estimate with the backend's `fare_breakdown` on the exact
-inputs the page used. Then the forms: joining the waitlist under an estimate,
-the `/beta` Contact waitlist and a Buddy application from `/beta/#apply`, each
-refused once with a bad number and then read back from the admin download;
-plus `/beta`'s URLs, Back, the CTA redirect, and the hero's "Book a Buddy ·
-Coming soon" being inert. The two headers are measured side by side at 1280px
+inputs the page used — with Get Estimate disabled and its hint until the trip
+is complete, the trip-time and distance tiles, "Inclusive of all taxes", the
+disclaimers and the "Extra …" lines gone. Then the forms: a 👎 with a comment,
+then joining the waitlist under the same estimate (one row with the vote), the
+`/beta` Contact waitlist, the hero's Join the Waitlist pop-up, an individual
+Buddy application and a driver agency's from `/beta/#apply`, each refused once
+(a short number, no tick, a short GSTIN) and then read back from the admin
+download; plus `/beta`'s URLs, Back, the closing band and the CTA redirect. The two headers are measured side by side at 1280px
 and 390px — every part's box, font and colour, and the open phone menu — and
 must match except for the current page. Last, `/admin` must count the run
-exactly (one visitor, every fare shown, the funnels, destinations, mistyped
-numbers per form, clicks), its chart must show a day on hover, and the stored
-events must hold no phone number, name, licence or address.
+exactly (one visitor, every fare shown, signups and both kinds of
+application, the 👎, the funnels, destinations, mistyped numbers per form,
+clicks), its chart must show a day on hover, and the stored events must hold
+no phone number, name, licence, agency detail, comment or address.
 
 Tapping a place icon is exercised by firing the click Google fires for one (a
 click carrying a `placeId`) rather than hunting for the icon's pixel, which is
@@ -347,6 +415,8 @@ Validate config changes locally with `npx wrangler deploy --dry-run`.
   D1 calls a request, 50M rows written a month.
 - The artboard's own estimator (unreachable since every Estimate link goes to
   `/estimate/`) still has its unwired waitlist; it is dead code, left as is.
+- **"Privacy Policy" and "Terms of Use"** in the consent tick and the
+  disclaimer are plain text: there are no such pages yet to link to.
 - **Hourly is priced at the legacy ₹249/h** and is not in Rate Table v1.7; the
   backend marks it `uncovered_by_rate_table`.
 - **`/beta/` is not server-rendered** — the artboard is compiled in the browser

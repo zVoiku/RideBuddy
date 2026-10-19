@@ -32,7 +32,12 @@ const PORT = Number(process.env.VERIFY_PORT || 80);
 const ORIGIN = `http://${HOST}${PORT === 80 ? '' : `:${PORT}`}`;
 const PY = path.join(ROOT, 'backend', '.venv', 'bin', 'python');
 const ADMIN_PASSWORD = 'verify-only';
-const PHONE_ERROR = 'Enter a 10-digit number. Outside India? Start with + and the country code.';
+const PHONE_ERROR = 'Enter a 10-digit mobile number.';
+const CONSENT_ERROR = 'Tick the box to join the waitlist.';
+const WAITLIST_JOINED = "You're on the waitlist. We'll message you once.";
+const DISCLAIMER = 'Indicative fare for the route, date and time you entered, using the route’s standard drive time without traffic. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
+const HOURLY_DISCLAIMER = 'Indicative fare for the date, time and hours you entered. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
+const COMMENT = 'Too high for one way, we usually pay 1,200 a day.';
 
 function backendTotal(inputs) {
   const script = `
@@ -183,10 +188,18 @@ async function main() {
     check(!!(await page.$('#rb-pickup')), 'form rendered (design-system Input present)');
     await page.screenshot({ path: path.join(SHOTS, 'estimate-form.png') });
 
-    // One way: Sector 17 -> Shimla
+    // One way: Sector 17 -> Shimla. Get Estimate stays disabled, saying what is
+    // missing, until every field is valid.
     await page.getByRole('button', { name: 'One Way' }).click();
+    const gate = async () => ({ off: await page.getByRole('button', { name: 'Get Estimate' }).isDisabled(), hint: await page.locator('.rb-hint').textContent().catch(() => '') });
+    let g = await gate();
+    check(g.off && g.hint === 'Choose your pickup from the suggestions or on the map.', `Get Estimate is disabled until there is a pickup ("${g.hint}")`);
     const pick = await pickPlace(page, '#rb-pickup', 'Sector 17');
+    g = await gate();
+    check(g.off && g.hint === 'Choose your destination from the suggestions or on the map.', `…then a destination ("${g.hint}")`);
     const dest = await pickPlace(page, '#rb-destination', 'Shimla');
+    g = await gate();
+    check(!g.off && !(await page.locator('.rb-hint').count()), 'enabled, with no hint, once the trip is complete');
     console.log(`  chose pickup "${pick}", destination "${dest}"`);
     await page.fill('#rb-pickup-time', '09:00');
     const one = await estimateAndCompare(page, 'one-way');
@@ -202,22 +215,43 @@ async function main() {
     await page.getByRole('button', { name: 'Close' }).click();
     check(!(await page.$('.rb-map--full')), 'map closes again');
 
-    // Booking isn't open: the result leads straight to the waitlist.
-    check(await page.getByText('Book a Buddy').count() === 0 && await page.getByText('Join the waitlist.').count() === 1, 'the result offers the waitlist and no "Book a Buddy"');
+    // The trip under the map: drive time and distance, rounded to the km.
+    const tiles = await page.locator('.rb-tile').evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()));
+    const km = Math.round(one.inputs.distanceKm);
+    check(tiles.length === 2 && /^EST\. TRIP TIME \d+ h \d+ min One way$|^EST\. TRIP TIME \d+ min One way$/i.test(tiles[0]) && new RegExp(`^EST\\. DISTANCE ${km} km One way$`, 'i').test(tiles[1]),
+      `one way: trip time and distance tiles (${tiles.join(' | ')})`);
+    const result = (await page.locator('.rb-result').innerText()).replace(/\s+/g, ' ');
+    check(result.includes('Inclusive of all taxes') && !/Extra (distance|time)/.test(result) && result.includes('Final fare is calculated when your trip ends.'),
+      'the fare says it includes all taxes; the "Extra …" lines are gone; the final-fare line stays');
+    check((await page.locator('.rb-disclaimer').textContent()).trim() === DISCLAIMER, 'the disclaimer under the fare');
 
-    // Joining the waitlist under the estimate saves the number with the trip just priced.
-    await page.fill('#rb-whatsapp-number', '98708 7132');
+    // 👍/👎: a 👎 opens an optional comment; Send thanks the visitor.
+    check(await page.getByText('Book a Buddy').count() === 0 && await page.getByText('Join the waitlist.').count() === 1, 'the result offers the waitlist and no "Book a Buddy"');
+    await page.getByRole('button', { name: 'No, this fare doesn’t work for me' }).click();
+    await page.fill('#rb-fare-comment', COMMENT);
+    await page.locator('.rb-fb').getByRole('button', { name: 'Send' }).click();
+    check(await page.waitForSelector('text=Thank you. Noted.', { timeout: 10000 }).then(() => true).catch(() => false), '👎 with a comment: "Thank you. Noted."');
+    const voteRow = (await download(dev, 'clients')).at(-1) || [];
+    check(voteRow[2] === '' && voteRow[6] === '👎' && voteRow[7] === COMMENT, `the vote is saved with no phone (${voteRow.slice(2, 9).join(', ')})`);
+
+    // Joining the waitlist under the estimate: the same row gets the number.
+    await page.fill('#rb-waitlist-phone', '98708 7132');
     await page.getByRole('button', { name: 'Join the Waitlist' }).click();
-    const waErr = await page.waitForSelector('.rb-waitlist .rb-error-msg', { timeout: 10000 }).then((e) => e.textContent()).catch(() => '');
-    check(waErr === PHONE_ERROR, `a number a digit short is refused on the page ("${waErr.slice(0, 40)}…")`);
-    await page.fill('#rb-whatsapp-number', '+91 98708 71324');
+    const waErrs = await page.locator('.rb-waitlist .rb-error-msg').allTextContents();
+    check(waErrs.join(' | ') === `${PHONE_ERROR} | ${CONSENT_ERROR}`, `a number a digit short, and no tick, are refused on the page (${waErrs.join(' | ')})`);
+    await page.fill('#rb-waitlist-phone', '+91 98708 71324');
+    check(await page.inputValue('#rb-waitlist-phone') === '9870871324', 'a pasted +91 number is cut to its 10 digits beside the fixed +91');
+    await page.locator('label[for="rb-waitlist-consent"], label:has(#rb-waitlist-consent)').first().click();
     await page.getByRole('button', { name: 'Join the Waitlist' }).click();
     const joined = await page.waitForSelector("text=You're on the waitlist", { timeout: 10000 }).then(() => true).catch(() => false);
     check(joined, 'estimate waitlist: joined');
-    const waRow = (await download(dev, 'clients')).at(-1) || [];
+    const clientsNow = await download(dev, 'clients');
+    const waRow = clientsNow.at(-1) || [];
     const wantTrip = `One way · ${pick} → ${dest} · `;
-    check(waRow[2] === '+919870871324' && waRow[3] === 'Estimate page' && waRow[4]?.startsWith(wantTrip) && waRow[4]?.endsWith(`09:00 · ${(await page.locator('[data-testid="fare-estimate"]').textContent()).trim()}`),
-      `estimate waitlist: row saved with the trip ("${waRow[4]}")`);
+    const shownFare = (await page.locator('[data-testid="fare-estimate"]').textContent()).replace(/\D/g, '');
+    check(clientsNow.length === 1 && waRow[2] === '+919870871324' && waRow[3] === 'Estimate page' && waRow[4]?.startsWith(wantTrip) && waRow[4]?.endsWith('09:00')
+      && waRow[5] === shownFare && waRow[6] === '👎' && waRow[7] === COMMENT && waRow[8] === 'Yes',
+      `estimate waitlist: one row with the trip, fare, vote, comment and consent (${waRow.slice(2, 9).join('; ')})`);
 
     // Late departure: 16:00 on the Shimla run should not cross midnight; check consistency only.
     await page.getByRole('button', { name: 'Edit trip details' }).click();
@@ -234,10 +268,17 @@ async function main() {
     await page.getByRole('button', { name: 'Round Trip' }).click();
     const depart = await page.inputValue('#rb-departure-date');
     const ret = new Date(Date.parse(depart) + 2 * 864e5).toISOString().slice(0, 10);
+    await page.fill('#rb-return-date', new Date(Date.parse(depart) - 864e5).toISOString().slice(0, 10));
+    g = await gate();
+    check(g.off && g.hint === 'The return date is before the departure date.', `a return before the departure disables Get Estimate ("${g.hint}")`);
     await page.fill('#rb-return-date', ret);
     await page.fill('#rb-pickup-time', '09:00');
     const round = await estimateAndCompare(page, 'round trip 3 days');
     check(round.result.trip_days === 3 && round.result.stay_included === true, 'round trip bills 3 days with the stay included');
+    const roundTiles = await page.locator('.rb-tile').evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()));
+    const each = Math.round(round.inputs.distanceKm); // the route one way
+    check(new RegExp(`^EST\\. DISTANCE ${2 * each} km ${each} km each way$`, 'i').test(roundTiles[1] || '') && /each way$/.test(roundTiles[0] || ''),
+      `round trip: the tiles give the total and each way (${roundTiles.join(' | ')})`);
     check((await page.locator('.rb-conds').textContent()).includes("Includes the Buddy's stay for 2 nights"), 'stay line reads "2 nights"');
 
     // Hourly: 4 hours -> 996
@@ -247,6 +288,7 @@ async function main() {
     await page.fill('#rb-hours', '4');
     const hourly = await estimateAndCompare(page, 'hourly 4h');
     check(hourly.result.total_fare === 996, 'hourly 4h is ₹996 (legacy 249/h)');
+    check(await page.locator('.rb-tiles').count() === 0 && (await page.locator('.rb-disclaimer').textContent()).trim() === HOURLY_DISCLAIMER, 'hourly: no route tiles, and its own disclaimer');
 
     // The pickup box is restricted to the Tricity: a Delhi landmark may only
     // surface Tricity-local matches (Mohali has businesses named after it),
@@ -353,18 +395,22 @@ async function main() {
     beta.on('pageerror', (e) => errors.push('PAGEERROR /beta ' + String(e).slice(0, 200)));
     beta.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
     await beta.goto(`${ORIGIN}/beta/#contact`, { waitUntil: 'networkidle' });
-    const contactShown = await beta.waitForSelector('#rb-phone-or-whatsapp-number', { timeout: 30000 }).then(() => true).catch(() => false);
+    const contactShown = await beta.waitForSelector('#rb-contact-phone', { timeout: 30000 }).then(() => true).catch(() => false);
     check(contactShown, '/beta/#contact opens the Contact page');
     await beta.screenshot({ path: path.join(SHOTS, 'beta-contact.png'), fullPage: true });
-    await beta.fill('#rb-phone-or-whatsapp-number', '12345');
-    await beta.getByRole('button', { name: 'Join the Waitlist' }).click();
-    const cErr = await beta.waitForSelector('.rb-error-msg', { timeout: 10000 }).then((e) => e.textContent()).catch(() => '');
-    check(cErr === PHONE_ERROR, `Contact waitlist: a short number is refused ("${cErr.slice(0, 40)}…")`);
-    await beta.fill('#rb-phone-or-whatsapp-number', '+44 7911 123456');
-    await beta.getByRole('button', { name: 'Join the Waitlist' }).click();
-    check(await beta.waitForSelector("text=You're on the waitlist. We'll message you once.", { timeout: 10000 }).then(() => true).catch(() => false), 'Contact waitlist: joined');
+    const contactForm = beta.locator('#rb-contact-phone').locator('xpath=ancestor::div[.//button][1]');
+    await beta.fill('#rb-contact-phone', '12345');
+    await contactForm.getByRole('button', { name: 'Join the Waitlist' }).click();
+    const cErrs = await beta.locator('[role="alert"]').allTextContents();
+    check(cErrs.join(' | ') === `${PHONE_ERROR} | ${CONSENT_ERROR}`, `Contact waitlist: a short number, and no tick, are refused (${cErrs.join(' | ')})`);
+    await beta.fill('#rb-contact-phone', '+44 7911 123456');
+    check(await beta.inputValue('#rb-contact-phone') === '7911123456', 'the field beside the fixed +91 keeps 10 digits');
+    await beta.fill('#rb-contact-phone', '98111 00001');
+    await beta.locator('label:has(#rb-contact-consent)').click();
+    await contactForm.getByRole('button', { name: 'Join the Waitlist' }).click();
+    check(await beta.waitForSelector(`text=${WAITLIST_JOINED}`, { timeout: 10000 }).then(() => true).catch(() => false), 'Contact waitlist: joined');
     const cRow = (await download(dev, 'clients')).at(-1) || [];
-    check(cRow[2] === '+447911123456' && cRow[3] === 'Contact page', `Contact waitlist: row saved (${cRow.slice(2, 4).join(', ')})`);
+    check(cRow[2] === '+919811100001' && cRow[3] === 'Contact page' && cRow[8] === 'Yes', `Contact waitlist: row saved, with the consent (${[cRow[2], cRow[3], cRow[8]].join(', ')})`);
 
     const navHref = await beta.locator('header a', { hasText: 'About' }).first().getAttribute('href').catch(() => null);
     check(navHref === '#about', `nav links carry real URLs (About -> ${navHref})`);
@@ -372,39 +418,74 @@ async function main() {
     check(beta.url().endsWith('/beta/#about') && !!(await beta.waitForSelector('#about-hero', { timeout: 10000 }).catch(() => null)), `clicking About shows it at ${new URL(beta.url()).pathname}${new URL(beta.url()).hash}`);
     await beta.goBack();
     // (Joined already, so the page shows the confirmation rather than the field.)
-    check(beta.url().endsWith('/beta/#contact') && !!(await beta.waitForSelector("text=You're on the waitlist. We'll message you once.", { timeout: 10000 }).catch(() => null)), 'Back returns to the Contact page');
+    check(beta.url().endsWith('/beta/#contact') && !!(await beta.waitForSelector(`text=${WAITLIST_JOINED}`, { timeout: 10000 }).catch(() => null)), 'Back returns to the Contact page');
     await beta.locator('header a', { hasText: 'Home' }).first().click();
     check(new URL(beta.url()).hash === '' && !!(await beta.waitForSelector('#home-hero', { timeout: 10000 }).catch(() => null)), 'Home is plain /beta/');
 
-    // The hero's "Book a Buddy · Coming soon" is information: shown, not a button, inert on hover.
-    const bookInfo = beta.locator('div', { hasText: /^\s*Book a Buddy\s*Coming soon\s*$/ }).last();
-    const before = await bookInfo.evaluate((el) => getComputedStyle(el).backgroundColor).catch(() => null);
-    await bookInfo.hover().catch(() => {});
-    const hovered = await bookInfo.evaluate((el) => ({ bg: getComputedStyle(el).backgroundColor, cursor: getComputedStyle(el).cursor, tab: el.tabIndex })).catch(() => null);
-    check(!!hovered && (await beta.getByRole('button', { name: /Book a Buddy/ }).count()) === 0 && hovered.bg === before && hovered.cursor === 'default' && hovered.tab === -1,
-      `the hero's "Book a Buddy · Coming soon" is shown but inert (${JSON.stringify(hovered)})`);
+    // The hero's "Join the Waitlist" opens the waitlist pop-up: phone and tick, no code.
+    check((await beta.getByRole('button', { name: /Book a Buddy/ }).count()) === 0, 'no "Book a Buddy" button on the home page');
+    check(await beta.getByText('Plan the trip now. Book it soon.').count() === 1, 'the closing band reads "Plan the trip now. Book it soon."');
+    await beta.getByRole('button', { name: 'Join the Waitlist' }).first().click(); // the hero's; the closing band has the other
+    const wl = beta.getByRole('dialog', { name: 'Join the waitlist' });
+    check(await wl.waitFor({ timeout: 5000 }).then(() => true).catch(() => false), 'the hero\'s "Join the Waitlist" opens the pop-up');
+    await beta.fill('#rb-wl-phone', '98111 0000');
+    await wl.getByRole('button', { name: 'Join the Waitlist' }).click();
+    const wlErrs = await wl.locator('[role="alert"]').allTextContents();
+    check(wlErrs.join(' | ') === `${PHONE_ERROR} | ${CONSENT_ERROR}`, `pop-up: a short number, and no tick, are refused (${wlErrs.join(' | ')})`);
+    await beta.fill('#rb-wl-phone', '98111 00002');
+    await wl.locator('label:has(#rb-wl-consent)').click();
+    await wl.getByRole('button', { name: 'Join the Waitlist' }).click();
+    check(await wl.getByText(WAITLIST_JOINED).waitFor({ timeout: 10000 }).then(() => true).catch(() => false), 'pop-up: joined, with no code to type');
+    await beta.screenshot({ path: path.join(SHOTS, 'beta-waitlist-joined.png') });
+    const hRow = (await download(dev, 'clients')).at(-1) || [];
+    check(hRow[2] === '+919811100002' && hRow[3] === 'Home page' && hRow[8] === 'Yes', `pop-up: row saved with the page it was joined from (${[hRow[2], hRow[3], hRow[8]].join(', ')})`);
+    await wl.getByRole('button', { name: 'Done' }).click();
+    check(await beta.getByRole('dialog').count() === 0, 'Done closes the pop-up');
 
     // Apply to be a Buddy, from a shared /beta/#apply link.
     await beta.goto(`${ORIGIN}/beta/#apply`, { waitUntil: 'networkidle' });
     check(await beta.waitForSelector('#rb-full-name', { timeout: 30000 }).then(() => true).catch(() => false), '/beta/#apply opens the Buddy application');
-    const modalText = await beta.locator('text=Apply to be a Buddy.').locator('xpath=ancestor::div[3]').textContent();
-    check(!/email app/i.test(modalText), 'no "email app" wording left in the form');
+    const applyDialog = beta.getByRole('dialog');
+    const modalText = await applyDialog.textContent();
+    check(!/email app|verification code|OTP/i.test(modalText), 'no "email app" or verification-code wording in the form');
     await beta.getByRole('button', { name: 'Send Application' }).click();
-    check((await beta.locator('.rb-error-msg').count()) === 3, 'an empty application flags all three fields');
+    check((await applyDialog.locator('.rb-error-msg').count()) === 3 && (await applyDialog.getByText(PHONE_ERROR).count()) === 1, 'an empty application flags all four fields');
     await beta.fill('#rb-full-name', 'Voiku Zavadschi');
-    await beta.fill('#rb-phone-number', '98708 7132');
+    await beta.fill('#apply-phone', '987087132');
     await beta.fill('#rb-driving-licence-number', 'VNS8893');
+    await beta.fill('#rb-your-city-or-base', 'Mohali');
     await beta.getByRole('button', { name: 'Send Application' }).click();
-    const pErr = await beta.waitForSelector('#rb-phone-number >> xpath=ancestor::div[contains(@class,"rb-field")]//span[contains(@class,"rb-error-msg")]', { timeout: 10000 }).then((e) => e.textContent()).catch(() => '');
-    check(pErr === PHONE_ERROR, `Buddy application: the server's phone message shows under the field ("${pErr.slice(0, 40)}…")`);
-    await beta.fill('#rb-phone-number', '+91 98708 71324');
+    check(await applyDialog.getByText(PHONE_ERROR).count() === 1 && await applyDialog.locator('.rb-error-msg').count() === 0, 'Buddy application: a number a digit short is flagged under the field');
+    await beta.fill('#apply-phone', '9870871324');
     await beta.getByRole('button', { name: 'Send Application' }).click();
-    check(await beta.waitForSelector("text=Application received. We'll call you to take it forward.", { timeout: 10000 }).then(() => true).catch(() => false), 'Buddy application: received');
+    check(await beta.waitForSelector('text=Application received. We’ll contact you when onboarding opens.', { timeout: 10000 }).then(() => true).catch(() => false), 'Buddy application: received');
     await beta.screenshot({ path: path.join(SHOTS, 'beta-apply-sent.png') });
     const bRow = (await download(dev, 'buddies')).at(-1) || [];
-    check(bRow.slice(2, 5).join('; ') === 'Voiku Zavadschi; +919870871324; VNS8893', `Buddy application: row saved (${bRow.slice(2, 5).join('; ')})`);
+    check(bRow.slice(2, 6).join('; ') === 'Voiku Zavadschi; +919870871324; VNS8893; Mohali', `Buddy application: row saved (${bRow.slice(2, 6).join('; ')})`);
     await beta.getByRole('button', { name: 'Done' }).click();
     check(new URL(beta.url()).hash === '', 'closing the form leaves a plain /beta/ URL');
+
+    // A driver agency, through the same form.
+    await beta.goto(`${ORIGIN}/beta/#apply`, { waitUntil: 'networkidle' });
+    await beta.getByRole('radio', { name: /Driver agency/ }).click();
+    check(await beta.waitForSelector('#rb-agency-name', { timeout: 5000 }).then(() => true).catch(() => false) && !(await beta.$('#rb-driving-licence-number')), 'choosing "Driver agency" swaps in the agency fields');
+    await beta.fill('#rb-agency-name', 'Tricity Drivers');
+    await beta.fill('#rb-contact-person', 'Gurpreet Kaur');
+    await beta.fill('#apply-phone', '9811122233');
+    await beta.fill('#rb-city-or-base', 'Panchkula');
+    await applyDialog.getByText('6–20', { exact: true }).click();
+    await beta.fill('#rb-work-email-\\(optional\\)', 'ops@tricitydrivers.in');
+    await beta.fill('#rb-gstin-\\(optional\\)', '03ABCDE1234F1Z');
+    await beta.getByRole('button', { name: 'Send Application' }).click();
+    await applyDialog.locator('.rb-error-msg').first().waitFor({ timeout: 10000 }).catch(() => {}); // the Worker's answer
+    const gErr = await applyDialog.locator('.rb-error-msg').allTextContents();
+    check(gErr.join() === 'Enter the 15-character GSTIN, or leave it blank.', `agency: a GSTIN a character short is refused (${gErr.join(' | ')})`);
+    await beta.fill('#rb-gstin-\\(optional\\)', '03ABCDE1234F1Z5');
+    await beta.getByRole('button', { name: 'Send Application' }).click();
+    check(await beta.waitForSelector('text=Application received. We’ll contact you when onboarding opens.', { timeout: 10000 }).then(() => true).catch(() => false), 'agency application: received');
+    const aRow = (await download(dev, 'agencies')).at(-1) || [];
+    check(aRow.slice(2, 9).join('; ') === 'Tricity Drivers; Gurpreet Kaur; +919811122233; Panchkula; 6–20; ops@tricitydrivers.in; 03ABCDE1234F1Z5', `agency application: row saved in agencies.csv (${aRow.slice(2, 9).join('; ')})`);
+    await beta.getByRole('button', { name: 'Done' }).click();
 
     // Every Estimate CTA still leads to /estimate/.
     await beta.getByRole('button', { name: 'Get an Estimate' }).first().click();
@@ -463,11 +544,12 @@ async function main() {
       const text = (await a.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ');
       check(/Visitors 1 /.test(text), `the run counts as one visitor (${text.match(/Visitors [^A-Z]*/)?.[0]})`);
       check(new RegExp(`Fares shown ${faresShown} `).test(text), `every fare shown is counted (${faresShown}; ${text.match(/Fares shown [^A-Z]*/)?.[0]})`);
-      check(/Waitlist signups 2 /.test(text) && /Buddy applications 1 /.test(text), 'signups and applications, counted from the lists');
+      check(/Waitlist signups 3 /.test(text) && /Buddy applications 1 /.test(text) && /Agency applications 1 /.test(text), 'signups and applications, counted from the lists (a vote alone is not a signup)');
+      check(/👍 The fare works 0 👎 It doesn’t 1/.test(text), `the fare feedback (${text.match(/👍 The fare works.{0,30}/)?.[0]})`);
       check(/Saw a fare \d+% of the step before 1 Joined the waitlist there \d+% of the step before 1 /.test(text), 'the estimator funnel reaches the waitlist');
       check(/Opened the application 1 Sent it 100% of the step before 1 /.test(text), 'Buddy recruitment: opened from the shared #apply link, then sent');
       check(/Shimla \d/.test(text) && /Kasauli \d/.test(text), `destinations priced (${text.match(/Destinations .{0,60}/)?.[0]})`);
-      check(['estimate page', 'Contact page', 'Buddy application'].every((f) => text.includes(`Mistyped phone number (${f}) 1`)), 'mistyped numbers, per form');
+      check(['estimate page', 'Contact page', 'Join the Waitlist pop-up', 'Buddy application'].every((f) => text.includes(`Mistyped phone number (${f}) 1`)), `mistyped numbers, per form (${text.match(/Mistyped phone number \([^)]*\) \d+/g)?.join(', ')})`);
       check(/Get Estimate Estimate · estimate form \d/.test(text) && /place suggestion Estimate · estimate form \d/.test(text), 'clicks by label and place; suggestions counted without their text');
       await a.hover('#daily .col:last-child');
       const tip = (await a.locator('#daily .tip').textContent()).trim();
@@ -480,8 +562,8 @@ async function main() {
     }
     // Privacy: the analytics hold no phone numbers, names, licences or addresses.
     const stored = storedBeacons(dev.dir);
-    const leaks = ['98708', '71324', '7911', 'Voiku', 'VNS8893', pinned, pinned.split(',').slice(0, 2).join(',')].filter((x) => x && stored.includes(x));
-    check(stored.includes('estimate_completed') && !leaks.length, `analytics store no phone numbers, names, licences or addresses (${leaks.join(', ') || 'none found'})`);
+    const leaks = ['98708', '71324', '7911', '98111', '81112', 'Voiku', 'VNS8893', 'Gurpreet', 'Tricity Drivers', 'tricitydrivers', '03ABCDE', 'usually pay', pinned, pinned.split(',').slice(0, 2).join(',')].filter((x) => x && stored.includes(x));
+    check(stored.includes('estimate_completed') && !leaks.length, `analytics store no phone numbers, names, licences, agency details, comments or addresses (${leaks.join(', ') || 'none found'})`);
 
     if (blocked.length) console.log(`  note: ${new Set(blocked).size} host path(s) unreachable from this sandbox and aborted: ${[...new Set(blocked.map((u) => new URL(u).host))].join(', ')}`);
     // Through the sandbox proxy, Google's abuse detection answers some batched
@@ -496,7 +578,7 @@ async function main() {
     const googleRpc = (e) => process.env.HTTPS_PROXY && /^HTTP 5\d\d https:\/\/maps\.googleapis\.com\/\$rpc\//.test(e);
     const rpcs = errors.filter(googleRpc).length;
     if (rpcs) console.log(`  note: ${rpcs} internal Google Maps RPC(s) answered 5xx via the sandbox proxy (ignored)`);
-    // The forms' 400s are the refusals this run provokes on purpose (a number a digit short).
+    // The forms' 400s are the refusals this run provokes on purpose (the GSTIN a character short).
     const provoked = (e) => /^HTTP 400 \S+\/api\/(waitlist|buddy)$/.test(e);
     const real = errors.filter((e) => !tileSorry(e) && !googleRpc(e) && !provoked(e) && !/deprecat|google\.maps\.Marker|image-slots\.state\.json|Marker is deprecated|gstatic\.com|fonts\.googleapis|ERR_CONNECTION|Failed to load resource/i.test(e));
     check(real.length === 0, `no console/page/HTTP errors (${real.length})`);

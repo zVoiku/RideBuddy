@@ -32,8 +32,14 @@ const Icon = ({ d, size = 18, stroke = 'currentColor' }) => (
 );
 const PIN = 'M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0';
 const NAV = 'm3 11 19-9-9 19-2-8-8-2z';
-const CHAT = 'M21 11.5a8.4 8.4 0 0 1-9 8.4 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z';
 const CLOCK = ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M12 6v6l4 2'];
+const ROUTE = ['M6 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', 'M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15', 'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'];
+const THUMB_UP = ['M7 10v12', 'M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z'];
+const THUMB_DOWN = ['M17 14V2', 'M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z'];
+
+const PHONE_ERROR = 'Enter a 10-digit mobile number.';
+const CONSENT_ERROR = 'Tick the box to join the waitlist.';
+const CONSENT = 'Send me an SMS or WhatsApp when booking opens. I agree to the Privacy Policy and Terms of Use.';
 
 function track(event, payload) {
   (window.dataLayer = window.dataLayer || []).push(Object.assign({ event }, payload || {}));
@@ -64,6 +70,165 @@ function istDate(offsetDays = 0) {
 function fmtDuration(min) {
   const h = Math.floor(min / 60), m = min % 60;
   return h ? `${h} h${m ? ` ${m} min` : ''}` : `${m} min`;
+}
+
+/**
+ * An id for each fare shown. A 👍/👎 and a waitlist signup made under the same
+ * fare carry it, so the Worker keeps them on one row of the waitlist download.
+ */
+function newEstimateId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  return `est_${[...bytes].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 20)}`;
+}
+
+/** What the Worker words into the Trip column, plus the fare, which has its own. */
+function tripOf(result) {
+  const l = result.labels;
+  return {
+    type: result.hourly ? 'hourly' : l.round ? 'round' : 'one',
+    from: l.pickup, to: l.destination, date: l.date, ret: l.ret, time: l.time,
+    hours: result.hourly ? result.hours : undefined,
+    fare: result.total_fare,
+  };
+}
+
+/** Digits only, at most ten: a pasted "+91 98765 43210" keeps its last ten. */
+const tenDigits = (v) => { const d = String(v).replace(/\D/g, ''); return d.length > 10 ? d.slice(-10) : d; };
+
+// ----- Small parts of the result ---------------------------------------------------
+
+/** Mobile number with a fixed +91, as on every form of the site. */
+function PhoneField({ id, value, onChange, error }) {
+  return (
+    <div className="rb-field">
+      <label className="rb-label" htmlFor={id}>Mobile number</label>
+      <div className={'rb-phone' + (error ? ' rb-phone--error' : '')}>
+        <span className="rb-phone__cc" aria-hidden="true">+91</span>
+        <input id={id} type="tel" inputMode="numeric" autoComplete="tel-national" placeholder="10-digit mobile"
+          value={value} onChange={(e) => onChange(tenDigits(e.target.value))}
+          aria-invalid={error ? 'true' : undefined} aria-describedby={error ? `${id}-err` : undefined} />
+      </div>
+      {error && <span className="rb-error-msg" id={`${id}-err`}>{error}</span>}
+    </div>
+  );
+}
+
+function ConsentTick({ id, checked, onChange, error }) {
+  return (
+    <div className="rb-consent">
+      <label htmlFor={id}>
+        <input id={id} type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+        <span>{CONSENT}</span>
+      </label>
+      {error && <span className="rb-error-msg">{error}</span>}
+    </div>
+  );
+}
+
+/** Under the route map: the drive time and distance, each way too on a round trip. */
+function TripTiles({ route, round }) {
+  const km = Math.round(route.distance_km);
+  const min = route.duration_min;
+  const tile = (icon, label, value, note) => (
+    <div className="rb-tile">
+      <Icon d={icon} size={20} stroke="#4A5C2F" />
+      <div>
+        <div className="rb-tile__label">{label}</div>
+        <div className="rb-tile__value">{value}</div>
+        <div className="rb-tile__note">{note}</div>
+      </div>
+    </div>
+  );
+  return (
+    <div className="rb-tiles">
+      {tile(CLOCK, 'Est. trip time', fmtDuration(round ? 2 * min : min), round ? `${fmtDuration(min)} each way` : 'One way')}
+      {tile(ROUTE, 'Est. distance', `${(round ? 2 * km : km).toLocaleString('en-IN')} km`, round ? `${km.toLocaleString('en-IN')} km each way` : 'One way')}
+    </div>
+  );
+}
+
+/**
+ * The fare, and 👍/👎 on it. A 👎 opens an optional comment. Each vote is saved
+ * at once (POST /api/feedback); the latest vote counts and a comment stays when
+ * the vote changes. Keyed by the estimate, so a new fare starts unvoted.
+ */
+function FarePanel({ fare, estimateId, trip }) {
+  const [vote, setVote] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [comment, setComment] = useState('');
+  const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
+  const [thanks, setThanks] = useState(false);
+
+  const cast = async (next) => {
+    if (next === vote) return;
+    const before = vote;
+    setVote(next);
+    setOpen(next === 'down');
+    setError('');
+    setThanks(false);
+    const r = await postForm('/api/feedback', { estimate_id: estimateId, vote: next, trip });
+    if (!r.ok) {
+      setVote(before);
+      setOpen(false);
+      track('save_failed', { form: 'feedback' });
+      return;
+    }
+    track('fare_feedback', { vote: next, change: !!before });
+  };
+
+  const send = async () => {
+    if (sending) return;
+    const text = comment.trim();
+    // Nothing written: the 👎 is already saved, so Send just closes the box.
+    if (!text) { setOpen(false); return; }
+    setSending(true);
+    const r = await postForm('/api/feedback', { estimate_id: estimateId, vote: 'down', comment: text, trip });
+    setSending(false);
+    if (!r.ok) {
+      setError(r.errors.comment || r.error);
+      if (!r.errors.comment) track('save_failed', { form: 'feedback' });
+      return;
+    }
+    setOpen(false);
+    setThanks(true);
+    track('fare_feedback', { vote: 'down', comment: true });
+  };
+
+  const thumb = (v, icon, label, title) => (
+    <button type="button" className="rb-thumb" aria-pressed={vote === v} aria-label={label} title={title} onClick={() => cast(v)}>
+      <Icon d={icon} size={18} />
+    </button>
+  );
+
+  return (
+    <div className="rb-farepanel">
+      <div className="rb-farepanel__row">
+        <div>
+          <div className="rb-fare__label">Estimated fare</div>
+          <div className="rb-fare__value" data-testid="fare-estimate">{formatINR(fare)}</div>
+          <div className="rb-fare__tax">Inclusive of all taxes</div>
+        </div>
+        <div className="rb-thumbs" role="group" aria-label="Does this fare work for you?">
+          {thumb('up', THUMB_UP, 'Yes, this fare works for me', 'This fare works for me')}
+          {thumb('down', THUMB_DOWN, 'No, this fare doesn’t work for me', 'This fare doesn’t work for me')}
+        </div>
+      </div>
+      {open && (
+        <div className={'rb-fb' + (error ? ' rb-fb--error' : '')}>
+          <label htmlFor="rb-fare-comment">What would make this work for you?</label>
+          <textarea id="rb-fare-comment" rows={3} maxLength={280} placeholder="Optional" value={comment}
+            onChange={(e) => { setComment(e.target.value); setError(''); }} />
+          <div className="rb-fb__foot">
+            <span className={'rb-fb__count' + (comment.length >= 280 ? ' rb-fb__count--max' : '')}>{comment.length} / 280</span>
+            <Button size="sm" fullWidth={false} onClick={send} disabled={sending}>{sending ? 'Sending…' : 'Send'}</Button>
+          </div>
+          {error && <span className="rb-error-msg" role="alert">{error}</span>}
+        </div>
+      )}
+      {thanks && <p className="rb-fb__thanks" role="status">Thank you. Noted.</p>}
+    </div>
+  );
 }
 
 const TRIP_TYPES = [
@@ -324,7 +489,7 @@ function MapPicker({ kind, initial, onClose, onPick }) {
 
 // ----- Route map: the web twin of LiveMap + the summary screen's tap-to-expand ----
 
-function RouteMap({ route, pickup, hourly }) {
+function RouteMap({ route, pickup, hourly, joined }) {
   const el = useRef(null);
   const map = useRef(null);
   const renderer = useRef(null);
@@ -393,7 +558,7 @@ function RouteMap({ route, pickup, hourly }) {
   useEffect(() => () => document.body.classList.remove('rb-lock'), []);
 
   return (
-    <div className={'rb-map' + (full ? ' rb-map--full' : '')}>
+    <div className={'rb-map' + (full ? ' rb-map--full' : '') + (joined ? ' rb-map--joined' : '')}>
       <div ref={el} className="rb-map__canvas" />
       {failed && <div className="rb-map__fallback">Map unavailable right now.</div>}
       <button type="button" className="rb-map__toggle" onClick={() => setFull((f) => !f)}>
@@ -490,9 +655,12 @@ function App() {
   const [route, setRoute] = useState(null);
   const [result, setResult] = useState(null);
   const [mapsDown, setMapsDown] = useState('');
-  const [whatsapp, setWhatsapp] = useState('');
+  // Each fare shown gets an id: its 👍/👎 and a signup made under it share a row.
+  const [estimateId, setEstimateId] = useState('');
+  const [waPhone, setWaPhone] = useState('');
+  const [waConsent, setWaConsent] = useState(false);
   const [waDone, setWaDone] = useState(false);
-  const [waError, setWaError] = useState('');
+  const [waErrors, setWaErrors] = useState({});
   const [waSending, setWaSending] = useState(false);
   // The field people never see and bots fill in; the Worker drops what arrives with it.
   const honeypot = useRef(null);
@@ -534,8 +702,22 @@ function App() {
 
   const err = (field, msg) => setErrors((e) => ({ ...e, [field]: msg }));
 
+  // Get Estimate stays disabled until the trip is complete; this line says what is missing.
+  const missing = (() => {
+    const when = isRound ? 'departure' : 'pickup';
+    if (!pickup.place) return 'Choose your pickup from the suggestions or on the map.';
+    if (!isHourly && !destination.place) return 'Choose your destination from the suggestions or on the map.';
+    if (!departDate) return `Pick the ${when} date.`;
+    if (departDate < istDate(0)) return `The ${when} date has already passed.`;
+    if (isRound && !returnDate) return 'Pick the return date.';
+    if (isRound && !(roundTripDays(departDate, returnDate) >= 1)) return 'The return date is before the departure date.';
+    if (!pickupTime) return 'Pick the pickup time.';
+    if (isHourly && !(parseFloat(hours) > 0)) return 'Enter how many hours you need your Buddy for.';
+    return '';
+  })();
+
   const getEstimate = async () => {
-    if (resolving) return;
+    if (resolving || missing) return;
     const next = {};
     if (!pickup.place) next.pickup = 'Pick your pickup point from the suggestions.';
     if (!isHourly && !destination.place) next.destination = 'Pick a destination from the suggestions.';
@@ -571,6 +753,7 @@ function App() {
       };
       setRoute(r);
       setResult(est);
+      setEstimateId(newEstimateId());
       setView('result');
       // Exposed for the end-to-end check in test/verify.mjs: the exact inputs
       // the engine priced, so the same trip can be re-priced by the backend.
@@ -606,28 +789,27 @@ function App() {
   const editTrip = () => { setView('form'); };
 
   // Joins the waitlist with the trip just priced, so the call back starts from
-  // what the customer wants. The Worker validates the number and words the trip.
-  const submitWhatsapp = async () => {
+  // what the customer wants, and any 👍/👎 on this fare lands on the same row.
+  // The Worker validates the number and words the trip.
+  const submitWaitlist = async () => {
     if (waSending) return;
-    if (!whatsapp.trim()) { setWaError('Enter your phone number.'); return; }
+    const next = {};
+    if (waPhone.length !== 10) next.phone = PHONE_ERROR;
+    if (!waConsent) next.consent = CONSENT_ERROR;
+    setWaErrors(next);
+    if (Object.keys(next).length) {
+      if (next.phone) track('phone_invalid', { form: 'estimate' });
+      return;
+    }
     setWaSending(true);
-    setWaError('');
-    const l = result.labels;
     const r = await postForm('/api/waitlist', {
-      phone: whatsapp,
-      source: 'estimate',
-      website: honeypot.current?.value || '',
-      trip: {
-        type: result.hourly ? 'hourly' : l.round ? 'round' : 'one',
-        from: l.pickup, to: l.destination, date: l.date, ret: l.ret, time: l.time,
-        hours: result.hourly ? result.hours : undefined,
-        fare: result.total_fare,
-      },
+      phone: waPhone, consent: true, source: 'estimate', estimate_id: estimateId,
+      website: honeypot.current?.value || '', trip: tripOf(result),
     });
     setWaSending(false);
     if (!r.ok) {
       track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'estimate' });
-      setWaError(r.errors.phone || r.error);
+      setWaErrors(r.errors.phone || r.errors.consent ? r.errors : { phone: r.error });
       return;
     }
     setWaDone(true);
@@ -639,10 +821,8 @@ function App() {
     const out = [];
     if (result.hourly) {
       out.push({ text: `Includes your Buddy for ${result.hours} hour${result.hours === 1 ? '' : 's'}.` });
-      out.push({ text: 'Extra time beyond that is added to the final fare.' });
     } else {
       out.push({ text: `Includes ${result.included_km.toLocaleString('en-IN')} km and ${result.included_hours} hours${result.trip_days > 1 ? ` across ${result.trip_days} days` : ''}.` });
-      out.push({ text: 'Extra distance or time beyond that is added to the final fare.' });
       if (result.stay_included) out.push({ text: `Includes the Buddy's stay for ${result.overnights} ${result.overnights === 1 ? 'night' : 'nights'}. Tell us if you're arranging it and we'll take it off.` });
       if (result.night_charge_applied) out.push({ text: 'Includes a night charge — pickup is before 6 AM or arrival is after 10 PM.' });
     }
@@ -655,7 +835,10 @@ function App() {
       ? `${result.labels.pickup} · Hourly · ${result.hours} hour${result.hours === 1 ? '' : 's'}`
       : `${result.labels.pickup} → ${result.labels.destination} · ${result.labels.round ? 'Round Trip' : 'One Way'} · ${result.trip_days} day${result.trip_days === 1 ? '' : 's'}`
   ) : '';
-  const routeMeta = route ? `${route.distance_km.toFixed(1)} km each way · about ${fmtDuration(route.duration_min)} driving` : '';
+  // Hourly trips have no route, so their disclaimer leaves the drive time out.
+  const disclaimer = result?.hourly
+    ? 'Indicative fare for the date, time and hours you entered. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.'
+    : 'Indicative fare for the route, date and time you entered, using the route’s standard drive time without traffic. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
 
   return (
     <>
@@ -722,7 +905,8 @@ function App() {
                 )}
 
                 <div className="rb-actions">
-                  <Button size="lg" onClick={getEstimate} disabled={!!mapsDown || resolving}>Get Estimate</Button>
+                  <Button size="lg" onClick={getEstimate} disabled={!!mapsDown || resolving || !!missing}>Get Estimate</Button>
+                  {missing && !mapsDown && !resolving && <p className="rb-hint" role="status">{missing}</p>}
                 </div>
               </div>
             </div>
@@ -738,14 +922,11 @@ function App() {
           {view === 'result' && result && (
             <div className="rb-result" data-rb-region="estimate result">
               <p className="rb-result__route">{routeLine}</p>
-              {routeMeta && <p className="rb-result__meta">{routeMeta}</p>}
 
-              <RouteMap route={route} pickup={pickup.place} hourly={result.hourly} />
+              <RouteMap route={route} pickup={pickup.place} hourly={result.hourly} joined={!!route && !result.hourly} />
+              {route && !result.hourly && <TripTiles route={route} round={result.labels.round} />}
 
-              <div className="rb-fare">
-                <div className="rb-fare__label">Estimated fare</div>
-                <div className="rb-fare__value" data-testid="fare-estimate">{formatINR(result.total_fare)}</div>
-              </div>
+              <FarePanel key={estimateId} fare={result.total_fare} estimateId={estimateId} trip={tripOf(result)} />
               <ul className="rb-conds">
                 {conditions.map((c, i) => (
                   <li key={i} className={c.excluded ? 'rb-excluded' : ''}>
@@ -757,6 +938,7 @@ function App() {
                 ))}
               </ul>
               <p className="rb-final">Final fare is calculated when your trip ends.</p>
+              <p className="rb-disclaimer">{disclaimer}</p>
               <button type="button" className="rb-edit" onClick={editTrip}>
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
                 Edit trip details
@@ -774,10 +956,12 @@ function App() {
                       <h3>Join the waitlist.</h3>
                       <p>Booking opens soon. Waitlist members go first.</p>
                     </div>
-                    <Input label="WhatsApp number" icon={<Icon d={CHAT} />} type="tel" placeholder="+91 ●●●●● ●●●●●" value={whatsapp}
-                      error={waError || undefined} onChange={(e) => { setWhatsapp(e.target.value); setWaError(''); }} />
+                    <PhoneField id="rb-waitlist-phone" value={waPhone} error={waErrors.phone}
+                      onChange={(v) => { setWaPhone(v); setWaErrors((e) => ({ ...e, phone: '' })); }} />
+                    <ConsentTick id="rb-waitlist-consent" checked={waConsent} error={waErrors.consent}
+                      onChange={(v) => { setWaConsent(v); setWaErrors((e) => ({ ...e, consent: '' })); }} />
                     <input ref={honeypot} type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" className="rb-hp" />
-                    <Button onClick={submitWhatsapp} disabled={waSending}>{waSending ? 'Joining…' : 'Join the Waitlist'}</Button>
+                    <Button onClick={submitWaitlist} disabled={waSending}>{waSending ? 'Joining…' : 'Join the Waitlist'}</Button>
                     <small>One message when the app is live. Nothing else.</small>
                   </div>
                 )}
