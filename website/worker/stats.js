@@ -106,7 +106,10 @@ export const hourBand = (h) => (h < 6 ? 'Before 6 am' : h < 12 ? 'Morning, 6–1
 export const speedBand = (ms) => (ms <= FAST_MS ? 'Fast' : ms <= SLOW_MS ? 'Slowish' : 'Slow');
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const TRIPS = { round: 'Round trip', one: 'One way', hourly: 'Hourly' };
-const FORMS = { contact: 'Contact page', estimate: 'estimate page', buddy: 'Buddy application' };
+const FORMS = {
+  contact: 'Contact page', estimate: 'estimate page', waitlist: 'Join the Waitlist pop-up', feedback: 'fare 👍/👎',
+  buddy: 'Buddy application', agency: 'agency application',
+};
 
 /** Every event named on the dashboard, and how it reads there. */
 export const PROBLEMS = {
@@ -125,6 +128,10 @@ export const PROBLEMS = {
 export const FAST_MS = 2500;
 export const SLOW_MS = 4000;
 
+/** Where a waitlist signup was made, as the dashboard names it. */
+const JOINED_FROM = {
+  estimate: 'Under an estimate', contact: 'Contact page', home: 'Home page', how: 'How It Works page', about: 'About page',
+};
 const DETAIL_EVENTS = ['place_refused', 'waitlist_joined', ...Object.keys(PROBLEMS)].map((n) => `'${n}'`).join(', ');
 
 /** Every event of the day (?1), one row each, with its fields pulled out of the JSON. */
@@ -227,7 +234,7 @@ export function summarize([counts, pages, clicks, perf, fares, details, people])
     if (r.n === 'place_refused') {
       add('refused', `${r.kind === 'destination' ? 'Destination' : 'Pickup'}\t${[r.area, r.city].filter(Boolean).join(', ') || 'Unknown'}`, r.c);
     }
-    if (r.n === 'waitlist_joined') add('waitlist', r.source === 'contact' ? 'Contact page' : r.source === 'estimate' ? 'Under an estimate' : 'Other', r.c);
+    if (r.n === 'waitlist_joined') add('waitlist', JOINED_FROM[r.source] || 'Other', r.c);
   }
   for (const v of people) {
     let u = null;

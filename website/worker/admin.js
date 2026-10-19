@@ -1,10 +1,11 @@
 /**
- * /admin: the two lists as CSV downloads and the site's analytics, behind HTTP
+ * /admin: the lists as CSV downloads and the site's analytics, behind HTTP
  * Basic auth — username "admin", password the ADMIN_PASSWORD secret.
  *
  *   GET /admin?days=1|7|30|90   dashboard (default 30 days)
- *   GET /admin/clients.csv      client waitlist
+ *   GET /admin/clients.csv      client waitlist, with the fare votes
  *   GET /admin/buddies.csv      Buddy applications
+ *   GET /admin/agencies.csv     driver agency applications
  *   GET /admin/daily.csv        one row a day: visitors, page views, fares, signups
  *   GET /admin/exclude?on=1|0   stop / resume counting this browser
  */
@@ -13,7 +14,7 @@ import { LINK_PAGES, renderDashboard, shell } from './dashboard.js';
 import { addHit, countHits, networkHash, ready, sha256Hex } from './db.js';
 import { SOURCES } from './forms.js';
 import { ADMIN_HEADERS, plain } from './http.js';
-import { istDay, istStamp, shiftDay, toCsv } from './lib.js';
+import { istDay, istStamp, shiftDay, splitStoredTrip, toCsv } from './lib.js';
 
 const ADMIN_FAILURE_CAP = 10;
 const RANGES = [1, 7, 30, 90];
@@ -42,6 +43,7 @@ export async function handleAdmin(request, env, url, path) {
   if (path === '/admin') return htmlPage(200, await dashboard(request, env, url));
   if (path === '/admin/clients.csv') return download('clients', await clientsCsv(db));
   if (path === '/admin/buddies.csv') return download('buddies', await buddiesCsv(db));
+  if (path === '/admin/agencies.csv') return download('agencies', await agenciesCsv(db));
   if (path === '/admin/daily.csv') return download('daily', await dailyCsv(request, env));
   if (path === '/admin/exclude') return exclude(url);
   return plain(404, 'Not found.');
@@ -88,30 +90,42 @@ async function dashboard(request, env, url) {
   });
 }
 
+// Waitlist rows with a phone are signups; rows without one are fare votes from
+// visitors who didn't join (forms.js).
+const SIGNUP = "phone <> ''";
+
 async function listsSummary(db) {
   const s = await db.prepare(`SELECT
-      (SELECT COUNT(*) FROM waitlist) AS clients,
-      (SELECT COUNT(DISTINCT phone) FROM waitlist) AS client_phones,
-      (SELECT MAX(created_at) FROM waitlist) AS client_last,
+      (SELECT COUNT(*) FROM waitlist WHERE ${SIGNUP}) AS clients,
+      (SELECT COUNT(DISTINCT phone) FROM waitlist WHERE ${SIGNUP}) AS client_phones,
+      (SELECT MAX(created_at) FROM waitlist WHERE ${SIGNUP}) AS client_last,
       (SELECT COUNT(*) FROM buddies) AS buddies,
       (SELECT COUNT(DISTINCT phone) FROM buddies) AS buddy_phones,
-      (SELECT MAX(created_at) FROM buddies) AS buddy_last`).first();
+      (SELECT MAX(created_at) FROM buddies) AS buddy_last,
+      (SELECT COUNT(*) FROM agencies) AS agencies,
+      (SELECT COUNT(DISTINCT phone) FROM agencies) AS agency_phones,
+      (SELECT MAX(created_at) FROM agencies) AS agency_last`).first();
   return {
     clients: s.clients, clientPhones: s.client_phones, clientLast: s.client_last,
     buddies: s.buddies, buddyPhones: s.buddy_phones, buddyLast: s.buddy_last,
+    agencies: s.agencies, agencyPhones: s.agency_phones, agencyLast: s.agency_last,
   };
 }
 
 /** Midnight IST at the start of `day`, as the UTC timestamp the lists store. */
 const istStart = (day) => new Date(Date.parse(`${day}T00:00:00+05:30`)).toISOString();
 
-/** Waitlist signups and Buddy applications made on the IST days [from, to]. */
+/** Waitlist signups, applications and fare votes made on the IST days [from, to]. */
 async function signupCounts(db, from, to) {
   const r = await db.prepare(`SELECT
-      (SELECT COUNT(*) FROM waitlist WHERE created_at >= ?1 AND created_at < ?2) AS waitlist,
-      (SELECT COUNT(*) FROM buddies WHERE created_at >= ?1 AND created_at < ?2) AS buddies`)
+      (SELECT COUNT(*) FROM waitlist WHERE ${SIGNUP} AND created_at >= ?1 AND created_at < ?2) AS waitlist,
+      (SELECT COUNT(*) FROM buddies WHERE created_at >= ?1 AND created_at < ?2) AS buddies,
+      (SELECT COUNT(*) FROM agencies WHERE created_at >= ?1 AND created_at < ?2) AS agencies,
+      (SELECT COUNT(*) FROM waitlist WHERE vote = 'up' AND created_at >= ?1 AND created_at < ?2) AS up,
+      (SELECT COUNT(*) FROM waitlist WHERE vote = 'down' AND created_at >= ?1 AND created_at < ?2) AS down,
+      (SELECT COUNT(*) FROM waitlist WHERE vote IS NOT NULL AND comment IS NOT NULL AND created_at >= ?1 AND created_at < ?2) AS comments`)
     .bind(istStart(from), istStart(shiftDay(to, 1))).first();
-  return { waitlist: r.waitlist, buddies: r.buddies };
+  return { waitlist: r.waitlist, buddies: r.buddies, agencies: r.agencies, votes: { up: r.up, down: r.down, comments: r.comments } };
 }
 
 const slug = (s) => String(s || '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
@@ -148,25 +162,43 @@ function exclude(url) {
 
 // ----- Downloads ---------------------------------------------------------------------------
 
-const REPEAT = (table) => `EXISTS (SELECT 1 FROM ${table} p WHERE p.phone = t.phone AND p.id < t.id)`;
+/** Already on the same list under an earlier row (rows without a phone never are). */
+const REPEAT = (table) => `(t.phone <> '' AND EXISTS (SELECT 1 FROM ${table} p WHERE p.phone = t.phone AND p.id < t.id))`;
+const VOTE = { up: '👍', down: '👎' };
 
+/** Signups, and the 👍/👎 on fares: phone blank where the voter didn't join. */
 async function clientsCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, phone, source, trip, ${REPEAT('waitlist')} AS is_repeat FROM waitlist t ORDER BY id`,
+    `SELECT id, created_at, phone, source, trip, fare, vote, comment, consent, ${REPEAT('waitlist')} AS is_repeat FROM waitlist t ORDER BY id`,
   ).all();
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Phone', 'Source', 'Trip', 'Repeat'],
-    results.map((r) => [r.id, istStamp(r.created_at), r.phone, SOURCES[r.source] || r.source, r.trip || '', r.is_repeat ? '(repeat)' : '']),
+    ['ID', 'Submitted (IST)', 'Phone', 'Source', 'Trip', 'Fare (₹)', '👍/👎', 'Comment', 'Consent', 'Repeat'],
+    results.map((r) => {
+      const { trip, fare } = splitStoredTrip(r.trip, r.fare);
+      return [r.id, istStamp(r.created_at), r.phone, SOURCES[r.source] || r.source, trip, fare ?? '', VOTE[r.vote] || '',
+        r.comment || '', r.consent ? 'Yes' : '', r.is_repeat ? '(repeat)' : ''];
+    }),
   );
 }
 
 async function buddiesCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, name, phone, licence, ${REPEAT('buddies')} AS is_repeat FROM buddies t ORDER BY id`,
+    `SELECT id, created_at, name, phone, licence, city, ${REPEAT('buddies')} AS is_repeat FROM buddies t ORDER BY id`,
   ).all();
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Name', 'Phone', 'Licence', 'Repeat'],
-    results.map((r) => [r.id, istStamp(r.created_at), r.name, r.phone, r.licence, r.is_repeat ? '(repeat)' : '']),
+    ['ID', 'Submitted (IST)', 'Name', 'Phone', 'Licence', 'City or base', 'Repeat'],
+    results.map((r) => [r.id, istStamp(r.created_at), r.name, r.phone, r.licence, r.city || '', r.is_repeat ? '(repeat)' : '']),
+  );
+}
+
+async function agenciesCsv(db) {
+  const { results } = await db.prepare(
+    `SELECT id, created_at, agency, contact, phone, city, drivers, email, gstin, ${REPEAT('agencies')} AS is_repeat FROM agencies t ORDER BY id`,
+  ).all();
+  return toCsv(
+    ['ID', 'Submitted (IST)', 'Agency name', 'Contact person', 'Phone', 'City or base', 'Drivers', 'Work email', 'GSTIN', 'Repeat'],
+    results.map((r) => [r.id, istStamp(r.created_at), r.agency, r.contact, r.phone, r.city, r.drivers || '', r.email || '', r.gstin || '',
+      r.is_repeat ? '(repeat)' : '']),
   );
 }
 
@@ -178,14 +210,15 @@ async function dailyCsv(request, env) {
   const history = await dailyHistory(db);
   const liveGet = (metric, key = '') => live.get(`${metric}\u0000${key}`) || 0;
   if (liveGet('visitors')) history.set(today, { visitors: liveGet('visitors'), pageviews: liveGet('pageviews'), fares: liveGet('event', 'estimate_completed') });
-  const perDay = (table) => db.prepare(`SELECT substr(datetime(created_at, '+330 minutes'), 1, 10) AS day, COUNT(*) AS n FROM ${table} GROUP BY day`);
-  const [w, b] = (await db.batch([perDay('waitlist'), perDay('buddies')])).map((r) => new Map(r.results.map((x) => [x.day, x.n])));
-  const days = [...new Set([...history.keys(), ...w.keys(), ...b.keys()])].sort();
+  const perDay = (table, where = '1') => db.prepare(`SELECT substr(datetime(created_at, '+330 minutes'), 1, 10) AS day, COUNT(*) AS n FROM ${table} WHERE ${where} GROUP BY day`);
+  const [w, b, a] = (await db.batch([perDay('waitlist', SIGNUP), perDay('buddies'), perDay('agencies')]))
+    .map((r) => new Map(r.results.map((x) => [x.day, x.n])));
+  const days = [...new Set([...history.keys(), ...w.keys(), ...b.keys(), ...a.keys()])].sort();
   return toCsv(
-    ['Date', 'Visitors', 'Page views', 'Fares shown', 'Waitlist signups', 'Buddy applications'],
+    ['Date', 'Visitors', 'Page views', 'Fares shown', 'Waitlist signups', 'Buddy applications', 'Agency applications'],
     days.map((d) => {
       const x = history.get(d) || {};
-      return [d, x.visitors || 0, x.pageviews || 0, x.fares || 0, w.get(d) || 0, b.get(d) || 0];
+      return [d, x.visitors || 0, x.pageviews || 0, x.fares || 0, w.get(d) || 0, b.get(d) || 0, a.get(d) || 0];
     }),
   );
 }
@@ -207,7 +240,7 @@ const LOCKED = `
     <h1>Admin is locked</h1>
     <p>Set a password to open it: Cloudflare → Workers &amp; Pages → <b>ridebuddy</b> → Settings → Variables and secrets →
     Add → type <b>Secret</b>, name <code>ADMIN_PASSWORD</code>. Then sign in here with username <b>admin</b>.</p>
-    <p class="note">Waitlist signups, Buddy applications and visits are being saved in the meantime.</p>
+    <p class="note">Waitlist signups, fare votes, Buddy and agency applications and visits are being saved in the meantime.</p>
   </section>`;
 
 function htmlPage(status, body) {

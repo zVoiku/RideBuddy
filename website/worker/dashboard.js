@@ -147,8 +147,10 @@ export const LINK_PAGES = [
 
 /**
  * @param {object} v
- *   range: { days, from, to }, lists: { clients, clientPhones, clientLast, buddies, buddyPhones, buddyLast },
- *   stats: { totals, days }, before: headline Map of the previous period, signups: { now, before } ({ waitlist, buddies }),
+ *   range: { days, from, to },
+ *   lists: { clients, clientPhones, clientLast, buddies, buddyPhones, buddyLast, agencies, agencyPhones, agencyLast },
+ *   stats: { totals, days }, before: headline Map of the previous period,
+ *   signups: { now, before } ({ waitlist, buddies, agencies, votes: { up, down, comments } }),
  *   excluded: boolean, link: { page, source, medium, campaign, url } | null, stamp: (iso) => string
  */
 export function renderDashboard(v) {
@@ -175,7 +177,14 @@ export function renderDashboard(v) {
     ${tile('Fares shown', get(t, 'event', 'estimate_completed'), prev('event', 'estimate_completed'), period)}
     ${tile('Waitlist signups', signups.now.waitlist, signups.before.waitlist, period)}
     ${tile('Buddy applications', signups.now.buddies, signups.before.buddies, period)}
+    ${tile('Agency applications', signups.now.agencies, signups.before.agencies, period)}
   </div>`;
+
+  const { up = 0, down = 0, comments = 0 } = signups.now.votes || {};
+  const votes = up + down
+    ? barTable([['👍 The fare works', up], ['👎 It doesn’t', down]], { head: ['Vote', 'Fares'] })
+      + `<p class="note">${num(comments)} ${comments === 1 ? 'vote came' : 'votes came'} with a comment. The votes and comments are in the client waitlist download, with the trip and fare; the phone is there when the voter joined the waitlist.</p>`
+    : '<p class="empty">No votes on fares in this period yet.</p>';
 
   const chart = range.days === 1
     ? '<p class="empty">Pick 7 days or more for the day-by-day chart.</p>'
@@ -257,8 +266,10 @@ export function renderDashboard(v) {
     <div class="lists">
       ${listCard('Client waitlist', lists.clients, lists.clientPhones, lists.clientLast, 'clients')}
       ${listCard('Buddy applications', lists.buddies, lists.buddyPhones, lists.buddyLast, 'buddies')}
+      ${listCard('Driver agencies', lists.agencies, lists.agencyPhones, lists.agencyLast, 'agencies')}
     </div>
-    <p class="note">All-time totals. Every submission is kept; a phone number already on the same list is marked “(repeat)” in the download.</p>
+    <p class="note">All-time totals. Every submission is kept; a phone number already on the same list is marked “(repeat)” in the download.
+    The client waitlist download also has the 👍/👎 votes on fares, including votes from visitors who didn't join (no phone).</p>
   </section>
 
   ${stats.pending ? `<p class="notice" role="status">Still adding up ${stats.pending} earlier ${stats.pending === 1 ? 'day' : 'days'} in this period. Reload in a moment to include ${stats.pending === 1 ? 'it' : 'them'}.</p>` : ''}
@@ -269,7 +280,8 @@ export function renderDashboard(v) {
 
   <div class="grid">
     ${card('The estimator, step by step', 'People who reached each step.', estFunnel)}
-    ${card('Buddy recruitment', 'People who opened and sent the application.', `${buddyFunnel}
+    ${card('Fare feedback', 'Thumbs on the fares shown on the estimate page in this period.', votes)}
+    ${card('Buddy recruitment', 'People who opened and sent the application, Buddies and agencies.', `${buddyFunnel}
       <h3>Where applicants came from</h3>${barTable(rows(t, 'buddy_source'), { head: ['Source', 'People'], empty: 'No applications sent in this period yet.' })}`)}
     ${card('Where visitors come from', `“${DIRECT}”: typed in, a bookmark, or a link opened from an app such as WhatsApp, which hides where it came from.`,
       barTable(rows(t, 'source'), { head: ['Source', 'Visitors'] }) + `<h3>Who joined the waitlist, by source</h3>${barTable(rows(t, 'signup_source'), { head: ['Source', 'People'], empty: 'No waitlist signups in this period yet.' })}`)}
@@ -307,10 +319,10 @@ export function renderDashboard(v) {
       : `<p>This browser <b>is counted</b> like any visitor.</p><a class="btn" href="/admin/exclude?on=1&amp;days=${range.days}">Don't count this browser</a>`)
       + '<p class="note">Do this once on each phone and computer you use to look at the site.</p>', { id: 'counting' })}
     ${card('Downloads', '', `<p><a class="btn ghost" href="/admin/daily.csv">Daily numbers (CSV)</a></p>
-      <p class="note">One row a day since the first visit: visitors, page views, fares shown, waitlist signups, Buddy applications.
+      <p class="note">One row a day since the first visit: visitors, page views, fares shown, waitlist signups, Buddy and agency applications.
       Detailed visit records are kept 13 months; the daily numbers are kept for good.</p>
       <p class="note">To delete a list entry: Cloudflare → Storage &amp; databases → D1 → <b>ridebuddy</b> → Console, then
-      <code>DELETE FROM waitlist WHERE id = 17;</code> (or <code>buddies</code>), using the ID column of the download.</p>`)}
+      <code>DELETE FROM waitlist WHERE id = 17;</code> (or <code>buddies</code>, <code>agencies</code>), using the ID column of the download.</p>`)}
   </div>`;
 }
 
