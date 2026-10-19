@@ -3,9 +3,16 @@
  * bindings and no I/O, so test/worker.mjs runs them unchanged under Node.
  */
 
-export const PHONE_ERROR = 'Enter a 10-digit number. Outside India? Start with + and the country code.';
+export const PHONE_ERROR = 'Enter a 10-digit mobile number.';
 export const NAME_ERROR = 'Enter your full name.';
 export const LICENCE_ERROR = 'Enter your licence number.';
+export const CITY_ERROR = 'Enter your city or base.';
+export const AGENCY_ERROR = 'Enter the agency name.';
+export const CONTACT_ERROR = 'Enter the contact person’s name.';
+export const EMAIL_ERROR = 'Enter a valid email address, or leave it blank.';
+export const GSTIN_ERROR = 'Enter the 15-character GSTIN, or leave it blank.';
+export const CONSENT_ERROR = 'Tick the box to join the waitlist.';
+export const LINK_ONLY_ERROR = 'Add a few words. Links alone aren’t saved.';
 
 /**
  * Control characters out, runs of whitespace collapsed, trimmed, and capped at
@@ -18,32 +25,44 @@ export function cleanText(value, max) {
 }
 
 /**
- * Phone numbers, in whatever format they were typed.
- *
- * Indian numbers must come to exactly 10 digits once a +91, 91 or 0 prefix is
- * gone, and are stored as +91XXXXXXXXXX. A number that starts with + (or the
- * 00 international prefix) and a country code other than 91 is foreign: any
- * format is accepted and it is stored as + and its digits (E.164 allows 7-15).
+ * Indian mobile numbers, in whatever format they were typed or pasted. Every
+ * form shows a fixed +91 in front of the field, so foreign numbers are refused:
+ * the number must come to exactly 10 digits once a +91, 91 or 0 prefix is
+ * gone. Stored as +91XXXXXXXXXX.
  *
  * @returns {{ok: true, phone: string} | {ok: false, error: string}}
  */
 export function normalizePhone(input) {
   const raw = typeof input === 'string' ? input.trim() : '';
   if (!raw || raw.length > 40) return { ok: false, error: PHONE_ERROR };
-  const digits = raw.replace(/\D/g, '');
-
-  let intl = null;
-  if (raw.startsWith('+')) intl = digits;
-  else if (raw.startsWith('00')) intl = digits.slice(2);
-  if (intl !== null && !intl.startsWith('91')) {
-    return intl.length >= 7 && intl.length <= 15 ? { ok: true, phone: `+${intl}` } : { ok: false, error: PHONE_ERROR };
+  let digits = raw.replace(/\D/g, '');
+  if (raw.startsWith('+') || raw.startsWith('00')) {
+    if (raw.startsWith('00')) digits = digits.slice(2);
+    if (!digits.startsWith('91')) return { ok: false, error: PHONE_ERROR };
+    digits = digits.slice(2);
+  } else if (digits.length === 12 && digits.startsWith('91')) {
+    digits = digits.slice(2);
   }
-
-  let national = intl !== null ? intl.slice(2) : digits;
-  if (intl === null && national.length === 12 && national.startsWith('91')) national = national.slice(2);
-  if (national.length === 11 && national.startsWith('0')) national = national.slice(1);
-  return national.length === 10 ? { ok: true, phone: `+91${national}` } : { ok: false, error: PHONE_ERROR };
+  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  return digits.length === 10 ? { ok: true, phone: `+91${digits}` } : { ok: false, error: PHONE_ERROR };
 }
+
+/**
+ * A comment on a fare: cleaned, at most 280 characters. A comment that is only
+ * links (nothing else readable once they are taken out) is refused.
+ *
+ * @returns {{ok: true, text: string} | {ok: false, error: string}}
+ */
+export function cleanComment(input) {
+  const text = cleanText(input, 280);
+  if (text && !/\p{L}/u.test(text.replace(/(https?:\/\/|www\.)\S*/gi, ''))) return { ok: false, error: LINK_ONLY_ERROR };
+  return { ok: true, text };
+}
+
+export const isEmail = (s) => /^[^\s@]{1,64}@[^\s@]+\.[^\s@]{2,}$/.test(s);
+
+/** 15 characters: state code, the PAN (5 letters, 4 digits, a letter), entity number, Z, check character. */
+export const isGstin = (s) => /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/.test(s);
 
 // ----- The trip behind an estimate-page signup ------------------------------------
 
@@ -71,13 +90,20 @@ export function groupINR(n) {
   return `${s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',')},${s.slice(-3)}`;
 }
 
+/** The fare a trip was priced at, if the page sent a sensible one. */
+export function tripFare(trip) {
+  const fare = trip && typeof trip === 'object' ? trip.fare : null;
+  return Number.isInteger(fare) && fare > 0 && fare < 1e7 ? fare : null;
+}
+
 /**
  * One line for the Trip column of the clients list, e.g.
- * "Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00 · ₹5,492".
+ * "Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00". The fare has its own
+ * column (tripFare).
  *
  * Built here rather than in the browser so every row reads the same way and
  * nothing the page sends is stored unchecked. Anything malformed is left out;
- * an unusable trip gives null, and the signup is kept without it.
+ * an unusable trip gives null, and the row is kept without it.
  */
 export function describeTrip(trip) {
   if (!trip || typeof trip !== 'object' || !Object.hasOwn(TRIP_LABEL, trip.type)) return null;
@@ -87,7 +113,6 @@ export function describeTrip(trip) {
   const ret = isoDate(trip.ret);
   const time = typeof trip.time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(trip.time) ? trip.time : '';
   const hours = Number(trip.hours);
-  const fare = Number.isInteger(trip.fare) && trip.fare > 0 && trip.fare < 1e7 ? trip.fare : null;
 
   const parts = [TRIP_LABEL[trip.type]];
   if (trip.type === 'hourly') {
@@ -99,8 +124,16 @@ export function describeTrip(trip) {
   if (date) when = trip.type === 'round' && ret ? dayRange(date, ret) : day(date);
   if (when && time) when += `, ${time}`;
   parts.push(when);
-  if (fare) parts.push(`₹${groupINR(fare)}`);
   return parts.filter(Boolean).join(' · ');
+}
+
+/**
+ * Rows saved before the fare had its own column carry it at the end of the
+ * trip line ("… · ₹5,492"): split it off so the download reads the same for all.
+ */
+export function splitStoredTrip(trip, fare) {
+  const m = fare == null && typeof trip === 'string' ? trip.match(/^(.*) · ₹([\d,]+)$/) : null;
+  return m ? { trip: m[1], fare: Number(m[2].replace(/,/g, '')) } : { trip: trip || '', fare: fare ?? null };
 }
 
 // ----- Time -------------------------------------------------------------------------

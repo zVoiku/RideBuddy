@@ -6,13 +6,21 @@
 import { networkOf } from './lib.js';
 
 const SCHEMA = [
-  // The two lists.
+  // The lists. The client waitlist also holds the thumbs on fares shown at
+  // /estimate/: one row per estimate voted on, phone '' until (unless) that
+  // visitor joins from the same estimate. `estimate_id` ties the two together.
   `CREATE TABLE IF NOT EXISTS waitlist (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      created_at TEXT NOT NULL,
      phone TEXT NOT NULL,
      source TEXT NOT NULL,
-     trip TEXT
+     trip TEXT,
+     fare INTEGER,
+     vote TEXT,
+     comment TEXT,
+     consent INTEGER,
+     estimate_id TEXT,
+     updated_at TEXT
    )`,
   'CREATE INDEX IF NOT EXISTS waitlist_phone ON waitlist (phone, id)',
   `CREATE TABLE IF NOT EXISTS buddies (
@@ -20,9 +28,22 @@ const SCHEMA = [
      created_at TEXT NOT NULL,
      name TEXT NOT NULL,
      phone TEXT NOT NULL,
-     licence TEXT NOT NULL
+     licence TEXT NOT NULL,
+     city TEXT
    )`,
   'CREATE INDEX IF NOT EXISTS buddies_phone ON buddies (phone, id)',
+  `CREATE TABLE IF NOT EXISTS agencies (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     created_at TEXT NOT NULL,
+     agency TEXT NOT NULL,
+     contact TEXT NOT NULL,
+     phone TEXT NOT NULL,
+     city TEXT NOT NULL,
+     drivers TEXT,
+     email TEXT,
+     gstin TEXT
+   )`,
+  'CREATE INDEX IF NOT EXISTS agencies_phone ON agencies (phone, id)',
   // Recent submissions per network, for the flood cap. Rows older than an hour
   // are deleted as new ones arrive; the network is stored only as a salted hash.
   'CREATE TABLE IF NOT EXISTS hits (bucket TEXT NOT NULL, at INTEGER NOT NULL)',
@@ -52,19 +73,49 @@ const SCHEMA = [
    )`,
 ];
 
+/**
+ * Columns added after launch, for databases created before them (CREATE TABLE
+ * IF NOT EXISTS leaves an existing table as it is). ALTER TABLE has no "if not
+ * exists": a column that is already there fails as a duplicate, which is fine.
+ * SCHEMA_VERSION in meta records that this has run.
+ */
+const SCHEMA_VERSION = '2';
+const ADDED_COLUMNS = [
+  ['waitlist', 'fare INTEGER'], ['waitlist', 'vote TEXT'], ['waitlist', 'comment TEXT'], ['waitlist', 'consent INTEGER'],
+  ['waitlist', 'estimate_id TEXT'], ['waitlist', 'updated_at TEXT'], ['buddies', 'city TEXT'],
+];
+const AFTER_COLUMNS = ['CREATE INDEX IF NOT EXISTS waitlist_estimate ON waitlist (estimate_id)'];
+
 let readyOnce = null;
 
 /**
- * Creates the tables on first use (idempotent) and returns the salt used to
- * hash network addresses. Once per isolate; retried if it failed.
+ * Creates the tables on first use (idempotent), brings older tables up to the
+ * current columns, and returns the salt used to hash network addresses. Once
+ * per isolate; retried if it failed.
  */
 export function ready(db) {
-  readyOnce ??= db.batch([
-    ...SCHEMA.map((sql) => db.prepare(sql)),
-    db.prepare("INSERT OR IGNORE INTO meta (k, v) VALUES ('salt', ?)").bind(crypto.randomUUID()),
-    db.prepare("SELECT v FROM meta WHERE k = 'salt'"),
-  ]).then((results) => results.at(-1).results[0].v)
-    .catch((e) => { readyOnce = null; throw e; });
+  readyOnce ??= (async () => {
+    const results = await db.batch([
+      ...SCHEMA.map((sql) => db.prepare(sql)),
+      db.prepare("INSERT OR IGNORE INTO meta (k, v) VALUES ('salt', ?)").bind(crypto.randomUUID()),
+      db.prepare("SELECT v FROM meta WHERE k = 'salt'"),
+      db.prepare("SELECT v FROM meta WHERE k = 'schema'"),
+    ]);
+    if (results.at(-1).results[0]?.v !== SCHEMA_VERSION) {
+      for (const [table, column] of ADDED_COLUMNS) {
+        try {
+          await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column}`).run();
+        } catch (e) {
+          if (!/duplicate column/i.test(String(e?.message || e))) throw e;
+        }
+      }
+      await db.batch([
+        ...AFTER_COLUMNS.map((sql) => db.prepare(sql)),
+        db.prepare("INSERT OR REPLACE INTO meta (k, v) VALUES ('schema', ?)").bind(SCHEMA_VERSION),
+      ]);
+    }
+    return results.at(-2).results[0].v;
+  })().catch((e) => { readyOnce = null; throw e; });
   return readyOnce;
 }
 

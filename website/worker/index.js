@@ -4,8 +4,9 @@
  * Cloudflare serves website/dist first; only requests no file matches reach
  * this code:
  *
- *   POST /api/waitlist   client waitlist (Contact page, /estimate/)  forms.js
- *   POST /api/buddy      "Apply to be a Buddy"                       forms.js
+ *   POST /api/waitlist   client waitlist (every page, /estimate/)    forms.js
+ *   POST /api/feedback   👍/👎 on a fare at /estimate/                forms.js
+ *   POST /api/buddy      "Apply to be a Buddy", Buddies and agencies forms.js
  *   POST /api/e          the site's own analytics (src/site.js)      analytics.js
  *   GET  /admin …        lists, analytics, downloads, behind a password  admin.js
  *
@@ -25,6 +26,7 @@ export default {
     const path = url.pathname.replace(/\/+$/, '') || '/';
     try {
       if (path === '/api/waitlist') return await handleForm(request, env, 'waitlist');
+      if (path === '/api/feedback') return await handleForm(request, env, 'feedback');
       if (path === '/api/buddy') return await handleForm(request, env, 'buddy');
       if (path === '/api/e') return await ingest(request, env, ctx);
       if (path.startsWith('/api/')) return json(404, { ok: false, error: 'Not found.' });

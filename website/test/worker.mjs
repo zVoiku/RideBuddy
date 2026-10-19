@@ -9,7 +9,8 @@ import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { startDev } from './dev-server.mjs';
 import {
-  PHONE_ERROR, cleanText, csvCell, describeTrip, groupINR, istStamp, networkOf, normalizePhone, shiftDay, toCsv,
+  CONSENT_ERROR, EMAIL_ERROR, GSTIN_ERROR, LINK_ONLY_ERROR, PHONE_ERROR, cleanComment, cleanText, csvCell, describeTrip,
+  groupINR, isEmail, isGstin, istStamp, networkOf, normalizePhone, shiftDay, splitStoredTrip, toCsv, tripFare,
 } from '../worker/lib.js';
 import {
   DAY_SQL, DIRECT, aheadBand, cleanEvents, deviceOf, fareBand, isBot, sourceOf, speedBand, summarize,
@@ -44,9 +45,10 @@ function units() {
     ['(987) 087-1324', '+919870871324'],
     ['0172 270 0000', '+911722700000'], // a landline with its STD code
     ['+91 0172 2700000', '+911722700000'],
-    ['+44 7911 123456', '+447911123456'],
-    ['0044 7911 123456', '+447911123456'],
-    ['+1 (415) 555-2671', '+14155552671'],
+    ['0091 98708 71324', '+919870871324'],
+    ['+44 7911 123456', null], // every form has a fixed +91: foreign numbers are refused
+    ['0044 7911 123456', null],
+    ['+1 (415) 555-2671', null],
     ['98708 7132', null], // a digit short
     ['+91 98708 7132', null],
     ['12345', null],
@@ -63,13 +65,23 @@ function units() {
   }
 
   same(describeTrip({ type: 'round', from: 'Sector 17', to: 'Shimla', date: '2026-10-12', ret: '2026-10-14', time: '09:00', fare: 5492 }),
-    'Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00 · ₹5,492', 'trip: round');
+    'Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00', 'trip: round (the fare has its own column)');
   same(describeTrip({ type: 'round', from: 'Mohali', to: 'Manali', date: '2026-10-30', ret: '2026-11-01', time: '06:00', fare: 7012 }),
-    'Round trip · Mohali → Manali · 30 Oct – 1 Nov, 06:00 · ₹7,012', 'trip: round across a month end');
+    'Round trip · Mohali → Manali · 30 Oct – 1 Nov, 06:00', 'trip: round across a month end');
   same(describeTrip({ type: 'one', from: 'Sector 17', to: 'Shimla', date: '2026-10-12', time: '20:30', fare: 1860 }),
-    'One way · Sector 17 → Shimla · 12 Oct, 20:30 · ₹1,860', 'trip: one way');
+    'One way · Sector 17 → Shimla · 12 Oct, 20:30', 'trip: one way');
   same(describeTrip({ type: 'hourly', from: 'Sector 17', to: '', date: '2026-10-12', time: '09:00', hours: 4, fare: 996 }),
-    'Hourly · 4 h from Sector 17 · 12 Oct, 09:00 · ₹996', 'trip: hourly');
+    'Hourly · 4 h from Sector 17 · 12 Oct, 09:00', 'trip: hourly');
+  same([tripFare({ fare: 5492 }), tripFare({ fare: '5492' }), tripFare({ fare: 0 }), tripFare({ fare: 1e8 }), tripFare(null)].join(' '), '5492    ', 'trip fare: a whole positive number, else none');
+  same(JSON.stringify(splitStoredTrip('Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00 · ₹5,492', null)),
+    '{"trip":"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00","fare":5492}', 'a row saved before the fare column: the fare is split off its trip');
+  same(JSON.stringify(splitStoredTrip('One way · A → B · 12 Oct', 1860)), '{"trip":"One way · A → B · 12 Oct","fare":1860}', 'a current row is read as it is');
+
+  same(JSON.stringify(['Too high', 'Too high, see https://cheaper.example/x', 'https://cheaper.example/x', 'www.cheaper.example', '  ', 'x'.repeat(400)].map((c) => cleanComment(c))),
+    JSON.stringify([{ ok: true, text: 'Too high' }, { ok: true, text: 'Too high, see https://cheaper.example/x' }, { ok: false, error: LINK_ONLY_ERROR },
+      { ok: false, error: LINK_ONLY_ERROR }, { ok: true, text: '' }, { ok: true, text: 'x'.repeat(280) }]), 'comments: words kept, links alone refused, capped at 280');
+  check(isEmail('ops@tricitydrivers.in') && !isEmail('ops@') && !isEmail('ops tricity@x.in'), 'work email: looks like one, or not');
+  check(isGstin('03ABCDE1234F1Z5') && !isGstin('03ABCDE1234F1Z') && !isGstin('03abcde1234f1z5') && !isGstin('03ABCDE1234F1Y5'), 'GSTIN: 15 characters in the GST pattern');
   same(describeTrip({ type: 'one', from: 'A\u0000\n B', to: 'x'.repeat(200), date: '12/10/2026', time: '9am', fare: '1860' }),
     `One way · A B → ${'x'.repeat(80)}`, 'trip: malformed parts are dropped, text is cleaned and capped');
   same(describeTrip({ type: 'boat' }), null, 'trip: unknown type -> none');
@@ -167,6 +179,15 @@ function analyticsUnits() {
   });
   check(!html.includes('<img') && html.includes('&#60;img src=x onerror=alert(1)&#62;'), 'dashboard: labels from visitors are escaped');
   check((html.match(/class="col"/g) || []).length === 7 && html.includes('Show as a table'), 'dashboard: one column a day, with the table beside it');
+  const withVotes = visible(renderDashboard({
+    range: { days: 7, from: '2026-09-20', to: '2026-09-26' },
+    lists: { clients: 3, clientPhones: 2, clientLast: null, buddies: 1, buddyPhones: 1, buddyLast: null, agencies: 2, agencyPhones: 2, agencyLast: null },
+    stats: { totals: new Map(), days: [] }, before: new Map(),
+    signups: { now: { waitlist: 3, buddies: 1, agencies: 2, votes: { up: 5, down: 2, comments: 1 } }, before: { waitlist: 0, buddies: 0, agencies: 0 } },
+    excluded: false, link: null, stamp: (x) => x,
+  }));
+  check(/Driver agencies 2 entries · 2 different numbers/.test(withVotes) && /Agency applications 2/.test(withVotes), 'dashboard: the driver agencies list and their tile');
+  check(/👍 The fare works 5 👎 It doesn’t 2/.test(withVotes) && /1 vote came with a comment/.test(withVotes), 'dashboard: the 👍/👎 on fares');
 }
 
 // ----- Requests ------------------------------------------------------------------------
@@ -234,11 +255,33 @@ async function endpoints() {
       check(r.status === 200 && json(r)?.ok === true, `waitlist accepts "${phone}" (${r.status})`);
     }
     const trip = { type: 'round', from: 'Sector 17', to: 'Shimla', date: '2026-10-12', ret: '2026-10-14', time: '09:00', fare: 5492 };
-    same((await post(B, '/api/waitlist', { phone: '+44 7911 123456', source: 'estimate', trip })).status, 200, 'waitlist accepts a foreign number, with the trip priced');
+    const oneWay = { type: 'one', from: 'Sector 17', to: 'Shimla', date: '2026-10-12', time: '20:30', fare: 1860 };
+    const foreign = await post(B, '/api/waitlist', { phone: '+44 7911 123456', source: 'contact', consent: true });
+    check(foreign.status === 400 && json(foreign)?.errors?.phone === PHONE_ERROR, `a foreign number is refused: every form is +91 (${foreign.status})`);
+    const unticked = await post(B, '/api/waitlist', { phone: '9811100000', source: 'home', consent: false });
+    check(unticked.status === 400 && json(unticked)?.errors?.consent === CONSENT_ERROR, `the consent tick is required where the form has it (${unticked.status})`);
+    for (const [phone, source] of [['9811100001', 'home'], ['9811100002', 'how'], ['9811100003', 'about']]) {
+      same((await post(B, '/api/waitlist', { phone, source, consent: true })).status, 200, `the Join the Waitlist pop-up saves from the ${source} page`);
+    }
+    same((await post(B, '/api/waitlist', { phone: '9811100004', source: 'estimate', consent: true, trip })).status, 200, 'an estimate signup carries its trip and fare');
     const bad = await post(B, '/api/waitlist', { phone: '98708 7132', source: 'contact' });
     check(bad.status === 400 && json(bad)?.errors?.phone === PHONE_ERROR, `a number a digit short is refused with the field message (${bad.status})`);
     same((await post(B, '/api/waitlist', { phone: '9870871324', source: 'homepage' })).status, 400, 'an unknown source is refused');
     same((await post(B, '/api/waitlist', { phone: '9000000009', source: 'contact', website: 'http://spam.example' })).status, 200, 'a filled honeypot gets a quiet 200…');
+
+    // 👍/👎 on fares: one row per fare, phone blank unless that visitor joins from it.
+    const est1 = 'est_test000000000001', est2 = 'est_test000000000002', est3 = 'est_test000000000003';
+    same((await post(B, '/api/feedback', { estimate_id: est1, vote: 'up', trip: oneWay })).status, 200, 'a 👍 is saved, without a phone');
+    const linkOnly = await post(B, '/api/feedback', { estimate_id: est1, vote: 'down', comment: 'https://cheaper.example/x' });
+    check(linkOnly.status === 400 && json(linkOnly)?.errors?.comment === LINK_ONLY_ERROR, `a comment that is only a link is refused (${linkOnly.status})`);
+    same((await post(B, '/api/feedback', { estimate_id: est1, vote: 'down', comment: 'Too high for a one-way trip', trip: oneWay })).status, 200, 'the vote changes to 👎, with a comment');
+    same((await post(B, '/api/feedback', { estimate_id: est1, vote: 'up', trip: oneWay })).status, 200, '…and back to 👍; the comment stays');
+    same((await post(B, '/api/waitlist', { phone: '9811100005', source: 'estimate', consent: true, estimate_id: est1, trip: oneWay })).status, 200, 'the voter joins from the same fare: their row gets the number');
+    same((await post(B, '/api/waitlist', { phone: '9811100006', source: 'estimate', consent: true, estimate_id: est2, trip })).status, 200, 'another joins first…');
+    same((await post(B, '/api/feedback', { estimate_id: est2, vote: 'down', comment: 'Expected under 5,000', trip })).status, 200, '…then votes 👎 with a comment on the same fare');
+    same((await post(B, '/api/feedback', { estimate_id: est3, vote: 'down', trip })).status, 200, 'a 👎 from someone who never joins');
+    same((await post(B, '/api/feedback', { estimate_id: 'est_x', vote: 'up' })).status, 400, 'a malformed estimate id is refused');
+    same((await post(B, '/api/feedback', { estimate_id: est3, vote: 'meh' })).status, 400, 'a vote other than up or down is refused');
 
     // Requests a browser on our own pages would never send.
     same((await post(B, '/api/waitlist', { phone: '9870871324', source: 'contact' }, { Origin: 'https://evil.example' })).status, 403, 'another site\'s page is refused');
@@ -250,11 +293,19 @@ async function endpoints() {
     same((await raw(B, { path: '/api/waitlist' })).status, 405, 'GET is not allowed');
     same((await post(B, '/api/nothing', {})).status, 404, 'unknown API paths are 404');
 
-    // Buddy applications.
-    const empty = await post(B, '/api/buddy', { name: ' ', phone: '', licence: '' });
-    check(empty.status === 400 && Object.keys(json(empty)?.errors || {}).join() === 'name,phone,licence', `an empty application reports all three fields (${empty.status})`);
-    same((await post(B, '/api/buddy', { name: 'Voiku Zavadschi', phone: '+919870871324', licence: 'VNS8893' })).status, 200, 'an application is saved');
-    same((await post(B, '/api/buddy', { name: '=HYPERLINK("http://x","click")', phone: '98708 71324', licence: 'PB01 2011, 0012345' })).status, 200, 'an application with awkward text is saved');
+    // Buddy applications: individual Buddies and driver agencies, from a network of
+    // their own so the waitlist posts above don't use up its hourly allowance.
+    const apply = (body) => post(B, '/api/buddy', body, { 'CF-Connecting-IP': '198.51.100.20' });
+    const empty = await apply({ type: 'individual', name: ' ', phone: '', licence: '', city: '' });
+    check(empty.status === 400 && Object.keys(json(empty)?.errors || {}).join() === 'name,phone,licence,city', `an empty application reports all four fields (${empty.status})`);
+    same((await apply({ type: 'individual', name: 'Voiku Zavadschi', phone: '+919870871324', licence: 'VNS8893', city: 'Mohali' })).status, 200, 'an application is saved, with the city');
+    same((await apply({ name: '=HYPERLINK("http://x","click")', phone: '98708 71324', licence: 'PB01 2011, 0012345' })).status, 200, 'an application from a page cached before the city field is still saved');
+    const agencyEmpty = await apply({ type: 'agency', agency: '', contact: '', phone: '', city: '' });
+    check(agencyEmpty.status === 400 && Object.keys(json(agencyEmpty)?.errors || {}).join() === 'agency,contact,phone,city', `an empty agency application reports its four fields (${agencyEmpty.status})`);
+    const agencyBad = await apply({ type: 'agency', agency: 'Tricity Drivers', contact: 'Gurpreet Kaur', phone: '9811122233', city: 'Panchkula', email: 'ops@', gstin: '03ABCDE1234F1Z' });
+    check(agencyBad.status === 400 && json(agencyBad)?.errors?.email === EMAIL_ERROR && json(agencyBad)?.errors?.gstin === GSTIN_ERROR, `a mistyped email or GSTIN is refused, optional as they are (${agencyBad.status})`);
+    same((await apply({ type: 'agency', agency: 'Tricity Drivers', contact: 'Gurpreet Kaur', phone: '9811122233', city: 'Panchkula', drivers: '6–20', email: 'Ops@TricityDrivers.in', gstin: '03abcde1234f1z5' })).status, 200, 'an agency application is saved');
+    same((await apply({ type: 'agency', agency: 'Solo Cabs', contact: 'Aman', phone: '9811122233', city: 'Zirakpur', drivers: 'lots' })).status, 200, 'an agency with no optional fields (an unknown driver count is left out)');
 
     // The downloads.
     const clients = await admin(B, '/admin/clients.csv');
@@ -262,21 +313,37 @@ async function endpoints() {
     check(/attachment; filename="ridebuddy-clients-\d{4}-\d{2}-\d{2}\.csv"/.test(clients.headers['content-disposition'] || ''), 'as a dated attachment');
     check(clients.text.startsWith('\uFEFF'), 'with a byte-order mark for Excel');
     const c = csvRows(clients.text);
-    same(c[0], 'ID,Submitted (IST),Phone,Source,Trip,Repeat', 'clients header');
-    same(c.length, 5, 'four signups listed; the honeypot one is not');
-    check(/^1,\d{4}-\d{2}-\d{2} \d{2}:\d{2},\+919870871324,Contact page,,$/.test(c[1]), `first signup, normalised and timestamped in IST (${c[1]})`);
-    check(c[2].endsWith(',+919870871324,Contact page,,(repeat)') && c[3].endsWith('(repeat)'), 'the same number in other formats is marked (repeat)');
-    same(c[4].split(',').slice(2).join(','), '+447911123456,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00 · ₹5,492",', 'the estimate signup carries its trip');
+    const after = (row) => row.replace(/^\d+,\d{4}-\d{2}-\d{2} \d{2}:\d{2},/, '');
+    same(c[0], 'ID,Submitted (IST),Phone,Source,Trip,Fare (₹),👍/👎,Comment,Consent,Repeat', 'clients header');
+    same(c.length, 11, 'nine signups and one vote from someone who never joined; the honeypot one is not listed');
+    check(/^1,\d{4}-\d{2}-\d{2} \d{2}:\d{2},\+919870871324,Contact page,,,,,,$/.test(c[1]), `first signup, normalised and timestamped in IST (${c[1]})`);
+    check(c[2].endsWith(',+919870871324,Contact page,,,,,,(repeat)') && c[3].endsWith('(repeat)'), 'the same number in other formats is marked (repeat)');
+    same([c[4], c[5], c[6]].map(after).join(' | '), '+919811100001,Home page,,,,,Yes, | +919811100002,How It Works page,,,,,Yes, | +919811100003,About page,,,,,Yes,',
+      'pop-up signups: the page they joined from, and the consent');
+    same(after(c[7]), '+919811100004,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,Yes,', 'the estimate signup: trip and fare in their own columns');
+    same(after(c[8]), '+919811100005,Estimate page,"One way · Sector 17 → Shimla · 12 Oct, 20:30",1860,👍,Too high for a one-way trip,Yes,', 'vote first, then joined: one row, latest vote, the comment kept');
+    same(after(c[9]), '+919811100006,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,👎,"Expected under 5,000",Yes,', 'joined first, then voted: the same row');
+    same(after(c[10]), ',Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,👎,,,', 'a vote from someone who never joined: no phone, never a repeat');
 
     const buddies = await admin(B, '/admin/buddies.csv', { user: 'Admin' });
     same(buddies.status, 200, 'buddies.csv downloads (username in any case)');
     const b = csvRows(buddies.text);
-    same(b[0], 'ID,Submitted (IST),Name,Phone,Licence,Repeat', 'buddies header');
-    check(b[1].endsWith(',Voiku Zavadschi,+919870871324,VNS8893,'), `an application row (${b[1]})`);
-    check(b[2].endsWith(`,"'=HYPERLINK(""http://x"",""click"")",+919870871324,"PB01 2011, 0012345",(repeat)`), 'a formula-like name opens as text; a licence with a comma stays one cell; same phone is a repeat');
+    same(b[0], 'ID,Submitted (IST),Name,Phone,Licence,City or base,Repeat', 'buddies header');
+    check(b[1].endsWith(',Voiku Zavadschi,+919870871324,VNS8893,Mohali,'), `an application row (${b[1]})`);
+    check(b[2].endsWith(`,"'=HYPERLINK(""http://x"",""click"")",+919870871324,"PB01 2011, 0012345",,(repeat)`), 'a formula-like name opens as text; a licence with a comma stays one cell; same phone is a repeat');
+
+    const agencies = await admin(B, '/admin/agencies.csv');
+    same(agencies.status, 200, 'agencies.csv downloads');
+    const a = csvRows(agencies.text);
+    same(a[0], 'ID,Submitted (IST),Agency name,Contact person,Phone,City or base,Drivers,Work email,GSTIN,Repeat', 'agencies header');
+    same(a.slice(1).map(after).join(' | '), 'Tricity Drivers,Gurpreet Kaur,+919811122233,Panchkula,6–20,ops@tricitydrivers.in,03ABCDE1234F1Z5, | Solo Cabs,Aman,+919811122233,Zirakpur,,,,(repeat)',
+      'agency rows: email lower-cased, GSTIN upper-cased, optional fields blank, a repeat number marked');
 
     const dash = await admin(B, '/admin');
-    check(dash.status === 200 && /4 entries · 2 different numbers/.test(dash.text) && /2 entries · 1 number\b/.test(dash.text), 'the admin page counts entries and numbers');
+    const dv = visible(dash.text);
+    check(dash.status === 200 && /Client waitlist 9 entries · 7 different numbers/.test(dv) && /Buddy applications 2 entries · 1 number\b/.test(dv)
+      && /Driver agencies 2 entries · 1 number\b/.test(dv), `the admin page counts entries and numbers; votes without a phone are not signups (${dv.match(/Client waitlist[^.]*?numbers?/)?.[0]})`);
+    check(/👍 The fare works 1 👎 It doesn’t 2/.test(dv), 'the dashboard counts the latest vote on each fare');
     check(dash.headers['cache-control'] === 'no-store' && /noindex/.test(dash.headers['x-robots-tag'] || ''), 'admin responses are never cached or indexed');
 
     // Getting in.
@@ -359,7 +426,7 @@ async function analytics() {
     check(/Visitors 2 ▲ 100% vs yesterday/.test(today) && /Pick 7 days or more/.test(today), `Today: two visitors, compared with yesterday (${today.match(/Visitors [^A-Z]*/)?.[0]})`);
 
     const daily = await admin(B, '/admin/daily.csv', at(TODAY));
-    same(csvRows(daily.text).join(' | '), 'Date,Visitors,Page views,Fares shown,Waitlist signups,Buddy applications | 2026-09-25,1,1,1,0,0 | 2026-09-26,2,3,0,0,0', 'the daily CSV: one row a day');
+    same(csvRows(daily.text).join(' | '), 'Date,Visitors,Page views,Fares shown,Waitlist signups,Buddy applications,Agency applications | 2026-09-25,1,1,1,0,0,0 | 2026-09-26,2,3,0,0,0,0', 'the daily CSV: one row a day');
 
     const off = await admin(B, '/admin/exclude?on=1&days=7', at(TODAY));
     check(off.status === 303 && off.headers.location === '/admin?days=7#counting'
@@ -375,7 +442,7 @@ async function analytics() {
     // Totals outlive the detail: a day from 400 days ago is summed, then its beacons go.
     await beacon([{ n: 'pageview', p: '/', f: 1 }], { ip: '49.36.7.7', now: '2025-08-22T10:00:00+05:30' });
     await admin(B, '/admin?days=7', at(TODAY));
-    check(csvRows((await admin(B, '/admin/daily.csv', at(TODAY))).text).includes('2025-08-22,1,1,0,0,0'), 'a day past 13 months keeps its daily totals');
+    check(csvRows((await admin(B, '/admin/daily.csv', at(TODAY))).text).includes('2025-08-22,1,1,0,0,0,0'), 'a day past 13 months keeps its daily totals');
 
     // A backlog of twelve unsummed days: summed newest first, eight per request,
     // with a notice until they're all in.
@@ -391,11 +458,39 @@ async function analytics() {
   }
 }
 
+/** A database created before the vote, consent, city and agency columns: brought up to date in place. */
+async function migration() {
+  console.log('\nan older database');
+  const seed = [
+    'CREATE TABLE waitlist (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, phone TEXT NOT NULL, source TEXT NOT NULL, trip TEXT)',
+    'CREATE TABLE buddies (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, name TEXT NOT NULL, phone TEXT NOT NULL, licence TEXT NOT NULL)',
+    "INSERT INTO waitlist (created_at, phone, source, trip) VALUES ('2026-10-01T05:00:00.000Z', '+919870871324', 'estimate', 'Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00 · ₹5,492')",
+    "INSERT INTO waitlist (created_at, phone, source, trip) VALUES ('2026-10-01T06:00:00.000Z', '+447911123456', 'contact', NULL)",
+    "INSERT INTO buddies (created_at, name, phone, licence) VALUES ('2026-10-01T07:00:00.000Z', 'Old Applicant', '+919000000001', 'PB01 1')",
+  ].join('; ');
+  const dev = await startDev({ port: 8786, password: PASSWORD, seed });
+  const B = dev.base;
+  try {
+    same((await post(B, '/api/feedback', { estimate_id: 'est_migration00000001', vote: 'down', comment: 'Fine otherwise', trip: { type: 'one', from: 'Mohali', to: 'Kasauli', date: '2026-10-20', time: '08:00', fare: 1650 } })).status, 200, 'a vote is saved into the older waitlist table');
+    same((await post(B, '/api/buddy', { type: 'individual', name: 'New Applicant', phone: '9000000002', licence: 'PB01 2', city: 'Kharar' })).status, 200, 'an application with a city, into the older buddies table');
+    same((await post(B, '/api/buddy', { type: 'agency', agency: 'Hill Drivers', contact: 'Ravi', phone: '9000000003', city: 'Mohali' })).status, 200, 'and an agency, into a table that did not exist');
+    const c = csvRows((await admin(B, '/admin/clients.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
+    same(c.slice(1).join(' | '), '1,+919870871324,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,, | 2,+447911123456,Contact page,,,,,, | 3,,Estimate page,"One way · Mohali → Kasauli · 20 Oct, 08:00",1650,👎,Fine otherwise,,',
+      'old rows keep their data, the old fare is split into its column, new rows have every column');
+    const b = csvRows((await admin(B, '/admin/buddies.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
+    same(b.slice(1).join(' | '), '1,Old Applicant,+919000000001,PB01 1,, | 2,New Applicant,+919000000002,PB01 2,Kharar,', 'the buddies table gains the city column');
+    same(csvRows((await admin(B, '/admin/agencies.csv')).text).length, 2, 'the agencies list exists and has the new application');
+  } finally {
+    await dev.stop();
+  }
+}
+
 async function main() {
   units();
   analyticsUnits();
   await locked();
   await endpoints();
+  await migration();
   await analytics();
   console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
   process.exit(failures ? 1 : 0);

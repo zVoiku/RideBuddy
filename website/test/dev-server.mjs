@@ -3,7 +3,7 @@
  * plus the Worker, with a throwaway local D1. Run from the repository root,
  * where wrangler.jsonc lives. Needs a built dist/ (npm run build).
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,11 +13,19 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * @param {{port: number, password?: string, vars?: Record<string, string>}} o  vars: e.g. { RB_TEST: '1' } for the test clock
+ * @param {{port: number, password?: string, vars?: Record<string, string>, seed?: string}} o
+ *   vars: e.g. { RB_TEST: '1' } for the test clock. seed: SQL run on the empty local D1 first,
+ *   e.g. tables in an older shape, to test the Worker bringing them up to date.
  * @returns {Promise<{base: string, stop: () => Promise<void>, dir: string}>}  dir: the local D1's files
  */
-export async function startDev({ port, password, vars = {} }) {
+export async function startDev({ port, password, vars = {}, seed }) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'rb-d1-'));
+  if (seed) {
+    const r = spawnSync('npx', ['--yes', 'wrangler@4', 'd1', 'execute', 'ridebuddy', '--local', '--persist-to', dir, '--command', seed], {
+      cwd: ROOT, encoding: 'utf8', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' },
+    });
+    if (r.status !== 0) throw new Error(`seeding the local D1 failed:\n${r.stdout}${r.stderr}`);
+  }
   // Each server its own debugger port too, so test suites can run side by side.
   const args = ['--yes', 'wrangler@4', 'dev', '--ip', '127.0.0.1', '--port', String(port), '--inspector-port', String(20000 + port), '--persist-to', dir];
   if (password) args.push('--var', `ADMIN_PASSWORD:${password}`);
