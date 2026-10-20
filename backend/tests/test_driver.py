@@ -130,7 +130,7 @@ class TestDriverTrips:
 
     def test_every_trip_shows_an_earning(self, session, driver):
         # The split itself is asserted in TestAvailabilityAndEarnings; the flat
-        # 80% this once checked was superseded by Rate Table v1.7 §3.1.
+        # 80% this once checked was superseded by the rate table's §3.1 split.
         trips = session.get(f"{API}/driver/trips", headers=driver["headers"]).json()
         for t in trips:
             assert t["earnings"] > 0
@@ -200,13 +200,13 @@ class TestAvailabilityAndEarnings:
         r = session.get(f"{API}/driver/earnings", headers=driver["headers"])
         assert r.status_code == 200
         data = r.json()
-        # Rate Table v1.7 §3.2: 25% standard less the 15pt launch promo.
-        assert data["commission_rate"] == 0.10
+        # Rate Table v1.10 §3.2: 30% standard less the 10-point launch discount.
+        assert data["commission_rate"] == 0.20
         assert data["trips_completed"] == len(data["trips"])
         assert data["lifetime"] == pytest.approx(sum(t["earnings"] for t in data["trips"]))
 
     def test_commission_applies_only_to_margin_bearing_components(self, session, driver):
-        """§3.1: commission is charged on the per-day rate and distance overage.
+        """§3.1: commission is charged on the day rate and extra time only.
 
         The return charge, food, stay and night charges pass through at 100%, so
         a flat percentage of the whole fare would underpay the Buddy on exactly
@@ -216,8 +216,8 @@ class TestAvailabilityAndEarnings:
         assert data["trips"], "demo partner should have completed trips"
         for t in data["trips"]:
             # Every seeded trip carries pass-through components, so a payout
-            # computed as a flat 90% of the total would come out lower.
-            assert t["earnings"] > round(t["fare"] * 0.90), (
+            # computed as a flat 80% of the total would come out lower.
+            assert t["earnings"] > round(t["fare"] * 0.80), (
                 f"trip {t['id'][:8]}: earnings {t['earnings']} looks like a flat "
                 f"cut of {t['fare']} rather than a component split"
             )

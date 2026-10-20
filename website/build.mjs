@@ -27,6 +27,10 @@
  *
  * 4 and 5 are text patches, listed in artboard-patches.mjs.
  *
+ * The fare rates come from rates.json at the repo root — the file the backend
+ * reads — compiled into /estimate/ and into the artboard's rate-config.js, so
+ * a rate changes in one place for every platform.
+ *
  * Every page — holding page, estimator, artboard — also gets the site's own
  * analytics, src/site.js, served as /site.js.
  *
@@ -63,8 +67,11 @@ const VENDOR = {
   'https://unpkg.com/@babel/standalone@7.29.0/babel.min.js': pkgFile('@babel/standalone', 'babel.min.js'),
 };
 
-/** Copied verbatim into beta/. Everything else in ../Webpage is authoring-only. */
-const CARRY = ['_ds', 'assets', 'image-slot.js', 'rate-config.js'];
+/**
+ * Copied verbatim into beta/. Everything else in ../Webpage is authoring-only;
+ * its rate-config.js is rebuilt from rates.json instead (step 4).
+ */
+const CARRY = ['_ds', 'assets', 'image-slot.js'];
 
 const kb = (n) => `${Math.round(n / 1024)} KB`;
 
@@ -145,10 +152,17 @@ async function main() {
     legalComments: 'none', logLevel: 'warning',
   });
 
-  // 4. Carry the artboard's dependencies across.
+  // 4. Carry the artboard's dependencies across, and give it the shared rates
+  //    and engine in place of the canvas's own copy.
   for (const entry of CARRY) {
     await cp(path.join(CANVAS, entry), path.join(BETA, entry), { recursive: true });
   }
+  await esbuild({
+    entryPoints: [path.join(SRC, 'estimate', 'artboard-rates.js')],
+    outfile: path.join(BETA, 'rate-config.js'),
+    bundle: true, minify: true, format: 'esm', target: ['es2020'],
+    legalComments: 'none', logLevel: 'warning',
+  });
 
   // 5. Vendor the artboard's runtime deps and repoint support.js at them.
   await mkdir(path.join(BETA, 'vendor'), { recursive: true });

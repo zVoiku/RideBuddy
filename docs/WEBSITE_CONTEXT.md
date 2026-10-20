@@ -2,12 +2,12 @@
 
 Written as a handoff for a separate session that will build the public/marketing
 website. Everything here is taken from the shipped code and the locked Rate
-Table v1.7, not from memory.
+Table v1.10, not from memory.
 
 > **Do not trust `memory/PRD.md`.** It is the first iteration and is now wrong on
 > nearly everything a website would copy: it says teal `#0E9B9B`, a 30% advance,
 > ₹1,499/day, and new-user discounts. All superseded. This file and
-> `backend/server.py` are the sources of truth.
+> `rates.json` with `backend/server.py` are the sources of truth.
 
 ---
 
@@ -55,56 +55,74 @@ several days who does not need driving at the destination.
 
 ---
 
-## 3. Pricing — Rate Table v1.7 (locked, founder-signed)
+## 3. Pricing — Rate Table v1.10 (locked, founder sign-off 11 Oct 2026)
 
-All rates are charm-priced and are configurable variables in
-`backend/server.py` (`FARE` dict). **Fares shown to customers are GST-inclusive.**
+All rates are charm-priced and are configurable variables in **`rates.json`** at
+the repo root — the one file the backend (`backend/server.py`) and the website
+build both read. **Fares shown to customers are GST-inclusive.**
 
-### Shared rates
+The fare pays for the Buddy's **time**: a Trip Day is 12 hours of duty from the
+booked pickup, breaks included. Distance is not charged, except the one-way
+return charge.
+
+### Rates
 
 | Component | Rate |
 |---|---|
-| Per-day driver rate | **₹1,199 / trip day** (includes 300 km + 12 hours) |
-| Distance overage | **₹3.99 / km** beyond the daily inclusion |
-| Food allowance | **₹299 / trip day** |
-| Night / odd-hour charge | **₹249 flat** |
-| Stay allowance | **₹499 / overnight** (round trips only, conditional) |
-| Buddy return charge | **₹0.99 / km** (one-way only) |
+| Day rate | ₹1,200 / Trip Day — **internal, never shown to customers** |
+| Extra time | **₹1.99 / minute** beyond the 12 hours (15 free minutes at each end); a final-fare item, never in an estimate |
+| Buddy return charge | **₹0.99 / km** of one-way trip distance (one way only) |
+| Food allowance | **₹299 / Trip Day** |
+| Stay | **₹499 / night** (round-trip overnights unless the customer arranges the stay; long-drive added days) |
+| Night charge | **₹249 flat** |
 
-**Night charge triggers** when pickup is before 06:00 or estimated arrival is
-at/after 22:00.
+**Night charge** applies when more than 15 minutes of duty fall between 10 PM
+and 6 AM (a trip that ends by 10:15 PM, or starts at or after 5:45 AM, does not
+trigger it). Crossing midnight does not add a Trip Day.
+
+**Long drives** (more than 12 hours of driving on a one-way trip or on any day
+of a round trip): Trip Days = ceiling(drive time ÷ 12 h), each added day with
+food and ₹499. The default plan is a rest stop (12 hours of duty, 9 hours'
+rest); a drive-through is priced only behind a switch, and only if the customer
+and the Buddy both agree.
 
 ### One-way
 
 ```
-fare = (days × 1199) + (3.99 × km beyond 300/day) + (0.99 × km) + (299 × days)
-     + (249 if night)
+fare = (trip_days × 1,200) + (0.99 × one_way_km) + (299 × trip_days)
+     + (499 × (trip_days − 1)) + (249 if night)
 ```
 
 ### Round trip
 
 ```
-fare = (days × 1199) + (3.99 × km beyond 300/day) + (299 × days)
-     + (499 × overnights, unless the customer provides the stay)
-     + (249 if night)
+fare = (trip_days × 1,200) + (299 × trip_days)
+     + (499 × overnights, unless the customer arranges the stay)
+     + (249 if night on any leg)
 ```
 
 No return charge on a round trip — the Buddy comes back driving the customer's
-car. Round-trip distance counts **both legs**. `trip_days = return date −
-outbound date + 1`.
+car. `trip_days = return date − outbound date + 1`, plus any long-drive days. A
+same-day round trip is one duty: out, and back on arrival.
 
-### Real examples (from the rate table's own sense checks)
+Calculated on unrounded metres and minutes; only the total is rounded, to the
+nearest rupee, halves up.
 
-| Route | km | Days | Fare |
-|---|---|---|---|
-| Chandigarh → Shimla | 115 | 1 | **₹1,612** |
-| Chandigarh → Delhi | 250 | 1 | **₹1,746** |
-| Chandigarh → Manali | 300 | 1 | **₹1,795** |
-| Chandigarh → Jaipur | 500 | 1 | **₹2,791** |
-| Chandigarh ⇄ Manali, 3 days, stay not provided | 600 | 3 | **₹5,492** |
+### Worked examples (the rate table's own; illustrative distances)
 
-These are safe to publish. They are asserted by tests in
-`backend/tests/test_ridebuddy.py`.
+| Route | km | Drive | Pickup | Fare |
+|---|---|---|---|---|
+| Chandigarh → Shimla | 115 | 3 h 15 min | 9 AM | **₹1,613** |
+| Chandigarh → Delhi | 250 | 4 h 30 min | 9 AM | **₹1,747** |
+| Chandigarh → Manali | 300 | 8 h | 9 AM | **₹1,796** |
+| Chandigarh → Jaipur | 500 | 9 h | 9 AM | **₹1,994** |
+| Chandigarh → Leh, rest stop | 688 | 15 h 30 min | 9 AM | **₹4,178** |
+| Chandigarh ⇄ Manali, 3 days, stay not arranged | 300 each way | 8 h | 9 AM | **₹5,495** |
+| Chandigarh ⇄ Shimla, same day | 115 each way | 3 h 15 min | 9 AM | **₹1,499** |
+
+Live estimates use Google's distance and drive time, so they differ a little
+from these. All sixteen of the table's examples are asserted by
+`website/test/parity.mjs`, on both the backend and the website engine.
 
 ### Payment and what the customer is told
 
@@ -119,10 +137,14 @@ These are safe to publish. They are asserted by tests in
 - **There is no discount of any kind.** Fixed rate table, no dynamic pricing,
   no promo codes, no new-user offer. Do not invent one for the website.
 
-Exact customer-facing copy already shipped in the app, worth reusing verbatim:
+Exact customer-facing copy (Rate Table §2.4), shipped in the app and on the
+website's estimator, worth reusing verbatim:
 
-> Includes 1,800 km and 72 hours across 6 days.
-> Extra distance or time beyond that is added to the final fare.
+> Includes 12 hours of your Buddy's time from pickup.
+> Includes your Buddy's food.
+> Tolls are extra, paid by you on the road.
+> Extra time is charged by the minute in the final fare.
+> Final fare is calculated when your trip ends.
 > Includes the Buddy's stay for 5 nights. Tell us if you're arranging it and we'll take it off.
 > Tolls are not part of this fare. You pay them directly during the trip.
 > **Final fare is calculated when your trip ends.**
@@ -268,5 +290,6 @@ insurance, 24/7 support, city coverage beyond the region above, or any discount.
 
 ---
 
-*Generated from the RideBuddy codebase at commit `e42fb8e`. Rate Table v1.7 is
-locked with founder sign-off; the fare figures above are asserted by tests.*
+*Generated from the RideBuddy codebase at commit `e42fb8e`; pricing updated to
+Rate Table v1.10, locked with founder sign-off. The fare figures above are
+asserted by tests.*

@@ -1,0 +1,26 @@
+{
+  "_about": "RideBuddy fare rates: Rate Table & Fare Estimation Logic v1.10 (locked, founder sign-off 11 Oct 2026), section 3.4. The single source for every rate: the backend (backend/server.py) reads this file at startup, and the website build (website/build.mjs) compiles it into /estimate/ and /beta/. Money is in rupees, at most two decimals. Change a value here, then restart the backend and redeploy the website. Never hardcode a rate anywhere else.",
+  "version": "1.10",
+
+  "per_day_rate": 1200,
+  "daily_duty_minutes": 720,
+  "daily_km_ceiling": 600,
+  "extra_time_per_min": 1.99,
+  "grace_min": 15,
+  "night_cover_min": 60,
+  "return_per_km": 0.99,
+  "food_per_day": 299,
+  "stay_per_night": 499,
+  "night_charge": 249,
+  "night_start": "22:00",
+  "night_end": "06:00",
+  "long_drive_threshold_h": 12,
+  "rest_hours": 9,
+
+  "standard_commission_pct": 30,
+  "promo_discount_pct": 10,
+  "gst_rate_pct": 18,
+
+  "deposit_pct": 20,
+  "hourly_rate": 249
+}

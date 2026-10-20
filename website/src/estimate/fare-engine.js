@@ -1,36 +1,29 @@
 /**
- * Rate Table v1.7 fare engine — a line-for-line port of `fare_breakdown` in
+ * Rate Table v1.10 fare engine — a line-for-line port of `fare_breakdown` in
  * backend/server.py, so the website quotes exactly what the app quotes.
  *
+ * The rates are not in this file: they are rates.json at the repo root, the
+ * same file the backend reads, compiled into the page by the build. Change a
+ * rate there and both sides follow.
+ *
  * Parity is enforced, not assumed: test/parity.mjs runs a grid of trips through
- * this file and through the Python function and diffs every field. If the rates
- * or the rules change on the backend, that test is what fails.
+ * this file and through the Python function and diffs every field, and checks
+ * both against the rate table's own worked examples. If the rules change on the
+ * backend, that test is what fails.
  *
  * Two things are deliberately identical to Python and would be easy to get
  * subtly wrong:
- *   - the total is summed from *unrounded* components, in the same order, and
- *     only then rounded to whole rupees with Python's half-to-even `round()`;
- *   - the night window and calendar-day rules are IST wall-clock rules, so all
- *     time arithmetic here is done on IST components, never on the visitor's
- *     browser timezone.
+ *   - money is summed exactly, in whole paise from whole metres, and only the
+ *     total is rounded to rupees, halves up (§1A) — no float rounding on the way;
+ *   - the night window is an IST wall-clock rule, so all time arithmetic here is
+ *     done on IST components, never on the visitor's browser timezone.
  */
+import RATES from '../../../rates.json' with { type: 'json' };
 
-/** Mirrors the FARE dict in backend/server.py. Never hardcode a rate elsewhere. */
-export const FARE = Object.freeze({
-  per_day_rate: 1199,
-  daily_km_inclusion: 300,
-  daily_hour_inclusion: 12,
-  overage_per_km: 3.99,
-  return_per_km: 0.99,
-  food_per_day: 299,
-  night_charge: 249,
-  stay_per_night: 499,
-  night_start_hour: 22, // arrival at or after 22:00 triggers
-  night_end_hour: 6, // pickup before 06:00 triggers
-  hourly_rate: 249, // legacy; hourly is not covered by Rate Table v1.7
-});
+/** The rates (rates.json without its notes). Never hardcode a rate elsewhere. */
+export const FARE = Object.freeze(Object.fromEntries(Object.entries(RATES).filter(([k]) => !k.startsWith('_'))));
 
-export const DEPOSIT_PCT = 20;
+export const DEPOSIT_PCT = FARE.deposit_pct;
 
 /**
  * Python's `round(x)` on a float: nearest integer, ties to even. JavaScript's
@@ -55,118 +48,152 @@ export function roundTo2(x) {
   return Number(x.toFixed(2));
 }
 
+/** `_half_up`: nearest integer, halves up (§1A). */
+const halfUp = (x) => Math.floor(x + 0.5);
+const paise = (rupees) => halfUp(rupees * 100);
+const clock = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return h * 3600 + m * 60; };
+
 /**
  * Pickup moment as IST wall-clock components.
  * @typedef {{ date: string, time: string }} Pickup  'YYYY-MM-DD' and 'HH:MM'
  */
 
-function pickupMinutes({ time }) {
-  const [h, m] = time.split(':').map(Number);
-  return h * 60 + m;
+/** `_added_days`: past 12 hours of driving, Trip Days = ceiling(drive time / 12 h) (§1C). */
+function addedDays(driveS) {
+  if (driveS <= FARE.long_drive_threshold_h * 3600) return 0;
+  return Math.ceil(driveS / (FARE.daily_duty_minutes * 60)) - 1;
 }
 
-/** Whole IST days between the pickup and the moment `hours` later. */
-function daysCrossed(pickup, hours) {
-  return Math.floor((pickupMinutes(pickup) + hours * 60) / 1440);
+/** `_duty`: a leg's duty periods; a long rest-stop leg is driven in 12-hour stretches with a 9-hour rest between. */
+function duty(start, driveS, driveThrough) {
+  const day = FARE.daily_duty_minutes * 60;
+  if (driveThrough || driveS <= day) return [[start, start + driveS]];
+  const out = [];
+  let t = start, left = driveS;
+  while (left > 0) {
+    const d = Math.min(day, left);
+    out.push([t, t + d]);
+    left -= d;
+    t += d + FARE.rest_hours * 3600;
+  }
+  return out;
 }
 
-function arrivalHour(pickup, hours) {
-  const total = pickupMinutes(pickup) + hours * 60;
-  return Math.floor((total - daysCrossed(pickup, hours) * 1440) / 60);
-}
-
-/** Port of `_night_trigger`: pickup before 06:00 IST or arrival at/after 22:00 IST. */
-export function nightTrigger(pickup, durationHours) {
-  if (!pickup) return false;
-  if (Math.floor(pickupMinutes(pickup) / 60) < FARE.night_end_hour) return true;
-  const hours = Math.max(0, durationHours);
-  return arrivalHour(pickup, hours) >= FARE.night_start_hour || daysCrossed(pickup, hours) > 0;
-}
-
-/** Port of `_one_way_days` (§2.2). */
-export function oneWayDays(durationHours, pickup) {
-  const hours = Math.max(0, durationHours);
-  let days = hours ? Math.max(1, Math.ceil(hours / FARE.daily_hour_inclusion)) : 1;
-  if (pickup && daysCrossed(pickup, hours) > 0) days = Math.max(days, 2);
-  return days;
+/** `_night_seconds`: seconds of duty inside the night window (22:00–06:00 IST) on any night. */
+function nightSeconds(periods) {
+  const ns = clock(FARE.night_start), ne = clock(FARE.night_end);
+  const span = ne <= ns ? 86400 + ne - ns : ne - ns;
+  let total = 0;
+  for (const [a, b] of periods) {
+    for (let k = Math.floor(a / 86400) - 1; k <= Math.floor(b / 86400); k++) {
+      const ws = k * 86400 + ns;
+      total += Math.max(0, Math.min(b, ws + span) - Math.max(a, ws));
+    }
+  }
+  return total;
 }
 
 /**
- * Port of `fare_breakdown`. `distanceKm` is always the one-way distance from
- * the routing API; a round trip covers it twice.
+ * Port of `fare_breakdown`. `distanceKm` and `durationHours` are the one-way
+ * route; a round trip drives it twice.
  *
  * @param {object} t
  * @param {'point_to_point'|'hourly'} t.tripType
  * @param {boolean} t.oneWay
  * @param {number} t.distanceKm
  * @param {number} [t.durationHours]
- * @param {number} [t.days]           round trips: return date − outbound date + 1
+ * @param {number} [t.days]           round trips: return date − departure date + 1
  * @param {Pickup} [t.pickup]
  * @param {boolean} [t.customerStay]  round trips: the customer puts the Buddy up
+ * @param {boolean} [t.driveThrough]  long drives: the drive-through instead of the rest stop
  */
-export function fareBreakdown({ tripType, oneWay, distanceKm, durationHours = 0, days = 0, pickup = null, customerStay = false }) {
+export function fareBreakdown({ tripType, oneWay, distanceKm, durationHours = 0, days = 0, pickup = null, customerStay = false, driveThrough = false }) {
   if (tripType === 'hourly') {
     const base = roundTo2(Math.max(1, durationHours) * FARE.hourly_rate);
     return {
-      per_day: base, overage: 0, return_leg: 0, food: 0, stay: 0, night: 0,
-      trip_days: 0, billable_km: 0, night_trigger: false, total: base,
-      uncovered_by_rate_table: true,
+      per_day: base, extra_time: 0, return_leg: 0, food: 0, stay: 0, night: 0,
+      trip_days: 0, overnights: 0, added_days: 0, stay_units: 0,
+      long_drive: false, drive_through: false, night_trigger: false,
+      total: base, uncovered_by_rate_table: true,
     };
   }
 
-  let trip_days, billable_km, return_leg, stay;
+  const metres = halfUp(Math.max(0, distanceKm) * 1000);
+  const driveS = halfUp(Math.max(0, durationHours) * 3600);
+  const start = pickup ? clock(pickup.time) : null;
+  const at = start ?? 0;
+  let added, trip_days, overnights, legs, stay_units, returnMp;
   if (oneWay) {
-    trip_days = oneWayDays(durationHours, pickup);
-    billable_km = Math.max(0, distanceKm);
-    return_leg = FARE.return_per_km * billable_km;
-    stay = 0; // §2.1: no stay charges on one-way trips
+    added = addedDays(driveS);
+    trip_days = 1 + added;
+    overnights = 0;
+    legs = [duty(at, driveS, driveThrough)];
+    stay_units = added; // §1C: ₹499 per added day on both plans
+    returnMp = paise(FARE.return_per_km) * metres; // thousandths of a paise
   } else {
-    trip_days = Math.max(1, days);
-    billable_km = Math.max(0, distanceKm) * 2;
-    return_leg = 0; // §5.1 #3: the Buddy returns driving the customer's car
-    const overnights = Math.max(0, trip_days - 1);
-    stay = customerStay ? 0 : FARE.stay_per_night * overnights;
+    const calendarDays = Math.max(1, days);
+    overnights = calendarDays - 1;
+    if (calendarDays === 1) {
+      added = addedDays(2 * driveS); // §5.3: out, and back on arrival
+      legs = [duty(at, 2 * driveS, driveThrough)];
+    } else {
+      added = 2 * addedDays(driveS);
+      legs = [duty(at, driveS, driveThrough), duty(at + overnights * 86400, driveS, driveThrough)];
+    }
+    trip_days = calendarDays + added;
+    stay_units = (customerStay ? 0 : overnights) + (driveThrough || !customerStay ? added : 0); // §5.2
+    returnMp = 0; // §5.1 #3: the Buddy returns driving the customer's car
   }
 
-  const per_day = FARE.per_day_rate * trip_days;
-  const included_km = FARE.daily_km_inclusion * trip_days;
-  const overage = FARE.overage_per_km * Math.max(0, billable_km - included_km);
-  const food = FARE.food_per_day * trip_days;
-  const night_trigger = nightTrigger(pickup, durationHours);
-  const night = night_trigger ? FARE.night_charge : 0;
+  // §1B, checked on every leg; flat, once per trip.
+  const night_trigger = start !== null && legs.some((leg) => nightSeconds(leg) > FARE.grace_min * 60);
 
-  // Same operands, same order as Python: the doubles sum bit-for-bit.
-  const total = per_day + overage + return_leg + food + stay + night;
+  const perDay = paise(FARE.per_day_rate) * trip_days;
+  const food = paise(FARE.food_per_day) * trip_days;
+  const stay = paise(FARE.stay_per_night) * stay_units;
+  const night = night_trigger ? paise(FARE.night_charge) : 0;
+  const totalMp = (perDay + food + stay + night) * 1000 + returnMp;
   return {
-    per_day: roundTo2(per_day),
-    overage: roundTo2(overage),
-    return_leg: roundTo2(return_leg),
-    food: roundTo2(food),
-    stay: roundTo2(stay),
-    night,
+    per_day: perDay / 100,
+    extra_time: 0, // §1B: an estimate's duty is its drive time
+    return_leg: Math.floor((returnMp + 500) / 1000) / 100,
+    food: food / 100,
+    stay: stay / 100,
+    night: night / 100,
     trip_days,
-    billable_km: roundTo2(billable_km),
+    overnights,
+    added_days: added,
+    stay_units,
+    long_drive: added > 0,
+    drive_through: added > 0 && driveThrough,
     night_trigger,
-    total: roundHalfEven(total), // customers are quoted whole rupees
+    one_way_km: metres / 1000,
+    total: Math.floor((totalMp + 50000) / 100000), // whole rupees, halves up
+    uncovered_by_rate_table: false,
   };
 }
 
-/** The customer-facing shape the `/bookings/estimate` endpoint returns. */
+/** The customer-facing shape: `estimate_summary` in backend/server.py, plus the hourly hours. */
 export function estimate(trip) {
   const b = fareBreakdown(trip);
   const total = b.total;
-  const oneWay = trip.tripType === 'hourly' || trip.oneWay;
+  const nights = b.stay_units - (b.drive_through ? b.added_days : 0);
   return {
     total_fare: total,
     deposit: roundHalfEven(total * DEPOSIT_PCT / 100),
     deposit_pct: DEPOSIT_PCT,
     trip_days: b.trip_days,
-    included_km: FARE.daily_km_inclusion * b.trip_days,
-    included_hours: FARE.daily_hour_inclusion * b.trip_days,
+    duty_hours_per_day: FARE.daily_duty_minutes / 60,
     night_charge_applied: b.night_trigger,
-    stay_included: !oneWay && b.stay > 0,
-    overnights: oneWay ? 0 : Math.max(0, b.trip_days - 1),
-    hourly: trip.tripType === 'hourly',
+    stay_included: nights > 0,
+    stay_nights: nights,
+    long_drive: b.long_drive,
+    drive_through: b.drive_through,
+    hourly: b.uncovered_by_rate_table,
+    night_start: FARE.night_start,
+    night_end: FARE.night_end,
+    night_grace_min: FARE.grace_min,
+    long_drive_hours: FARE.long_drive_threshold_h,
     hours: trip.tripType === 'hourly' ? Math.max(1, trip.durationHours || 0) : 0,
   };
 }

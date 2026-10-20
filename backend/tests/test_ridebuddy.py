@@ -98,15 +98,18 @@ class TestCars:
 # ---------- Estimate ----------
 class TestEstimate:
     def test_estimate_one_way_matches_rate_table(self, session, auth):
-        """Rate Table v1.7 §2.3 — the doc's own Chandigarh sense checks."""
-        for km, want in [(115, 1612), (250, 1746), (300, 1795), (500, 2791)]:
+        """Rate Table v1.10 §2.3 — the doc's own Chandigarh examples, 9 AM pickups.
+        Delhi's ₹1,746.50 shows the total rounds halves up."""
+        for km, hours, want in [(115, 3.25, 1613), (250, 4.5, 1747), (300, 8, 1796), (500, 9, 1994)]:
             r = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
-                             json={"trip_type": "point_to_point", "one_way": True, "distance_km": km})
+                             json={"trip_type": "point_to_point", "one_way": True, "distance_km": km,
+                                   "duration_hours": hours, "scheduled_at": "2026-10-25T09:00:00+05:30"})
             assert r.status_code == 200, r.text
             assert r.json()["total_fare"] == want, f"{km}km -> {r.json()['total_fare']}, want {want}"
+            assert r.json()["trip_days"] == 1 and r.json()["long_drive"] is False
 
     def test_estimate_has_no_discount(self, session, auth):
-        """v1.7 is a fixed table: pricing no longer varies by user."""
+        """The rate table is fixed: pricing does not vary by user."""
         phone = f"+9199{int(time.time()*1000)%100000000:08d}"
         session.post(f"{API}/auth/send-otp", json={"phone": phone})
         v = session.post(f"{API}/auth/verify-otp", json={"phone": phone, "otp": "123456"}).json()
@@ -114,7 +117,7 @@ class TestEstimate:
         body = {"trip_type": "point_to_point", "one_way": True, "distance_km": 115}
         fresh = session.post(f"{API}/bookings/estimate", headers=h, json=body).json()
         existing = session.post(f"{API}/bookings/estimate", headers=auth["headers"], json=body).json()
-        assert fresh["total_fare"] == existing["total_fare"] == 1612
+        assert fresh["total_fare"] == existing["total_fare"] == 1613
         assert fresh["discount"] == 0
 
     def test_estimate_deposit_is_20_pct(self, session, auth):
@@ -125,7 +128,7 @@ class TestEstimate:
         assert d["deposit"] == round(d["total_fare"] * 0.20)
 
     def test_night_charge_triggers_on_early_pickup(self, session, auth):
-        """§2.1 #5 is an IST wall-clock rule: pickup before 06:00 or arrival at/after 22:00."""
+        """§1B is an IST wall-clock rule: more than 15 minutes of duty between 22:00 and 06:00."""
         base = {"trip_type": "point_to_point", "one_way": True, "distance_km": 115, "duration_hours": 3}
         day = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
                            json={**base, "scheduled_at": "2026-09-01T09:00:00+05:30"}).json()
@@ -149,19 +152,52 @@ class TestEstimate:
         assert night("2026-09-01T16:30:00Z") is True           # 22:00 IST pickup -> 01:00 arrival
         assert night("2026-09-01T09:00:00") is False           # no offset: taken as IST
 
-    def test_late_arrival_triggers_night_charge_and_second_day(self, session, auth):
-        """A 16:00 IST departure on an 8h drive arrives past midnight: §2.1 #5
-        adds the night charge and §2.2 bills the next day."""
-        base = {"trip_type": "point_to_point", "one_way": True, "distance_km": 300}
-        noon = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
-                            json={**base, "duration_hours": 8, "scheduled_at": "2026-09-01T09:00:00+05:30"}).json()
-        late = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
-                            json={**base, "duration_hours": 8, "scheduled_at": "2026-09-01T16:00:00+05:30"}).json()
+    def test_late_arrival_adds_the_night_charge_but_no_day(self, session, auth):
+        """A 16:00 IST departure on an 8h drive arrives at midnight: §1B adds the
+        night charge, and since v1.9 crossing midnight no longer adds a Trip Day."""
+        base = {"trip_type": "point_to_point", "one_way": True, "distance_km": 300, "duration_hours": 8}
+        def est(at):
+            return session.post(f"{API}/bookings/estimate", headers=auth["headers"],
+                                json={**base, "scheduled_at": f"2026-09-01T{at}:00+05:30"}).json()
+        noon, late = est("09:00"), est("16:00")
         assert noon["trip_days"] == 1 and noon["night_charge_applied"] is False
-        assert late["trip_days"] == 2 and late["night_charge_applied"] is True
-        # One extra day (1199 + 299 food) plus the flat night charge; the 300 km
-        # now sit inside a 600 km inclusion, so no overage either way.
-        assert late["total_fare"] - noon["total_fare"] == 1199 + 299 + 249
+        assert late["trip_days"] == 1 and late["night_charge_applied"] is True
+        assert late["total_fare"] - noon["total_fare"] == 249
+        # §1B: a trip that ends by 10:15 PM does not trigger it; a minute later does.
+        assert est("14:15")["night_charge_applied"] is False
+        assert est("14:16")["night_charge_applied"] is True
+        # …nor does one that starts at or after 5:45 AM.
+        assert est("05:45")["night_charge_applied"] is False
+        assert est("05:44")["night_charge_applied"] is True
+
+    def test_long_drive_rest_stop_and_drive_through(self, session, auth):
+        """§1C and §2.3: Chandigarh → Leh, 688 km and 15 h 30 min from 9 AM. The
+        rest stop is the default; the drive-through runs into the night."""
+        body = {"trip_type": "point_to_point", "one_way": True, "distance_km": 688,
+                "duration_hours": 15.5, "scheduled_at": "2026-10-25T09:00:00+05:30"}
+        rest = session.post(f"{API}/bookings/estimate", headers=auth["headers"], json=body).json()
+        through = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
+                               json={**body, "drive_through": True}).json()
+        assert rest["total_fare"] == 4178 and through["total_fare"] == 4427
+        assert rest["trip_days"] == through["trip_days"] == 2
+        assert rest["long_drive"] is through["long_drive"] is True
+        assert rest["drive_through"] is False and through["drive_through"] is True
+        assert rest["night_charge_applied"] is False and through["night_charge_applied"] is True
+        # The rest stop's ₹499 is an overnight stay; the drive-through's is not.
+        assert rest["stay_nights"] == 1 and through["stay_nights"] == 0
+        assert rest["long_drive_hours"] == 12
+
+    def test_same_day_round_trips(self, session, auth):
+        """§5.4: a same-day round trip is one duty, out and back."""
+        def est(km, hours, at, **extra):
+            return session.post(f"{API}/bookings/estimate", headers=auth["headers"], json={
+                "trip_type": "point_to_point", "one_way": False, "distance_km": km, "duration_hours": hours,
+                "days": 1, "scheduled_at": f"2026-10-25T{at}:00+05:30", **extra}).json()
+        assert est(115, 3.25, "09:00")["total_fare"] == 1499
+        assert est(115, 3.25, "16:00")["total_fare"] == 1748  # home at 10:30 PM
+        jaipur = est(500, 9, "09:00")  # 18 h of driving: a rest stop and a second day
+        assert jaipur["total_fare"] == 3497 and jaipur["trip_days"] == 2 and jaipur["long_drive"] is True
+        assert est(500, 9, "09:00", drive_through=True)["total_fare"] == 3746  # home at 3 AM
 
     def test_estimate_hourly(self, session, auth):
         r = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
@@ -171,16 +207,14 @@ class TestEstimate:
         assert r.json()["base_fare"] == 747.0
 
     def test_estimate_round_trip_matches_rate_table(self, session, auth):
-        """§5.4 — Chandigarh->Manali round trip, 3 days, customer not providing stay.
-
-        300 km each way is measured as 600 round-trip km, inside the 900 km
-        allowed over three days, so there is no overage.
+        """§5.4 — Chandigarh->Manali round trip, 3 days, customer not providing
+        stay: 3 × 1,200 + 3 × 299 + 2 × 499. Distance is not charged.
         """
         r = session.post(f"{API}/bookings/estimate", headers=auth["headers"],
                          json={"trip_type": "point_to_point", "one_way": False,
                                "distance_km": 300, "days": 3})
         d = r.json()
-        assert d["total_fare"] == 5492, f"got {d['total_fare']}"
+        assert d["total_fare"] == 5495, f"got {d['total_fare']}"
         assert d["trip_days"] == 3
         assert d["overnights"] == 2
         assert d["stay_included"] is True
@@ -200,6 +234,19 @@ class TestEstimate:
                          json={"trip_type": "point_to_point", "one_way": False,
                                "distance_km": 300, "days": 3})
         assert r.json()["breakdown"]["return_leg"] == 0
+
+    def test_a_booking_is_always_the_rest_stop(self, session, auth):
+        """§1C "Legal": drive-through needs both Terms of Use to allow it before
+        an app offers it, so a booking ignores the estimate-only switch."""
+        payload = {
+            "trip_type": "point_to_point", "one_way": True,
+            "pickup_address": "TEST Leh Pickup", "drop_address": "TEST Leh",
+            "distance_km": 688, "duration_hours": 15.5, "schedule_now": False,
+            "scheduled_at": "2026-10-25T09:00:00+05:30", "drive_through": True,
+            "transmission": "Automatic", "payment_method": "upi", "pay_partial": True,
+        }
+        b = session.post(f"{API}/bookings", headers=auth["headers"], json=payload).json()
+        assert b["total_fare"] == 4178 and b["fare"]["drive_through"] is False
 
     def test_create_booking_with_days_persists(self, session):
         """Booking creation must accept and persist `days` and `return_at` from BookingIn."""
@@ -222,8 +269,8 @@ class TestEstimate:
         b = r.json()
         assert b["days"] == 27, f"`days` was not persisted (got {b.get('days')}). BookingIn schema likely missing `days` field"
         assert b["return_at"] is not None, "`return_at` was not persisted. BookingIn schema likely missing `return_at` field"
-        # 27 billable days at the v1.7 table, no distance, customer not providing stay.
-        expected = 27 * 1199 + 27 * 299 + 26 * 499
+        # 27 Trip Days at the v1.10 table, no distance, customer not providing stay.
+        expected = 27 * 1200 + 27 * 299 + 26 * 499
         assert b["total_fare"] == expected, f"total_fare={b['total_fare']} (expected {expected})"
         assert b["fare"]["trip_days"] == 27
 

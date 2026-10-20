@@ -38,6 +38,11 @@ const WAITLIST_JOINED = "You're on the waitlist. We'll message you once.";
 const DISCLAIMER = 'Indicative fare for the route, date and time you entered, using the route’s standard drive time without traffic. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
 const HOURLY_DISCLAIMER = 'Indicative fare for the date, time and hours you entered. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
 const COMMENT = 'Too high for one way, we usually pay 1,200 a day.';
+/** The result's condition lines (Rate Table v1.10 §2.4), as shown. */
+const conds = (page) => page.locator('.rb-conds li').allTextContents().then((l) => l.map((t) => t.trim()));
+const TOLLS = 'Tolls are extra, paid by you on the road.';
+const EXTRA_TIME = 'Extra time is charged by the minute in the final fare.';
+const NIGHT = 'Includes a night charge: more than 15 minutes of the trip fall between 10 PM and 6 AM.';
 
 function backendTotal(inputs) {
   const script = `
@@ -47,7 +52,8 @@ spec = importlib.util.spec_from_file_location("server", ${JSON.stringify(path.jo
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 t = json.load(sys.stdin); p = t.get("pickup")
 b = m.fare_breakdown(trip_type=t["tripType"], one_way=t["oneWay"], distance_km=t["distanceKm"], duration_hours=t.get("durationHours", 0),
-                     days=t.get("days", 0), scheduled_at=(f"{p['date']}T{p['time']}:00+05:30" if p else None), customer_stay=t.get("customerStay", False))
+                     days=t.get("days", 0), scheduled_at=(f"{p['date']}T{p['time']}:00+05:30" if p else None), customer_stay=t.get("customerStay", False),
+                     drive_through=t.get("driveThrough", False))
 print(json.dumps({"total": b["total"], "trip_days": b["trip_days"], "night": b["night_trigger"]}))`;
   const r = spawnSync(PY, ['-c', script], { input: JSON.stringify(inputs), encoding: 'utf8' });
   if (r.status !== 0) throw new Error(r.stderr);
@@ -215,14 +221,19 @@ async function main() {
     await page.getByRole('button', { name: 'Close' }).click();
     check(!(await page.$('.rb-map--full')), 'map closes again');
 
-    // The trip under the map: drive time and distance, rounded to the km.
+    // The trip under the map: drive time to the nearest 5 minutes, distance to the km (§2.4).
     const tiles = await page.locator('.rb-tile').evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()));
     const km = Math.round(one.inputs.distanceKm);
-    check(tiles.length === 2 && /^EST\. TRIP TIME \d+ h \d+ min One way$|^EST\. TRIP TIME \d+ min One way$/i.test(tiles[0]) && new RegExp(`^EST\\. DISTANCE ${km} km One way$`, 'i').test(tiles[1]),
-      `one way: trip time and distance tiles (${tiles.join(' | ')})`);
+    const t5 = Math.round(one.inputs.durationHours * 12) * 5;
+    const wantTime = `${Math.floor(t5 / 60)} h${t5 % 60 ? ` ${t5 % 60} min` : ''}`;
+    check(tiles.length === 2 && tiles[0].toUpperCase() === `EST. TRIP TIME ${wantTime} One way`.toUpperCase() && new RegExp(`^EST\\. DISTANCE ${km} km One way$`, 'i').test(tiles[1]),
+      `one way: trip time (to 5 min) and distance tiles (${tiles.join(' | ')})`);
     const result = (await page.locator('.rb-result').innerText()).replace(/\s+/g, ' ');
-    check(result.includes('Inclusive of all taxes') && !/Extra (distance|time)/.test(result) && result.includes('Final fare is calculated when your trip ends.'),
-      'the fare says it includes all taxes; the "Extra …" lines are gone; the final-fare line stays');
+    check(result.includes('Inclusive of all taxes') && !/Extra distance/.test(result) && result.includes('Final fare is calculated when your trip ends.'),
+      'the fare says it includes all taxes; no "Extra distance" line; the final-fare line stays');
+    const oneConds = await conds(page);
+    check(JSON.stringify(oneConds) === JSON.stringify(["Includes 12 hours of your Buddy's time from pickup.", "Includes your Buddy's food.", TOLLS, EXTRA_TIME]),
+      `one way, 9 AM: the §2.4 lines (${oneConds.join(' | ')})`);
     check((await page.locator('.rb-disclaimer').textContent()).trim() === DISCLAIMER, 'the disclaimer under the fare');
 
     // 👍/👎: a 👎 opens an optional comment; Send thanks the visitor.
@@ -257,7 +268,7 @@ async function main() {
     await page.getByRole('button', { name: 'Edit trip details' }).click();
     await page.fill('#rb-pickup-time', '20:30');
     const late = await estimateAndCompare(page, 'one-way 20:30 departure');
-    check(late.result.night_charge_applied === true, 'a 20:30 departure on a 3h+ drive triggers the night charge');
+    check(late.result.night_charge_applied === true && (await conds(page)).includes(NIGHT), 'a 20:30 departure on a 3h+ drive triggers the night charge, and says so');
 
     // Round trip, 3 days, stay not arranged — back to the form through the header's
     // "Get an Estimate" this time, which keeps the trip and returns to the top.
@@ -279,7 +290,9 @@ async function main() {
     const each = Math.round(round.inputs.distanceKm); // the route one way
     check(new RegExp(`^EST\\. DISTANCE ${2 * each} km ${each} km each way$`, 'i').test(roundTiles[1] || '') && /each way$/.test(roundTiles[0] || ''),
       `round trip: the tiles give the total and each way (${roundTiles.join(' | ')})`);
-    check((await page.locator('.rb-conds').textContent()).includes("Includes the Buddy's stay for 2 nights"), 'stay line reads "2 nights"');
+    const roundConds = await conds(page);
+    check(roundConds[0] === "Includes 12 hours of your Buddy's time from pickup, on each of the 3 days." && roundConds.includes("Includes your Buddy's stay for 2 nights."),
+      `round trip: 12 hours on each of the 3 days, and the stay for 2 nights (${roundConds.slice(0, 3).join(' | ')})`);
 
     // Hourly: 4 hours -> 996
     await page.getByRole('button', { name: 'Edit trip details' }).click();
@@ -289,6 +302,36 @@ async function main() {
     const hourly = await estimateAndCompare(page, 'hourly 4h');
     check(hourly.result.total_fare === 996, 'hourly 4h is ₹996 (legacy 249/h)');
     check(await page.locator('.rb-tiles').count() === 0 && (await page.locator('.rb-disclaimer').textContent()).trim() === HOURLY_DISCLAIMER, 'hourly: no route tiles, and its own disclaimer');
+
+    // A long drive (§1C): Jaipur and back the same day is about 18 hours of
+    // driving. The safety warning, a rest stop by default, and the switch to
+    // the drive-through price, each re-priced by the backend.
+    await page.getByRole('button', { name: 'Edit trip details' }).click();
+    await page.getByRole('button', { name: 'Round Trip' }).click();
+    await page.fill('#rb-return-date', await page.inputValue('#rb-departure-date'));
+    check(!(await page.$('.rb-stay')), 'a same-day round trip has no stay question');
+    await pickPlace(page, '#rb-destination', 'Jaipur');
+    await page.fill('#rb-pickup-time', '09:00');
+    const jaipur = await estimateAndCompare(page, 'Jaipur and back, same day');
+    const warn = (await page.locator('.rb-long__warn').textContent().catch(() => '')).replace(/\s+/g, ' ').trim();
+    check(jaipur.result.long_drive && !jaipur.result.drive_through && jaipur.result.trip_days === 2
+      && warn === 'This trip needs more than 12 hours of driving. Your Buddy needs rest for a safe trip. The fare includes a rest stop.',
+      `long drive: the safety warning, rest stop included, a second Trip Day ("${warn}")`);
+    check((await conds(page)).includes('Long drive: a rest stop is included.'), 'long drive: the rest-stop line');
+    await page.screenshot({ path: path.join(SHOTS, 'estimate-long-drive.png'), fullPage: true });
+    const restFare = jaipur.result.total_fare;
+    await page.locator('label[for="rb-drive-through"]').click();
+    const through = await page.waitForFunction((was) => window.__rbLastEstimate?.result?.drive_through && window.__rbLastEstimate.result.total_fare !== was ? window.__rbLastEstimate : null, restFare, { timeout: 5000 })
+      .then((h) => h.jsonValue()).catch(() => null);
+    const pyThrough = through ? backendTotal(through.inputs) : null;
+    const shownThrough = (await page.locator('[data-testid="fare-estimate"]').textContent()).replace(/\D/g, '');
+    check(!!through && through.result.total_fare === pyThrough.total && String(through.result.total_fare) === shownThrough && through.result.total_fare > restFare,
+      `drive-through: ₹${through?.result.total_fare} shown, backend ₹${pyThrough?.total}, more than the rest stop's ₹${restFare}`);
+    check((await conds(page)).includes('Long drive: drive-through selected.') && (await page.locator('.rb-long__warn').textContent()).includes('without the rest stop'),
+      'drive-through: the line and the warning say so');
+    await page.locator('label[for="rb-drive-through"]').click();
+    check(await page.waitForFunction((was) => window.__rbLastEstimate?.result?.total_fare === was, restFare, { timeout: 5000 }).then(() => true).catch(() => false),
+      'switching back restores the rest-stop fare');
 
     // The pickup box is restricted to the Tricity: a Delhi landmark may only
     // surface Tricity-local matches (Mohali has businesses named after it),

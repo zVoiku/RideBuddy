@@ -161,7 +161,7 @@ class TestOpsVisibility:
         row = session.get(f"{API}/ops/bookings", headers=ops["headers"]).json()[0]
         d = session.get(f"{API}/ops/bookings/{row['id']}", headers=ops["headers"]).json()
         assert "breakdown" in d and "commission" in d
-        assert d["deposit"] == round(d["fare"] * 0.20), "deposit is 20% per Rate Table v1.7"
+        assert d["deposit"] == round(d["fare"] * 0.20), "deposit is 20% per the rate table"
 
 
 # ---------- Dashboard ----------

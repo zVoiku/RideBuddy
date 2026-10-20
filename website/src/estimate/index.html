@@ -210,6 +210,20 @@
   .rb-tile__note { font-size: 12px; color: var(--color-grey-500); }
 
   /* The fare and the 👍/👎 on it; a 👎 opens the comment below, inside the same panel. */
+  /* More than 12 hours of driving: the safety warning and the drive-through switch (§1C). */
+  .rb-long { display: flex; gap: 12px; align-items: flex-start; margin: 20px 0 0; padding: 16px 18px; border-radius: var(--radius-lg); background: #FFF6E0; color: var(--color-charcoal); }
+  .rb-long > svg { flex: 0 0 auto; margin-top: 1px; }
+  .rb-long__body { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .rb-long__warn { margin: 0; font-size: 14px; line-height: 1.55; }
+  .rb-switch { display: flex; gap: 12px; align-items: center; min-height: 44px; cursor: pointer; }
+  .rb-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .rb-switch__track { flex: 0 0 auto; position: relative; width: 44px; height: 26px; border-radius: 999px; background: #C9C3B5; transition: background 150ms; }
+  .rb-switch__thumb { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--color-white); box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform 150ms; }
+  .rb-switch input:checked + .rb-switch__track { background: var(--color-green-500); }
+  .rb-switch input:checked + .rb-switch__track .rb-switch__thumb { transform: translateX(18px); }
+  .rb-switch input:focus-visible + .rb-switch__track { box-shadow: 0 0 0 3px rgba(74,92,47,.25); }
+  .rb-switch__label { display: block; font-size: 14px; font-weight: 500; }
+  .rb-switch__sub { display: block; font-size: 12px; color: var(--color-grey-500); }
   .rb-farepanel { margin-top: 22px; background: var(--color-green-50); border-radius: var(--radius-lg); overflow: hidden; }
   .rb-farepanel__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding: 24px; }
   .rb-fare__label { font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-green-700); margin-bottom: 6px; }

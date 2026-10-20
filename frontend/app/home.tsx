@@ -52,7 +52,7 @@ export default function Home() {
   };
   useFocusEffect(useCallback(() => { load(); }, []));
 
-  // Rate Table v1.7 §5.3: trip_days = return date − outbound date + 1, counted
+  // Rate Table §5.3: trip_days = return date − outbound date + 1, counted
   // on calendar days. A same-day return is one billable day, an overnight two.
   const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const nights = oneWay || tripMode === 'hourly' || !returnDate ? 0 :
@@ -185,8 +185,8 @@ export default function Home() {
                 </TouchableOpacity>
               )}
 
-              {/* Round trips only (Rate Table v1.7 §5.2). Answering yes removes
-                  the ₹499/night stay allowance from the fare. */}
+              {/* Round trips over more than one day (Rate Table §5.2). Answering
+                  yes removes the ₹499/night stay allowance from the fare. */}
               {tripMode === 'point_to_point' && !oneWay && nights > 0 && (
                 <View style={styles.intersectCard}>
                   <View style={{ flex: 1, paddingRight: 12 }}>
