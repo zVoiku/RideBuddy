@@ -30,12 +30,23 @@ website/               ridebuddy.co.in on Cloudflare Workers (see website/README
   build.mjs            builds dist/: holding page, /estimate/, /beta/ artboard
   src/site.js          the site's own cookieless analytics (added to every page)
   worker/              Worker script: forms and analytics -> D1, /admin lists + dashboard
+rates.json             Every fare rate (Rate Table v1.10): read by the backend and the website build
 scripts/capture.js     Playwright script: screenshots the whole flow (web build)
 .claude/               SessionStart hook that installs deps + scaffolds .env
 ```
 
 The partner app is a separate npm project: run `npm install` inside
 `RideBuddy-partner/` (the SessionStart hook only installs `frontend/` + `backend/`).
+
+## Fares
+
+One engine, one rates file. `rates.json` holds every rate; `fare_breakdown` in
+`backend/server.py` prices both apps' trips from it, and
+`website/src/estimate/fare-engine.js` is its line-for-line port for the
+website, built from the same file. To change a rate, edit `rates.json`, run
+`npm --prefix website test` (parity, plus the rate table's worked examples) and
+the backend tests, then restart the backend and redeploy the site. A rule change
+goes into both engines; the parity test fails until they agree.
 
 ## Environment variables
 

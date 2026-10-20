@@ -13,12 +13,12 @@ only need the short version. If it does not, paste the full contents of
 I'm building the public marketing website for RideBuddy.
 
 Full context is in the repo at docs/WEBSITE_CONTEXT.md — read it first. It
-covers the product, the locked pricing (Rate Table v1.7), brand tokens,
+covers the product, the locked pricing (Rate Table v1.10), brand tokens,
 vocabulary, what's actually shipped, and what must not be claimed.
 
 Two warnings from that file worth repeating: memory/PRD.md is stale and wrong
-about branding and pricing — ignore it. And backend/server.py is the source of
-truth for any number.
+about branding and pricing — ignore it. And rates.json (read by backend/server.py
+and the website build) is the source of truth for any rate.
 
 Before writing code, ask me:
 - Stack (Next.js / Astro / something else)

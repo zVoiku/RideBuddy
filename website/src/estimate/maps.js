@@ -177,7 +177,7 @@ export async function getDirections(origin, destination) {
   if (!leg) return null;
   return {
     distance_km: leg.distance.value / 1000,
-    duration_min: Math.round(leg.duration.value / 60),
+    duration_min: leg.duration.value / 60, // unrounded: the fare is priced on exact minutes (§1A)
     polyline: route.overview_polyline || '',
     start: { lat: leg.start_location.lat(), lng: leg.start_location.lng() },
     end: { lat: leg.end_location.lat(), lng: leg.end_location.lng() },

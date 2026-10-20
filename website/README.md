@@ -47,22 +47,34 @@ result in `frontend/app/booking/summary.tsx`.
   radius gates a pinned point exactly as it gates a searched one.
 - **Route** — Directions gives the one-way distance and drive time, exactly as
   the app's `getDirections()` does. Both feed the fare engine.
-- **Fare** — `src/estimate/fare-engine.js` is a line-for-line port of
-  `fare_breakdown` in `backend/server.py`, including the IST night window,
-  §2.2 day rounding, the legacy ₹249/h hourly rate, and Python's
-  half-to-even rounding. `npm test` runs 1,690 trips through both and fails on
-  the first differing field.
+- **Fare** — Rate Table v1.10. `src/estimate/fare-engine.js` is a
+  line-for-line port of `fare_breakdown` in `backend/server.py`: Trip Days of
+  12 hours' duty, the one-way return charge, the long-drive rule (rest stop or
+  drive-through), the night charge on more than 15 minutes of duty between
+  10 PM and 6 AM IST, and the legacy ₹249/h hourly rate, summed exactly from
+  whole metres and seconds and rounded once, halves up. The rates themselves
+  are `../rates.json` (see "The rates" below). `npm test` runs over 10,000
+  trips through both engines and fails on the first differing field, and
+  prices all sixteen of the rate table's worked examples through both.
 - **Get Estimate** stays disabled until the trip is complete, with one line
   under it saying what is still missing (a pickup chosen from the suggestions
   or the map, a destination, a date that hasn't passed, a return on or after
   the departure, a time, the hours).
 - **Result** — the route on an interactive map with tap-to-expand, and under
-  it two tiles: EST. TRIP TIME and EST. DISTANCE (rounded to the km; a round
-  trip shows the total and "… each way", one way says "One way"; none for
-  hourly). Then one number, "Inclusive of all taxes", and 👍/👎 beside it
-  ("Does this fare work for you?"): a 👎 opens an optional comment (280
-  characters, Send, then "Thank you. Noted."). The app's inclusion lines
-  follow verbatim, minus the two "Extra … is added to the final fare" lines,
+  it two tiles: EST. TRIP TIME and EST. DISTANCE (time to the nearest 5
+  minutes, distance to the km, as §2.4 says; the fare uses the exact values;
+  a round trip shows the total and "… each way", one way says "One way"; none
+  for hourly). Past 12 hours of driving, the safety warning ("This trip needs
+  more than 12 hours of driving. Your Buddy needs rest for a safe trip. The
+  fare includes a rest stop.") and a switch, "Drive through without the rest
+  stop — only if you and your Buddy both agree", that re-prices the same route
+  on the drive-through plan as a new estimate. Then one number, "Inclusive of
+  all taxes", and 👍/👎 beside it ("Does this fare work for you?"): a 👎 opens
+  an optional comment (280 characters, Send, then "Thank you. Noted."). The
+  §2.4 lines follow — 12 hours of your Buddy's time from pickup (on each day),
+  food, the stay, the night charge and the long-drive plan when they apply;
+  tolls extra, paid on the road; extra time charged by the minute in the final
+  fare — the same lines the app shows,
   then "Final fare is calculated when your trip ends." and the disclaimer
   ("Indicative fare for the route, date and time you entered, … Terms of Use
   apply."; hourly has its own wording). Then "Edit trip details" and the
@@ -70,14 +82,27 @@ result in `frontend/app/booking/summary.tsx`.
   opens; no deposit line, no itemisation (§2.4). A vote and a signup made on
   the same fare land on the same row of the clients list (see below).
 
+**The stay question** ("Will you arrange your Buddy's overnight stay?") shows
+only on round trips over more than one day (§5.2); a same-day round trip long
+enough for a rest stop includes its stay.
+
+**The rates.** Every rate is in `rates.json` at the repo root — Rate Table
+v1.10 §3.4, plus the deposit and the legacy hourly rate. The backend reads it
+at startup; `build.mjs` compiles it into `/estimate/` and into `/beta/`'s
+`rate-config.js` (built from `src/estimate/artboard-rates.js`, so the
+artboard's copy of the rates is never shipped). To change a rate: edit
+`rates.json`, run `npm test` (parity) and the backend tests, restart the
+backend, and merge to main so Cloudflare rebuilds the site. Money is in rupees
+with at most two decimals; the backend refuses anything finer.
+
 **Service area.** Pickups within 25 km of Chandigarh (the Tricity);
 destinations within 600 km (Delhi, Amritsar, Manali, Dharamshala, Rishikesh,
 Jaipur). Autocomplete is restricted to a box of that size and the chosen place
 is checked against the radius — constants at the top of `src/estimate/maps.js`.
 
 **Time is IST.** Pickup date and time are Indian wall-clock time whatever the
-visitor's browser zone, because the night charge and the calendar-day rule are
-IST rules. The backend applies the same conversion.
+visitor's browser zone, because the night window and the round trip's return
+day are IST rules. The backend applies the same conversion.
 
 **Google APIs it actually calls:** Maps JavaScript API, Places API (New),
 Directions API, and Geocoding API (reverse geocoding for the map picker — the
@@ -316,7 +341,8 @@ instead of shipping a half-patched page.
 ## Tests
 
 ```bash
-npm test                 # fare parity vs backend/server.py (needs backend/.venv)
+npm test                 # fare parity vs backend/server.py and the rate table's
+                         # worked examples (needs backend/.venv)
 npm run build && npm run test:worker
                          # the Worker: helpers, then every endpoint under
                          # `wrangler dev` with a throwaway local D1
@@ -344,13 +370,15 @@ dashboard section, a label sent to inject HTML shown escaped, the daily CSV,
 months, and a backlog summed eight days at a time.
 
 `verify.mjs` serves `dist/` and the Worker with `wrangler dev`, drives the
-pages headless — one way, a late departure, a three-day round trip, hourly, an
-out-of-area pickup, the map picker (open, drag, re-caption, tap a place,
-confirm, then price the pinned point), fullscreen map, mobile viewport — and
-re-prices every estimate with the backend's `fare_breakdown` on the exact
-inputs the page used — with Get Estimate disabled and its hint until the trip
-is complete, the trip-time and distance tiles, "Inclusive of all taxes", the
-disclaimers and the "Extra …" lines gone. Then the forms: a 👎 with a comment,
+pages headless — one way, a late departure, a three-day round trip, hourly, a
+same-day Jaipur round trip long enough for the long-drive rule (warning, rest
+stop, then the drive-through switch and back), an out-of-area pickup, the map
+picker (open, drag, re-caption, tap a place, confirm, then price the pinned
+point), fullscreen map, mobile viewport — and re-prices every estimate with
+the backend's `fare_breakdown` on the exact inputs the page used — with Get
+Estimate disabled and its hint until the trip is complete, the trip-time and
+distance tiles, "Inclusive of all taxes", the §2.4 lines, and the
+disclaimers. Then the forms: a 👎 with a comment,
 then joining the waitlist under the same estimate (one row with the vote), the
 `/beta` Contact waitlist, the hero's Join the Waitlist pop-up, an individual
 Buddy application and a driver agency's from `/beta/#apply`, each refused once
@@ -417,8 +445,12 @@ Validate config changes locally with `npx wrangler deploy --dry-run`.
   `/estimate/`) still has its unwired waitlist; it is dead code, left as is.
 - **"Privacy Policy" and "Terms of Use"** in the consent tick and the
   disclaimer are plain text: there are no such pages yet to link to.
-- **Hourly is priced at the legacy ₹249/h** and is not in Rate Table v1.7; the
-  backend marks it `uncovered_by_rate_table`.
+- **Hourly is priced at the legacy ₹249/h** and is not in Rate Table v1.10;
+  the backend marks it `uncovered_by_rate_table`.
+- **Drive-through is estimate-only.** The website shows its price behind the
+  switch (§1C, Phase 1); a booking is always the rest stop, since the
+  drive-through needs both Terms of Use to allow it first (compliance item 4).
+  The app shows the warning and the rest-stop fare only.
 - **`/beta/` is not server-rendered** — the artboard is compiled in the browser
   by Babel. Fine for a link-shared preview; hence `noindex`.
 - **`.image-slots.state.json` 404s** in the `/beta/` console — an authoring-tool
@@ -431,6 +463,7 @@ Validate config changes locally with `npx wrangler deploy --dry-run`.
   scheduled for shutdown). Switching means enabling the Routes API on the key
   and migrating the app's `getDirections()` at the same time, so both sides
   keep pricing on the same route.
-- Live routing puts Sector 17 → Shimla at ~114 km, so the calculator reads
-  ₹1,611 against the marketing table's ₹1,612 at a nominal 115 km. Expected;
-  the table is labelled "typical".
+- Live routing puts Sector 17 → Shimla at ~114 km and 3 h 14 min, so the
+  calculator reads ₹1,612 against the rate table's illustrative ₹1,613 at
+  115 km. Expected: §2.3's distances are illustrative, and the pass rule is the
+  formula applied to Google's values.

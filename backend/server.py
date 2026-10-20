@@ -5,6 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import asyncio
+import json
 import math
 from collections import Counter
 import random
@@ -158,7 +159,7 @@ class Booking(BaseModel):
     base_fare: float = 0
     discount: float = 0
     total_fare: float = 0
-    # Itemised fare the estimate was built from (Rate Table v1.7). Kept so the
+    # Itemised fare the estimate was built from (the rate table). Kept so the
     # payout split and trip-end reconciliation use the same components.
     fare: dict = Field(default_factory=dict)
     customer_stay: bool = False
@@ -239,11 +240,15 @@ class EstimateIn(BaseModel):
     distance_km: float = 0
     duration_hours: float = 0
     days: int = 0
-    # Needed to price the night/odd-hour charge (§2.1 #5).
+    # Needed to price the night charge (§1B).
     scheduled_at: Optional[str] = None
     # Round trips only (§5.2): True = the customer puts the Buddy up, so the
     # stay allowance is excluded.
     customer_stay: bool = False
+    # Long drives only (§1C): price the drive-through instead of the rest stop.
+    # Estimates only — a booking is always the rest stop until both Terms of
+    # Use allow the consented exception (§1C "Legal"), so BookingIn has no such field.
+    drive_through: bool = False
 
 
 class BookingIn(BaseModel):
@@ -416,31 +421,34 @@ async def _thread_or_403(booking_id: str, caller: dict) -> dict:
     return b
 
 
-# ---------------- Fare engine — Rate Table v1.7 ----------------
-# §3.4 requires every rate be a configurable variable rather than a literal, so
-# the ramp and any repricing land here and nowhere else.
-FARE = {
-    "per_day_rate": 1199,
-    "daily_km_inclusion": 300,
-    "daily_hour_inclusion": 12,
-    "overage_per_km": 3.99,
-    "return_per_km": 0.99,
-    "food_per_day": 299,
-    "night_charge": 249,
-    "stay_per_night": 499,
-    "night_start_hour": 22,   # arrival at or after 22:00 triggers
-    "night_end_hour": 6,      # pickup before 06:00 triggers
-    "standard_commission_pct": 25,
-    "promo_discount_pct": 15,  # launch promo; ramps to 0 → standard 25%
-    "gst_rate_pct": 18,
-}
+# ---------------- Fare engine — Rate Table v1.10 ----------------
+# §3.4: every rate is a configurable variable, never a literal. They live in
+# rates.json at the repo root, which the website build reads too, so a rate is
+# changed in one place for the backend, both apps (priced here) and the site.
+RATES_FILE = ROOT_DIR.parent / "rates.json"
+
+# Money rates: rupees, at most two decimals (checked on load, so the engine can
+# work in whole paise and never round a component on the way).
+_MONEY = ("per_day_rate", "extra_time_per_min", "return_per_km", "food_per_day",
+          "stay_per_night", "night_charge", "hourly_rate")
+
+
+def _load_rates(path: Path) -> dict:
+    rates = {k: v for k, v in json.loads(path.read_text(encoding="utf-8")).items() if not k.startswith("_")}
+    for k in _MONEY:
+        if abs(rates[k] * 100 - round(rates[k] * 100)) > 1e-6:
+            raise ValueError(f"{path.name}: {k} must be in whole paise, got {rates[k]}")
+    return rates
+
+
+FARE = _load_rates(RATES_FILE)
 
 # §1: 20% of the estimate at booking, balance reconciled at trip end.
-DEPOSIT_PCT = 20
+DEPOSIT_PCT = FARE["deposit_pct"]
 
 
 def effective_commission_pct() -> float:
-    """Standard rate less the launch promo — 10% at launch, ramping to 25%."""
+    """Standard rate less the launch promo: 20% at launch, ramping to 30% (§3.2)."""
     return max(0.0, FARE["standard_commission_pct"] - FARE["promo_discount_pct"])
 
 
@@ -461,38 +469,66 @@ def _pickup_in_ist(scheduled_at: str) -> datetime:
     return start.astimezone(IST)
 
 
-def _night_trigger(scheduled_at: Optional[str], duration_hours: float) -> bool:
-    """Pickup before 06:00 IST, or estimated arrival at/after 22:00 IST (§2.1 #5)."""
+def _pickup_second(scheduled_at: Optional[str]) -> Optional[int]:
+    """Seconds past IST midnight of the pickup, or None when it can't be known."""
     if not scheduled_at:
-        return False
+        return None
     try:
-        start = _pickup_in_ist(scheduled_at)
+        t = _pickup_in_ist(scheduled_at)
     except ValueError:
-        return False
-    if start.hour < FARE["night_end_hour"]:
-        return True
-    arrival = start + timedelta(hours=max(0.0, duration_hours))
-    return arrival.hour >= FARE["night_start_hour"] or arrival.date() > start.date()
+        return None
+    return t.hour * 3600 + t.minute * 60 + t.second
 
 
-def _one_way_days(duration_hours: float, scheduled_at: Optional[str]) -> int:
-    """§2.2: 1 day unless drive time exceeds the daily hour inclusion or the
-    trip crosses into the next IST calendar day, in which case the next day bills.
+def _half_up(x: float) -> int:
+    """Nearest integer, halves up (§1A) — written out so the website's port in
+    fare-engine.js gives the same answer as Python here."""
+    return math.floor(x + 0.5)
 
-    NOTE: Open Question #1 in v1.7 is unresolved — §2.1 says a >12h day charges
-    per-km overage, while §2.2 says it bills a second day. The formula section
-    wins here; flip this one function if the Founder rules the other way.
-    """
-    hours = max(0.0, duration_hours)
-    days = max(1, math.ceil(hours / FARE["daily_hour_inclusion"])) if hours else 1
-    if scheduled_at:
-        try:
-            start = _pickup_in_ist(scheduled_at)
-            if (start + timedelta(hours=hours)).date() > start.date():
-                days = max(days, 2)
-        except ValueError:
-            pass
-    return days
+
+def _clock(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 3600 + int(m) * 60
+
+
+def _paise(rupees: float) -> int:
+    return _half_up(rupees * 100)
+
+
+def _added_days(drive_s: int) -> int:
+    """§1C: past 12 hours of driving, Trip Days = ceiling(drive time / 12 h)."""
+    if drive_s <= FARE["long_drive_threshold_h"] * 3600:
+        return 0
+    duty = FARE["daily_duty_minutes"] * 60
+    return -(-drive_s // duty) - 1
+
+
+def _duty(start: int, drive_s: int, drive_through: bool) -> list:
+    """The duty periods of one leg, in seconds from the departure day's IST
+    midnight. A long leg on the rest-stop plan (§1C) is driven in 12-hour
+    stretches with a 9-hour rest between; a drive-through runs straight on."""
+    duty = FARE["daily_duty_minutes"] * 60
+    if drive_through or drive_s <= duty:
+        return [(start, start + drive_s)]
+    out, t, left = [], start, drive_s
+    while left > 0:
+        d = min(duty, left)
+        out.append((t, t + d))
+        left -= d
+        t += d + FARE["rest_hours"] * 3600
+    return out
+
+
+def _night_seconds(periods: list) -> int:
+    """Seconds of duty inside the night window (22:00–06:00 IST) on any night."""
+    ns, ne = _clock(FARE["night_start"]), _clock(FARE["night_end"])
+    span = 86400 + ne - ns if ne <= ns else ne - ns
+    total = 0
+    for a, b in periods:
+        for k in range(a // 86400 - 1, b // 86400 + 1):
+            ws = k * 86400 + ns
+            total += max(0, min(b, ws + span) - max(a, ws))
+    return total
 
 
 def fare_breakdown(
@@ -504,58 +540,89 @@ def fare_breakdown(
     days: int = 0,
     scheduled_at: Optional[str] = None,
     customer_stay: bool = False,
+    drive_through: bool = False,
 ) -> dict:
-    """Itemised fare. §1 keeps the itemisation internal — the customer is shown
-    a single estimate — but every component is priced individually because
-    commission applies to only some of them (§3.1).
+    """Itemised fare, Rate Table v1.10. §1 keeps the itemisation internal — the
+    customer is shown a single estimate — but every component is priced
+    individually because commission applies to only some of them (§3.1).
 
-    `distance_km` is always the one-way distance from the routing API. A round
-    trip covers it twice, which is what §5.4's sense check assumes (a 300 km
-    each-way route measured as 600 km).
+    `distance_km` and `duration_hours` are the one-way route from Google
+    Directions (§1A); a round trip drives it twice. `days` is the round trip's
+    calendar days (return date − departure date + 1). `drive_through` picks the
+    long-drive plan (§1C): False is the default rest stop.
+
+    The fare pays for the Buddy's time (§1): a Trip Day is 12 hours of duty
+    from pickup, distance is not charged except the one-way return, and an
+    estimate's duty is its drive time, so it carries no extra time. Amounts are
+    summed exactly, from whole metres and seconds, and only the total is
+    rounded, halves up (§1A).
     """
-    # Hourly is not covered by the rate table at all — v1.7 locks One-Way and
+    # Hourly is not covered by the rate table at all — v1.10 prices One-Way and
     # Round Trip only. Left on its prior pricing rather than invented here.
     if trip_type == "hourly":
-        base = round(max(1.0, duration_hours) * 249, 2)
+        base = round(max(1.0, duration_hours) * FARE["hourly_rate"], 2)
         return {
-            "per_day": base, "overage": 0.0, "return_leg": 0.0, "food": 0.0,
-            "stay": 0.0, "night": 0.0, "trip_days": 0, "billable_km": 0.0,
-            "night_trigger": False, "total": base, "uncovered_by_rate_table": True,
+            "per_day": base, "extra_time": 0.0, "return_leg": 0.0, "food": 0.0,
+            "stay": 0.0, "night": 0.0, "trip_days": 0, "overnights": 0, "added_days": 0, "stay_units": 0,
+            "long_drive": False, "drive_through": False, "night_trigger": False,
+            "total": base, "uncovered_by_rate_table": True,
         }
 
+    metres = _half_up(max(0.0, distance_km) * 1000)
+    drive_s = _half_up(max(0.0, duration_hours) * 3600)
+    start = _pickup_second(scheduled_at)
+    at = start or 0
     if one_way:
-        trip_days = _one_way_days(duration_hours, scheduled_at)
-        billable_km = max(0.0, distance_km)
-        return_leg = FARE["return_per_km"] * billable_km
-        stay = 0.0  # §2.1: no stay charges on one-way trips
+        added = _added_days(drive_s)
+        trip_days = 1 + added
+        overnights = 0
+        legs = [_duty(at, drive_s, drive_through)]
+        # §1C: ₹499 per added day on both plans — the rest stop's overnight
+        # stay, or the drive-through's continuous-drive charge.
+        stay_units = added
+        return_mp = _paise(FARE["return_per_km"]) * metres  # paise × m/km: thousandths of a paise
     else:
-        # §5.3: trip_days = return date − outbound date + 1. The caller counts
-        # nights, so a same-day return is 1 day and an overnight return is 2.
-        trip_days = max(1, days)
-        billable_km = max(0.0, distance_km) * 2
-        return_leg = 0.0  # §5.1 #3: the Buddy returns driving the customer's car
-        overnights = max(0, trip_days - 1)
-        stay = 0.0 if customer_stay else FARE["stay_per_night"] * overnights
+        calendar_days = max(1, days)
+        overnights = calendar_days - 1
+        if calendar_days == 1:
+            # §5.3: a same-day trip is one duty: out, and back on arrival.
+            added = _added_days(2 * drive_s)
+            legs = [_duty(at, 2 * drive_s, drive_through)]
+        else:
+            # Out on the departure date, back at the pickup time on the return date.
+            added = 2 * _added_days(drive_s)
+            legs = [_duty(at, drive_s, drive_through), _duty(at + overnights * 86400, drive_s, drive_through)]
+        trip_days = calendar_days + added
+        # §5.2: the stay question covers the overnights and the rest stops; a
+        # drive-through always carries its ₹499 per added day.
+        stay_units = (0 if customer_stay else overnights) + (added if drive_through or not customer_stay else 0)
+        return_mp = 0  # §5.1 #3: the Buddy returns driving the customer's car
 
-    per_day = FARE["per_day_rate"] * trip_days
-    included_km = FARE["daily_km_inclusion"] * trip_days
-    overage = FARE["overage_per_km"] * max(0.0, billable_km - included_km)
-    food = FARE["food_per_day"] * trip_days
-    night_trigger = _night_trigger(scheduled_at, duration_hours)
-    night = float(FARE["night_charge"]) if night_trigger else 0.0
+    # §1B, checked on every leg: more than 15 minutes of duty between 22:00 and
+    # 06:00. Flat, once per trip.
+    night_trigger = start is not None and any(_night_seconds(leg) > FARE["grace_min"] * 60 for leg in legs)
 
-    total = per_day + overage + return_leg + food + stay + night
+    per_day = _paise(FARE["per_day_rate"]) * trip_days
+    food = _paise(FARE["food_per_day"]) * trip_days
+    stay = _paise(FARE["stay_per_night"]) * stay_units
+    night = _paise(FARE["night_charge"]) if night_trigger else 0
+    total_mp = (per_day + food + stay + night) * 1000 + return_mp
     return {
-        "per_day": round(per_day, 2),
-        "overage": round(overage, 2),
-        "return_leg": round(return_leg, 2),
-        "food": round(food, 2),
-        "stay": round(stay, 2),
-        "night": night,
+        "per_day": per_day / 100,
+        "extra_time": 0.0,  # §1B: an estimate's duty is its drive time
+        "return_leg": ((return_mp + 500) // 1000) / 100,
+        "food": food / 100,
+        "stay": stay / 100,
+        "night": night / 100,
         "trip_days": trip_days,
-        "billable_km": round(billable_km, 2),
+        "overnights": overnights,     # round trip: return date − departure date
+        "added_days": added,          # Trip Days added by the long-drive rule
+        "stay_units": stay_units,     # ₹499 charges: nights stayed, and drive-through days
+        "long_drive": added > 0,
+        "drive_through": added > 0 and drive_through,
         "night_trigger": night_trigger,
-        "total": round(total),  # customers are quoted whole rupees
+        "one_way_km": metres / 1000,
+        "total": (total_mp + 50000) // 100000,  # whole rupees, halves up
         "uncovered_by_rate_table": False,
     }
 
@@ -565,7 +632,7 @@ def compute_fare(trip_type: str, one_way: bool, distance_km: float, duration_hou
                  customer_stay: bool = False):
     """Back-compatible shape (base, discount, total) for existing callers.
 
-    v1.7 is a fixed rate table with no promotional discount, so `discount` is
+    The rate table is fixed, with no promotional discount, so `discount` is
     always 0 and `is_new_user` no longer changes the price.
     """
     b = fare_breakdown(
@@ -580,22 +647,28 @@ def gen_code() -> str:
     return "".join(random.choices(string.digits, k=4))
 
 
+def _margin(b: dict) -> float:
+    """The margin-bearing part of a stored fare: day rate and extra time, plus
+    the distance overage that bookings priced before v1.9 carry."""
+    return float(b.get("per_day", 0)) + float(b.get("extra_time", 0)) + float(b.get("overage", 0))
+
+
 def partner_payout(booking: dict) -> float:
     """What the Buddy earns (§3.1).
 
-    Commission is charged on margin-bearing components only — the per-day rate
-    and distance overage. The return charge, food, stay and night charges pass
-    through at 100%, so a flat percentage of the total fare would underpay the
-    Buddy on exactly the trips carrying the most allowances.
+    Commission is charged on margin-bearing components only — the day rate and
+    extra time. The return charge, food, stay and night charges pass through at
+    100%, so a flat percentage of the total fare would underpay the Buddy on
+    exactly the trips carrying the most allowances.
     """
     b = booking.get("fare") or {}
     if not b:
-        # Pre-v1.7 bookings stored only a total; fall back to the whole fare as
+        # Bookings priced before v1.7 stored only a total; fall back to the whole fare as
         # margin-bearing rather than inventing a split.
         margin = float(booking.get("total_fare") or 0)
         pass_through = 0.0
     else:
-        margin = float(b.get("per_day", 0)) + float(b.get("overage", 0))
+        margin = _margin(b)
         pass_through = (
             float(b.get("return_leg", 0)) + float(b.get("food", 0))
             + float(b.get("stay", 0)) + float(b.get("night", 0))
@@ -607,7 +680,7 @@ def partner_payout(booking: dict) -> float:
 def commission_lines(booking: dict) -> dict:
     """Platform side of the same split — commission, the GST inside it, and net."""
     b = booking.get("fare") or {}
-    margin = (float(b.get("per_day", 0)) + float(b.get("overage", 0))) if b else float(booking.get("total_fare") or 0)
+    margin = _margin(b) if b else float(booking.get("total_fare") or 0)
     commission = margin * effective_commission_pct() / 100
     # §3.1: GST is absorbed within the commission, not added to the customer fare.
     gst = commission * FARE["gst_rate_pct"] / (100 + FARE["gst_rate_pct"])
@@ -783,8 +856,18 @@ async def estimate(body: EstimateIn, user=Depends(get_current_user)):
         trip_type=body.trip_type, one_way=body.one_way, distance_km=body.distance_km,
         duration_hours=body.duration_hours, days=body.days,
         scheduled_at=body.scheduled_at, customer_stay=body.customer_stay,
+        drive_through=body.drive_through,
     )
-    total = float(b["total"])
+    return {**estimate_summary(b), "breakdown": b}
+
+
+def estimate_summary(b: dict) -> dict:
+    """What the client shows from a fare_breakdown: one number and the flags its
+    condition lines need (§2.4). The website's estimate() returns the same."""
+    total = b["total"]
+    # Nights the Buddy stays over and the fare pays for: the round trip's nights
+    # and the rest stops. A drive-through's added day is not a stay.
+    nights = b["stay_units"] - (b["added_days"] if b["drive_through"] else 0)
     return {
         # §2.4: the customer is shown one number. The itemisation stays here for
         # ops and payout, and the client deliberately does not render it.
@@ -792,13 +875,20 @@ async def estimate(body: EstimateIn, user=Depends(get_current_user)):
         "deposit": round(total * DEPOSIT_PCT / 100),
         "deposit_pct": DEPOSIT_PCT,
         "trip_days": b["trip_days"],
-        "included_km": FARE["daily_km_inclusion"] * b["trip_days"],
-        "included_hours": FARE["daily_hour_inclusion"] * b["trip_days"],
+        "duty_hours_per_day": FARE["daily_duty_minutes"] / 60,
         "night_charge_applied": b["night_trigger"],
-        "stay_included": (not body.one_way) and b["stay"] > 0,
-        "overnights": max(0, b["trip_days"] - 1) if not body.one_way else 0,
-        "breakdown": b,
-        # Retained so older clients keep rendering; v1.7 has no discount.
+        "stay_included": nights > 0,
+        "stay_nights": nights,
+        "overnights": b["overnights"],
+        "long_drive": b["long_drive"],
+        "drive_through": b["drive_through"],
+        "hourly": b["uncovered_by_rate_table"],
+        # The rules the condition lines name, so no client hardcodes them.
+        "night_start": FARE["night_start"],
+        "night_end": FARE["night_end"],
+        "night_grace_min": FARE["grace_min"],
+        "long_drive_hours": FARE["long_drive_threshold_h"],
+        # Retained so older clients keep rendering; the table has no discount.
         "base_fare": total,
         "discount": 0.0,
         "advance_30": round(total * DEPOSIT_PCT / 100),

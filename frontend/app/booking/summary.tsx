@@ -29,9 +29,9 @@ export default function Summary() {
     (async () => {
       let distance_km = 0;
       // Point-to-point trips are priced on the routed drive time, not the
-      // (always zero) hours the form sends: §2.2 bills a second day past the
-      // 12-hour inclusion or a midnight crossing, and §2.1 #5 charges for a
-      // late arrival — neither can be known without the route's duration.
+      // (always zero) hours the form sends: past 12 hours of driving the
+      // long-drive rule adds Trip Days (§1C), and the night charge depends on
+      // when the drive falls (§1B) — neither is known without the route.
       let duration_hours = hours;
       if (!isHourly && p.pickup_lat && p.drop_lat) {
         const r = await getDirections(`${p.pickup_lat},${p.pickup_lng}`, `${p.drop_lat},${p.drop_lng}`);
@@ -80,11 +80,11 @@ export default function Summary() {
               <View style={styles.routeStats}>
                 <View style={styles.routeStat}>
                   <Ionicons name="speedometer-outline" size={16} color={theme.colors.primary} />
-                  <Text style={styles.routeStatText}>{route.distance_km.toFixed(1)} km</Text>
+                  <Text style={styles.routeStatText}>{Math.round(route.distance_km).toLocaleString('en-IN')} km</Text>
                 </View>
                 <View style={styles.routeStat}>
                   <Ionicons name="time-outline" size={16} color={theme.colors.primary} />
-                  <Text style={styles.routeStatText}>{Math.floor(route.duration_min / 60)}h {route.duration_min % 60}m drive</Text>
+                  <Text style={styles.routeStatText}>{fmtDrive(route.duration_min)} drive</Text>
                 </View>
               </View>
             </View>
@@ -121,26 +121,47 @@ export default function Summary() {
           </View>
 
           <Text style={[styles.sectionT, { marginTop: 26 }]}>Fare Estimate</Text>
-          {/* Rate Table v1.7 §2.4: one number, no component breakdown. The
+          {/* Rate Table §2.4: one number, no component breakdown. The
               itemisation exists server-side but is deliberately not rendered —
               the conditions below are what the customer is told instead. */}
           {!est ? <ActivityIndicator color={theme.colors.primary} /> : (
+            <>
+            {est.long_drive && (
+              /* §1C: more than 12 hours of driving. The app books the rest stop
+                 only; drive-through waits for both Terms of Use to allow it. */
+              <View testID="long-drive-warning" style={styles.longDrive}>
+                <Ionicons name="warning-outline" size={18} color="#8A5A00" />
+                <Text style={styles.longDriveTxt}>
+                  This trip needs more than {est.long_drive_hours} hours of driving. Your Buddy needs rest for a safe trip. The fare includes a rest stop.
+                </Text>
+              </View>
+            )}
             <View style={styles.fareCard}>
               <Text style={styles.estLbl}>Estimated fare</Text>
               <Text testID="fare-estimate" style={styles.estVal}>
                 ₹{est.total_fare.toLocaleString('en-IN')}
               </Text>
 
+              {/* The conditions as Rate Table §2.4 words them; the website's
+                  estimator shows the same lines. */}
               <View style={styles.conds}>
-                <Cond text={`Includes ${est.included_km?.toLocaleString('en-IN')} km and ${est.included_hours} hours${est.trip_days > 1 ? ` across ${est.trip_days} days` : ''}.`} />
-                <Cond text="Extra distance or time beyond that is added to the final fare." />
-                {est.stay_included && (
-                  <Cond text={`Includes the Buddy's stay for ${est.overnights} ${est.overnights === 1 ? 'night' : 'nights'}. Tell us if you're arranging it and we'll take it off.`} />
+                {est.hourly ? (
+                  <Cond text={`Includes your Buddy for ${Math.max(1, hours)} ${Math.max(1, hours) === 1 ? 'hour' : 'hours'}.`} />
+                ) : (
+                  <>
+                    <Cond text={`Includes ${est.duty_hours_per_day} hours of your Buddy's time from pickup${est.trip_days > 1 ? `, on each of the ${est.trip_days} days` : ''}.`} />
+                    <Cond text="Includes your Buddy's food." />
+                    {est.stay_included && (
+                      <Cond text={`Includes your Buddy's stay for ${est.stay_nights} ${est.stay_nights === 1 ? 'night' : 'nights'}.`} />
+                    )}
+                    {est.night_charge_applied && (
+                      <Cond text={`Includes a night charge: more than ${est.night_grace_min} minutes of the trip fall between ${fmtClock(est.night_start)} and ${fmtClock(est.night_end)}.`} />
+                    )}
+                    {est.long_drive && <Cond text="Long drive: a rest stop is included." />}
+                  </>
                 )}
-                {est.night_charge_applied && (
-                  <Cond text="Includes a night charge — pickup is before 6 AM or arrival is after 10 PM." />
-                )}
-                <Cond text="Tolls are not part of this fare. You pay them directly during the trip." />
+                <Cond text="Tolls are extra, paid by you on the road." />
+                {!est.hourly && <Cond text="Extra time is charged by the minute in the final fare." />}
               </View>
 
               <View style={styles.varianceBox}>
@@ -148,6 +169,7 @@ export default function Summary() {
                 <Text style={styles.varianceTxt}>Final fare is calculated when your trip ends.</Text>
               </View>
             </View>
+            </>
           )}
         </ScrollView>
 
@@ -185,6 +207,19 @@ export default function Summary() {
   );
 }
 
+/** A drive time for display: whole minutes rounded to the nearest 5 (§2.4). */
+function fmtDrive(min: number) {
+  const t = Math.round(min / 5) * 5;
+  const h = Math.floor(t / 60), m = t % 60;
+  return h ? `${h}h${m ? ` ${m}m` : ''}` : `${m}m`;
+}
+
+/** "22:00" -> "10 PM", "06:30" -> "6:30 AM". */
+function fmtClock(hhmm: string) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return `${h % 12 || 12}${m ? `:${String(m).padStart(2, '0')}` : ''} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
 /** One inclusion/exclusion line under the estimate (§2.4). */
 const Cond = ({ text }: { text: string }) => (
   <View style={styles.condRow}>
@@ -213,6 +248,8 @@ const styles = StyleSheet.create({
   estLbl: { color: theme.colors.textSecondary, fontSize: 14, fontWeight: '600' },
   estVal: { color: theme.colors.primary, fontSize: 38, fontWeight: '900', marginTop: 2, letterSpacing: -0.5 },
   conds: { marginTop: 16, gap: 9 },
+  longDrive: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', backgroundColor: '#FFF6E0', borderRadius: theme.radius.lg, padding: 14, marginBottom: 12 },
+  longDriveTxt: { flex: 1, color: theme.colors.textPrimary, fontSize: 14, lineHeight: 20 },
   condRow: { flexDirection: 'row', gap: 9 },
   condDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: theme.colors.primaryLight, marginTop: 7 },
   condTxt: { flex: 1, color: theme.colors.textSecondary, fontSize: 13.5, lineHeight: 19 },

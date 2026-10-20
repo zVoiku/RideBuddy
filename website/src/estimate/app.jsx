@@ -10,7 +10,7 @@
  * inclusion lines. Booking is not on the website — the result leads to the
  * waitlist.
  */
-import { estimate, formatINR, roundTripDays } from './fare-engine.js';
+import { FARE, estimate, formatINR, roundTripDays } from './fare-engine.js';
 import * as maps from './maps.js';
 
 const { useState, useEffect, useRef } = React;
@@ -34,6 +34,7 @@ const PIN = 'M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0';
 const NAV = 'm3 11 19-9-9 19-2-8-8-2z';
 const CLOCK = ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M12 6v6l4 2'];
 const ROUTE = ['M6 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', 'M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15', 'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'];
+const ALERT = ['M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', 'M12 9v4', 'M12 17h.01'];
 const THUMB_UP = ['M7 10v12', 'M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z'];
 const THUMB_DOWN = ['M17 14V2', 'M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z'];
 
@@ -67,9 +68,17 @@ function istDate(offsetDays = 0) {
   return new Date(Date.now() + (330 + offsetDays * 1440) * 60000).toISOString().slice(0, 10);
 }
 
+/** A drive time for display: rounded to the nearest 5 minutes (§2.4); the fare uses the exact one. */
 function fmtDuration(min) {
-  const h = Math.floor(min / 60), m = min % 60;
+  const t = Math.round(min / 5) * 5;
+  const h = Math.floor(t / 60), m = t % 60;
   return h ? `${h} h${m ? ` ${m} min` : ''}` : `${m} min`;
+}
+
+/** "22:00" -> "10 PM", "06:30" -> "6:30 AM": the night window as the conditions say it. */
+function fmtClock(hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  return `${h % 12 || 12}${m ? `:${String(m).padStart(2, '0')}` : ''} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
 /**
@@ -143,6 +152,32 @@ function TripTiles({ route, round }) {
     <div className="rb-tiles">
       {tile(CLOCK, 'Est. trip time', fmtDuration(round ? 2 * min : min), round ? `${fmtDuration(min)} each way` : 'One way')}
       {tile(ROUTE, 'Est. distance', `${(round ? 2 * km : km).toLocaleString('en-IN')} km`, round ? `${km.toLocaleString('en-IN')} km each way` : 'One way')}
+    </div>
+  );
+}
+
+/**
+ * More than 12 hours of driving (§1C): the safety warning, and the switch that
+ * shows the drive-through price instead of the default rest stop.
+ */
+function LongDrive({ driveThrough, onChange }) {
+  return (
+    <div className="rb-long" role="note">
+      <Icon d={ALERT} size={20} stroke="#8A5A00" />
+      <div className="rb-long__body">
+        <p className="rb-long__warn">
+          This trip needs more than {FARE.long_drive_threshold_h} hours of driving. Your Buddy needs rest for a safe trip.
+          {driveThrough ? ' This fare is for driving through without the rest stop.' : ' The fare includes a rest stop.'}
+        </p>
+        <label className="rb-switch" htmlFor="rb-drive-through">
+          <input id="rb-drive-through" type="checkbox" role="switch" checked={driveThrough} onChange={(e) => onChange(e.target.checked)} />
+          <span className="rb-switch__track" aria-hidden="true"><span className="rb-switch__thumb" /></span>
+          <span>
+            <span className="rb-switch__label">Drive through without the rest stop</span>
+            <span className="rb-switch__sub">Only if you and your Buddy both agree.</span>
+          </span>
+        </label>
+      </div>
     </div>
   );
 }
@@ -677,6 +712,8 @@ function App() {
 
   const isRound = tripType === 'round';
   const isHourly = tripType === 'hourly';
+  // The stay question is for round trips over more than one day (§5.2).
+  const multiDay = isRound && !!departDate && !!returnDate && returnDate > departDate;
 
   useEffect(() => {
     track('estimator_opened');
@@ -733,36 +770,26 @@ function App() {
 
     setView('loading');
     try {
-      let est, r = null;
+      let inputs, r = null;
       if (isHourly) {
-        est = estimate({ tripType: 'hourly', oneWay: true, distanceKm: 0, durationHours: h, pickup: { date: departDate, time: pickupTime } });
+        inputs = { tripType: 'hourly', oneWay: true, distanceKm: 0, durationHours: h, pickup: { date: departDate, time: pickupTime } };
       } else {
         r = await maps.getDirections(pickup.place, destination.place);
         if (!r) throw new Error('no-route');
-        est = estimate({
+        inputs = {
           tripType: 'point_to_point', oneWay: !isRound,
           distanceKm: r.distance_km, durationHours: r.duration_min / 60, days,
-          pickup: { date: departDate, time: pickupTime }, customerStay: stayArranged,
-        });
+          pickup: { date: departDate, time: pickupTime }, customerStay: multiDay && stayArranged, driveThrough: false,
+        };
       }
       // Snapshot what the result describes: the form can change under it once
       // the customer taps "Edit trip details", and the result must not.
-      est.labels = {
+      const est = priced(inputs, {
         pickup: pickup.place.main_text, destination: destination.place?.main_text || '', round: isRound,
         date: departDate, ret: isRound ? returnDate : null, time: pickupTime,
-      };
+      });
       setRoute(r);
-      setResult(est);
-      setEstimateId(newEstimateId());
       setView('result');
-      // Exposed for the end-to-end check in test/verify.mjs: the exact inputs
-      // the engine priced, so the same trip can be re-priced by the backend.
-      window.__rbLastEstimate = {
-        inputs: isHourly
-          ? { tripType: 'hourly', oneWay: true, distanceKm: 0, durationHours: h, pickup: { date: departDate, time: pickupTime } }
-          : { tripType: 'point_to_point', oneWay: !isRound, distanceKm: r.distance_km, durationHours: r.duration_min / 60, days, pickup: { date: departDate, time: pickupTime }, customerStay: stayArranged },
-        result: est,
-      };
       // What people price, for the demand numbers on /admin: areas and cities,
       // never an address.
       track('estimate_completed', {
@@ -787,6 +814,24 @@ function App() {
   };
 
   const editTrip = () => { setView('form'); };
+
+  // The fare for these inputs, shown as a new estimate: its own id, so a
+  // 👍/👎 is always on the fare the visitor saw.
+  const priced = (inputs, labels) => {
+    const est = { ...estimate(inputs), inputs, labels };
+    setResult(est);
+    setEstimateId(newEstimateId());
+    // Exposed for the end-to-end check in test/verify.mjs: the exact inputs
+    // the engine priced, so the same trip can be re-priced by the backend.
+    window.__rbLastEstimate = { inputs, result: est };
+    return est;
+  };
+
+  // The long-drive switch: the same route, priced on the other plan (§1C).
+  const setDriveThrough = (on) => {
+    priced({ ...result.inputs, driveThrough: on }, result.labels);
+    track('long_drive_plan', { plan: on ? 'drive_through' : 'rest_stop' });
+  };
 
   // Joins the waitlist with the trip just priced, so the call back starts from
   // what the customer wants, and any 👍/👎 on this fare lands on the same row.
@@ -816,17 +861,22 @@ function App() {
     track('waitlist_joined', { source: 'estimate' });
   };
 
-  // The app's inclusion lines (summary.tsx), verbatim.
+  // The conditions, as Rate Table v1.10 §2.4 words them (and as the app's
+  // summary.tsx shows them).
   const conditions = result ? (() => {
     const out = [];
     if (result.hourly) {
       out.push({ text: `Includes your Buddy for ${result.hours} hour${result.hours === 1 ? '' : 's'}.` });
-    } else {
-      out.push({ text: `Includes ${result.included_km.toLocaleString('en-IN')} km and ${result.included_hours} hours${result.trip_days > 1 ? ` across ${result.trip_days} days` : ''}.` });
-      if (result.stay_included) out.push({ text: `Includes the Buddy's stay for ${result.overnights} ${result.overnights === 1 ? 'night' : 'nights'}. Tell us if you're arranging it and we'll take it off.` });
-      if (result.night_charge_applied) out.push({ text: 'Includes a night charge — pickup is before 6 AM or arrival is after 10 PM.' });
+      out.push({ text: 'Tolls are extra, paid by you on the road.', excluded: true });
+      return out;
     }
-    out.push({ text: 'Tolls are not part of this fare. You pay them directly during the trip.', excluded: true });
+    out.push({ text: `Includes ${result.duty_hours_per_day} hours of your Buddy's time from pickup${result.trip_days > 1 ? `, on each of the ${result.trip_days} days` : ''}.` });
+    out.push({ text: "Includes your Buddy's food." });
+    if (result.stay_included) out.push({ text: `Includes your Buddy's stay for ${result.stay_nights} ${result.stay_nights === 1 ? 'night' : 'nights'}.` });
+    if (result.night_charge_applied) out.push({ text: `Includes a night charge: more than ${FARE.grace_min} minutes of the trip fall between ${fmtClock(FARE.night_start)} and ${fmtClock(FARE.night_end)}.` });
+    if (result.long_drive) out.push({ text: result.drive_through ? 'Long drive: drive-through selected.' : 'Long drive: a rest stop is included.' });
+    out.push({ text: 'Tolls are extra, paid by you on the road.', excluded: true });
+    out.push({ text: 'Extra time is charged by the minute in the final fare.', excluded: true });
     return out;
   })() : [];
 
@@ -893,7 +943,7 @@ function App() {
                   )}
                 </div>
 
-                {isRound && (
+                {multiDay && (
                   <div className="rb-stay">
                     <span className="rb-stay__q">Will you arrange your Buddy's overnight stay?</span>
                     <div className="rb-chips">
@@ -926,6 +976,7 @@ function App() {
               <RouteMap route={route} pickup={pickup.place} hourly={result.hourly} joined={!!route && !result.hourly} />
               {route && !result.hourly && <TripTiles route={route} round={result.labels.round} />}
 
+              {result.long_drive && <LongDrive driveThrough={result.drive_through} onChange={setDriveThrough} />}
               <FarePanel key={estimateId} fare={result.total_fare} estimateId={estimateId} trip={tripOf(result)} />
               <ul className="rb-conds">
                 {conditions.map((c, i) => (

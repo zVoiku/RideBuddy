@@ -111,7 +111,8 @@ export async function getDirections(originLatLng: string, destLatLng: string): P
     if (!r || !leg) return null;
     return {
       distance_km: (r.distanceMeters || 0) / 1000,
-      duration_min: Math.round(parseFloat(r.duration || '0') / 60), // "1253s"
+      // "1253s". Unrounded: the fare is priced on exact minutes (Rate Table §1A).
+      duration_min: parseFloat(r.duration || '0') / 60,
       polyline: r.polyline?.encodedPolyline || '',
       start: { lat: leg.startLocation.latLng.latitude, lng: leg.startLocation.latLng.longitude },
       end: { lat: leg.endLocation.latLng.latitude, lng: leg.endLocation.latLng.longitude },

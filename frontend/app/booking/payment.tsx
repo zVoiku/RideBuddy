@@ -11,7 +11,7 @@ export default function Payment() {
   const p = useLocalSearchParams<Record<string, string>>();
   const router = useRouter();
   const total = parseFloat(p.total || '0');
-  // Rate Table v1.7 §1: 20% of the estimate at booking, balance reconciled at
+  // Rate Table §1: 20% of the estimate at booking, balance reconciled at
   // trip end. The percentage comes from the server so the ramp is not
   // duplicated in the client.
   const adv = parseFloat(p.deposit || p.advance30 || '0');
