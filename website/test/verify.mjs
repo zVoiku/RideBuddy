@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { startDev } from './dev-server.mjs';
+import { startTwilioStub } from './twilio-stub.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium, request } = require('playwright');
@@ -36,7 +37,7 @@ const PHONE_ERROR = 'Enter a 10-digit mobile number.';
 const CONSENT_ERROR = 'Tick the box to join the waitlist.';
 const WAITLIST_JOINED = "You're on the waitlist. We'll message you once.";
 const DISCLAIMER = 'Indicative fare for the route, date and time you entered, using the route’s standard drive time without traffic. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
-const HOURLY_DISCLAIMER = 'Indicative fare for the date, time and hours you entered. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
+const CODE_WRONG = 'That code doesn’t match. Try again.';
 const COMMENT = 'Too high for one way, we usually pay 1,200 a day.';
 /** The result's condition lines (Rate Table v1.10 §2.4), as shown. */
 const conds = (page) => page.locator('.rb-conds li').allTextContents().then((l) => l.map((t) => t.trim()));
@@ -155,8 +156,25 @@ async function main() {
   check(withinService('destination', { lat: 31.1048, lng: 77.1734 }).ok && withinService('destination', { lat: 26.9124, lng: 75.7873 }).ok, 'radius gate: Shimla and Jaipur are accepted as destinations');
   check(!withinService('destination', { lat: 19.076, lng: 72.8777 }).ok, 'radius gate: Mumbai is refused as a destination');
 
-  // The site as Cloudflare serves it: static files first, the Worker for /api and /admin.
-  const dev = await startDev({ port: PORT, password: ADMIN_PASSWORD });
+  // The site as Cloudflare serves it: static files first, the Worker for /api and
+  // /admin — with one-time codes on, Twilio played by test/twilio-stub.mjs.
+  const stub = await startTwilioStub(8783);
+  const dev = await startDev({
+    port: PORT, password: ADMIN_PASSWORD,
+    vars: { RB_TEST: '1', TWILIO_ACCOUNT_SID: 'ACverify', TWILIO_AUTH_TOKEN: 'verify-token', TWILIO_FROM: 'RIDEBD', TWILIO_API_BASE: stub.url },
+  });
+  /** Types the code the stand-in Twilio got for `phone` and verifies it, after one wrong try when `wrongFirst`. */
+  const enterCode = async (pg, scope, fieldId, phone, wrongFirst = false) => {
+    const code = stub.codeFor(phone);
+    if (wrongFirst) {
+      await pg.fill(fieldId, code === '000000' ? '000001' : '000000');
+      await scope.getByRole('button', { name: 'Verify Number' }).click();
+      const err = await scope.locator('[role="alert"], .rb-error-msg').first().textContent({ timeout: 10000 }).catch(() => '');
+      check(err === CODE_WRONG, `${phone}: a wrong code is refused ("${err}")`);
+    }
+    await pg.fill(fieldId, code || '');
+    await scope.getByRole('button', { name: 'Verify Number' }).click();
+  };
   const browser = await chromium.launch({ args: HOST === 'localhost' ? [] : [`--host-resolver-rules=MAP ${HOST} 127.0.0.1`] });
   // Counted like a visitor: a browser that doesn't call itself headless, and
   // site.js's opt-in for automation (it skips navigator.webdriver otherwise).
@@ -192,6 +210,11 @@ async function main() {
 
     await page.goto(`${ORIGIN}/estimate/`, { waitUntil: 'networkidle' });
     check(!!(await page.$('#rb-pickup')), 'form rendered (design-system Input present)');
+    check(await page.getByRole('button', { name: 'Hourly' }).count() === 0 && !(await page.$('#rb-hours')), 'no Hourly on the website: Round Trip and One Way only');
+    const hourlyLink = await ctx.newPage();
+    await hourlyLink.goto(`${ORIGIN}/estimate/?type=hourly`, { waitUntil: 'networkidle' });
+    check(!!(await hourlyLink.waitForSelector('#rb-return-date', { timeout: 15000 }).catch(() => null)), 'an old ?type=hourly link opens a round trip');
+    await hourlyLink.close();
     await page.screenshot({ path: path.join(SHOTS, 'estimate-form.png') });
 
     // One way: Sector 17 -> Shimla. Get Estimate stays disabled, saying what is
@@ -254,15 +277,21 @@ async function main() {
     check(await page.inputValue('#rb-waitlist-phone') === '9870871324', 'a pasted +91 number is cut to its 10 digits beside the fixed +91');
     await page.locator('label[for="rb-waitlist-consent"], label:has(#rb-waitlist-consent)').first().click();
     await page.getByRole('button', { name: 'Join the Waitlist' }).click();
+    const sentTo = await page.waitForSelector('#rb-waitlist-code', { timeout: 10000 }).then(() => page.locator('.rb-sent').textContent()).catch(() => '');
+    check(sentTo.startsWith('Code sent to +91 XXXXX XX324.') && await page.evaluate(() => document.activeElement?.id) === 'rb-waitlist-code',
+      `estimate waitlist: a code goes to the number, and the code field takes the focus ("${sentTo}")`);
+    check(/^Resend OTP in 0:[23]\d$/.test((await page.locator('.rb-resend').textContent()).trim()), 'estimate waitlist: "Resend OTP" counts down');
+    await page.screenshot({ path: path.join(SHOTS, 'estimate-code.png'), fullPage: true });
+    await enterCode(page, page.locator('.rb-waitlist'), '#rb-waitlist-code', '+919870871324', true);
     const joined = await page.waitForSelector("text=You're on the waitlist", { timeout: 10000 }).then(() => true).catch(() => false);
-    check(joined, 'estimate waitlist: joined');
+    check(joined, 'estimate waitlist: joined with the code');
     const clientsNow = await download(dev, 'clients');
     const waRow = clientsNow.at(-1) || [];
     const wantTrip = `One way · ${pick} → ${dest} · `;
     const shownFare = (await page.locator('[data-testid="fare-estimate"]').textContent()).replace(/\D/g, '');
     check(clientsNow.length === 1 && waRow[2] === '+919870871324' && waRow[3] === 'Estimate page' && waRow[4]?.startsWith(wantTrip) && waRow[4]?.endsWith('09:00')
-      && waRow[5] === shownFare && waRow[6] === '👎' && waRow[7] === COMMENT && waRow[8] === 'Yes',
-      `estimate waitlist: one row with the trip, fare, vote, comment and consent (${waRow.slice(2, 9).join('; ')})`);
+      && waRow[5] === shownFare && waRow[6] === '👎' && waRow[7] === COMMENT && waRow[8] === 'Yes' && waRow[9] === 'Yes',
+      `estimate waitlist: one row with the trip, fare, vote, comment, consent and the verified phone (${waRow.slice(2, 10).join('; ')})`);
 
     // Late departure: 16:00 on the Shimla run should not cross midnight; check consistency only.
     await page.getByRole('button', { name: 'Edit trip details' }).click();
@@ -293,15 +322,6 @@ async function main() {
     const roundConds = await conds(page);
     check(roundConds[0] === "Includes 12 hours of your Buddy's time from pickup, on each of the 3 days." && roundConds.includes("Includes your Buddy's stay for 2 nights."),
       `round trip: 12 hours on each of the 3 days, and the stay for 2 nights (${roundConds.slice(0, 3).join(' | ')})`);
-
-    // Hourly: 4 hours -> 996
-    await page.getByRole('button', { name: 'Edit trip details' }).click();
-    await page.getByRole('button', { name: 'Hourly' }).click();
-    check(!(await page.$('#rb-destination')), 'hourly hides the destination field');
-    await page.fill('#rb-hours', '4');
-    const hourly = await estimateAndCompare(page, 'hourly 4h');
-    check(hourly.result.total_fare === 996, 'hourly 4h is ₹996 (legacy 249/h)');
-    check(await page.locator('.rb-tiles').count() === 0 && (await page.locator('.rb-disclaimer').textContent()).trim() === HOURLY_DISCLAIMER, 'hourly: no route tiles, and its own disclaimer');
 
     // A long drive (§1C): Jaipur and back the same day is about 18 hours of
     // driving. The safety warning, a rest stop by default, and the switch to
@@ -451,9 +471,13 @@ async function main() {
     await beta.fill('#rb-contact-phone', '98111 00001');
     await beta.locator('label:has(#rb-contact-consent)').click();
     await contactForm.getByRole('button', { name: 'Join the Waitlist' }).click();
-    check(await beta.waitForSelector(`text=${WAITLIST_JOINED}`, { timeout: 10000 }).then(() => true).catch(() => false), 'Contact waitlist: joined');
+    check(!!(await beta.waitForSelector('#rb-contact-code', { timeout: 10000 }).catch(() => null)) && await beta.getByText('Code sent to +91 XXXXX XX001.').count() === 1,
+      'Contact waitlist: a code goes to the number');
+    await enterCode(beta, beta.locator('#rb-contact-code').locator('xpath=ancestor::div[.//h2][1]'), '#rb-contact-code', '+919811100001');
+    check(await beta.waitForSelector(`text=${WAITLIST_JOINED}`, { timeout: 10000 }).then(() => true).catch(() => false), 'Contact waitlist: joined with the code');
     const cRow = (await download(dev, 'clients')).at(-1) || [];
-    check(cRow[2] === '+919811100001' && cRow[3] === 'Contact page' && cRow[8] === 'Yes', `Contact waitlist: row saved, with the consent (${[cRow[2], cRow[3], cRow[8]].join(', ')})`);
+    check(cRow[2] === '+919811100001' && cRow[3] === 'Contact page' && cRow[8] === 'Yes' && cRow[9] === 'Yes',
+      `Contact waitlist: row saved, with the consent and the verified phone (${[cRow[2], cRow[3], cRow[8], cRow[9]].join(', ')})`);
 
     const navHref = await beta.locator('header a', { hasText: 'About' }).first().getAttribute('href').catch(() => null);
     check(navHref === '#about', `nav links carry real URLs (About -> ${navHref})`);
@@ -462,8 +486,24 @@ async function main() {
     await beta.goBack();
     // (Joined already, so the page shows the confirmation rather than the field.)
     check(beta.url().endsWith('/beta/#contact') && !!(await beta.waitForSelector(`text=${WAITLIST_JOINED}`, { timeout: 10000 }).catch(() => null)), 'Back returns to the Contact page');
+    await beta.goForward();
+    await beta.waitForSelector('#about-hero', { timeout: 10000 }).catch(() => null);
+    const aboutText = await beta.evaluate(() => document.body.innerText);
+    check(!/police/i.test(aboutText) && aboutText.includes('Every Buddy is verified, formally trained, and rated after every trip.') && aboutText.includes('Verification before the first trip.'),
+      'About: Buddies are "verified", not "police-verified"');
+    await beta.goBack();
     await beta.locator('header a', { hasText: 'Home' }).first().click();
     check(new URL(beta.url()).hash === '' && !!(await beta.waitForSelector('#home-hero', { timeout: 10000 }).catch(() => null)), 'Home is plain /beta/');
+    const homeText = await beta.evaluate(() => document.body.innerText);
+    check(!/police/i.test(homeText) && homeText.includes('Every Buddy is verified before their first trip.'), 'Home: "Every Buddy is verified before their first trip."');
+    const linkTexts = await beta.$$eval('header a, footer a, a', (as) => as.map((a) => a.textContent.trim()));
+    check(!linkTexts.some((t) => /how it works|full journey/i.test(t)) && !homeText.includes('Questions, answered.'),
+      'no How It Works page: no link to it in the header, footer or Home, and no FAQ');
+    const howTab = await ctx.newPage();
+    await howTab.goto(`${ORIGIN}/beta/#how-it-works`, { waitUntil: 'networkidle' });
+    check(!!(await howTab.waitForSelector('#home-hero', { timeout: 30000 }).catch(() => null)) && new URL(howTab.url()).hash === '',
+      `an old /beta/#how-it-works link opens Home at a plain URL (${new URL(howTab.url()).pathname}${new URL(howTab.url()).hash})`);
+    await howTab.close();
 
     // The hero's "Join the Waitlist" opens the waitlist pop-up: phone and tick, no code.
     check((await beta.getByRole('button', { name: /Book a Buddy/ }).count()) === 0, 'no "Book a Buddy" button on the home page');
@@ -475,13 +515,24 @@ async function main() {
     await wl.getByRole('button', { name: 'Join the Waitlist' }).click();
     const wlErrs = await wl.locator('[role="alert"]').allTextContents();
     check(wlErrs.join(' | ') === `${PHONE_ERROR} | ${CONSENT_ERROR}`, `pop-up: a short number, and no tick, are refused (${wlErrs.join(' | ')})`);
-    await beta.fill('#rb-wl-phone', '98111 00002');
+    await beta.fill('#rb-wl-phone', '98111 00012');
     await wl.locator('label:has(#rb-wl-consent)').click();
     await wl.getByRole('button', { name: 'Join the Waitlist' }).click();
-    check(await wl.getByText(WAITLIST_JOINED).waitFor({ timeout: 10000 }).then(() => true).catch(() => false), 'pop-up: joined, with no code to type');
+    check(!!(await beta.waitForSelector('#rb-wl-code', { timeout: 10000 }).catch(() => null)) && await wl.getByText('Code sent to +91 XXXXX XX012.').count() === 1
+      && await beta.evaluate(() => document.activeElement?.id) === 'rb-wl-code', 'pop-up: a code goes to the number, and the code field takes the focus');
+    check(await wl.getByText(/^Resend OTP in 0:[23]\d$/).count() === 1, 'pop-up: "Resend OTP" counts down');
+    await beta.screenshot({ path: path.join(SHOTS, 'beta-waitlist-code.png') });
+    await wl.getByRole('button', { name: 'Change number' }).click();
+    check(await beta.inputValue('#rb-wl-phone') === '9811100012', '"Change number" goes back to the number, still filled in');
+    await beta.fill('#rb-wl-phone', '98111 00002');
+    await wl.getByRole('button', { name: 'Join the Waitlist' }).click();
+    check(await wl.getByText('Code sent to +91 XXXXX XX002.').waitFor({ timeout: 10000 }).then(() => true).catch(() => false), '…and a code goes to the new number');
+    await enterCode(beta, wl, '#rb-wl-code', '+919811100002');
+    check(await wl.getByText(WAITLIST_JOINED).waitFor({ timeout: 10000 }).then(() => true).catch(() => false), 'pop-up: joined with the code');
     await beta.screenshot({ path: path.join(SHOTS, 'beta-waitlist-joined.png') });
     const hRow = (await download(dev, 'clients')).at(-1) || [];
-    check(hRow[2] === '+919811100002' && hRow[3] === 'Home page' && hRow[8] === 'Yes', `pop-up: row saved with the page it was joined from (${[hRow[2], hRow[3], hRow[8]].join(', ')})`);
+    check(hRow[2] === '+919811100002' && hRow[3] === 'Home page' && hRow[8] === 'Yes' && hRow[9] === 'Yes',
+      `pop-up: row saved with the page it was joined from and the verified phone (${[hRow[2], hRow[3], hRow[8], hRow[9]].join(', ')})`);
     await wl.getByRole('button', { name: 'Done' }).click();
     check(await beta.getByRole('dialog').count() === 0, 'Done closes the pop-up');
 
@@ -490,7 +541,7 @@ async function main() {
     check(await beta.waitForSelector('#rb-full-name', { timeout: 30000 }).then(() => true).catch(() => false), '/beta/#apply opens the Buddy application');
     const applyDialog = beta.getByRole('dialog');
     const modalText = await applyDialog.textContent();
-    check(!/email app|verification code|OTP/i.test(modalText), 'no "email app" or verification-code wording in the form');
+    check(!/email app/i.test(modalText), 'no "email app" wording in the form');
     await beta.getByRole('button', { name: 'Send Application' }).click();
     check((await applyDialog.locator('.rb-error-msg').count()) === 3 && (await applyDialog.getByText(PHONE_ERROR).count()) === 1, 'an empty application flags all four fields');
     await beta.fill('#rb-full-name', 'Voiku Zavadschi');
@@ -501,10 +552,14 @@ async function main() {
     check(await applyDialog.getByText(PHONE_ERROR).count() === 1 && await applyDialog.locator('.rb-error-msg').count() === 0, 'Buddy application: a number a digit short is flagged under the field');
     await beta.fill('#apply-phone', '9870871324');
     await beta.getByRole('button', { name: 'Send Application' }).click();
-    check(await beta.waitForSelector('text=Application received. We’ll contact you when onboarding opens.', { timeout: 10000 }).then(() => true).catch(() => false), 'Buddy application: received');
+    check(!!(await beta.waitForSelector('#apply-code', { timeout: 10000 }).catch(() => null)) && await applyDialog.getByText('Code sent to +91 XXXXX XX324.').count() === 1,
+      'Buddy application: a code goes to the number');
+    await beta.screenshot({ path: path.join(SHOTS, 'beta-apply-code.png') });
+    await enterCode(beta, applyDialog, '#apply-code', '+919870871324');
+    check(await beta.waitForSelector('text=Application received. We’ll contact you when onboarding opens.', { timeout: 10000 }).then(() => true).catch(() => false), 'Buddy application: received with the code');
     await beta.screenshot({ path: path.join(SHOTS, 'beta-apply-sent.png') });
     const bRow = (await download(dev, 'buddies')).at(-1) || [];
-    check(bRow.slice(2, 6).join('; ') === 'Voiku Zavadschi; +919870871324; VNS8893; Mohali', `Buddy application: row saved (${bRow.slice(2, 6).join('; ')})`);
+    check(bRow.slice(2, 7).join('; ') === 'Voiku Zavadschi; +919870871324; VNS8893; Mohali; Yes', `Buddy application: row saved, phone verified (${bRow.slice(2, 7).join('; ')})`);
     await beta.getByRole('button', { name: 'Done' }).click();
     check(new URL(beta.url()).hash === '', 'closing the form leaves a plain /beta/ URL');
 
@@ -525,9 +580,11 @@ async function main() {
     check(gErr.join() === 'Enter the 15-character GSTIN, or leave it blank.', `agency: a GSTIN a character short is refused (${gErr.join(' | ')})`);
     await beta.fill('#rb-gstin-\\(optional\\)', '03ABCDE1234F1Z5');
     await beta.getByRole('button', { name: 'Send Application' }).click();
-    check(await beta.waitForSelector('text=Application received. We’ll contact you when onboarding opens.', { timeout: 10000 }).then(() => true).catch(() => false), 'agency application: received');
+    check(!!(await beta.waitForSelector('#apply-code', { timeout: 10000 }).catch(() => null)), 'agency application: a code goes to the number');
+    await enterCode(beta, applyDialog, '#apply-code', '+919811122233');
+    check(await beta.waitForSelector('text=Application received. We’ll contact you when onboarding opens.', { timeout: 10000 }).then(() => true).catch(() => false), 'agency application: received with the code');
     const aRow = (await download(dev, 'agencies')).at(-1) || [];
-    check(aRow.slice(2, 9).join('; ') === 'Tricity Drivers; Gurpreet Kaur; +919811122233; Panchkula; 6–20; ops@tricitydrivers.in; 03ABCDE1234F1Z5', `agency application: row saved in agencies.csv (${aRow.slice(2, 9).join('; ')})`);
+    check(aRow.slice(2, 10).join('; ') === 'Tricity Drivers; Gurpreet Kaur; +919811122233; Panchkula; 6–20; ops@tricitydrivers.in; 03ABCDE1234F1Z5; Yes', `agency application: row saved in agencies.csv, phone verified (${aRow.slice(2, 10).join('; ')})`);
     await beta.getByRole('button', { name: 'Done' }).click();
 
     // Every Estimate CTA still leads to /estimate/.
@@ -554,7 +611,7 @@ async function main() {
       if (width === 1280) {
         check(b.current === 'Home' && e.current === null, `…Home underlined on /beta/, nothing on /estimate/ (${b.current}, ${e.current})`);
         const hrefs = await est.$$eval('header nav a', (as) => as.map((a) => `${a.textContent.trim()}=${a.getAttribute('href')}`).join(' '));
-        check(hrefs === 'Home=/beta/ How It Works=/beta/#how-it-works About=/beta/#about Contact=/beta/#contact', `header links lead to the main site, no "Estimate Fare" (${hrefs})`);
+        check(hrefs === 'Home=/beta/ About=/beta/#about Contact=/beta/#contact', `header links lead to the main site, no "Estimate Fare" or How It Works (${hrefs})`);
         await est.screenshot({ path: path.join(SHOTS, 'estimate-header.png'), clip: { x: 0, y: 0, width, height: 90 } });
       } else {
         for (const { p } of Object.values(pages)) {
@@ -594,6 +651,7 @@ async function main() {
       check(/Shimla \d/.test(text) && /Kasauli \d/.test(text), `destinations priced (${text.match(/Destinations .{0,60}/)?.[0]})`);
       check(['estimate page', 'Contact page', 'Join the Waitlist pop-up', 'Buddy application'].every((f) => text.includes(`Mistyped phone number (${f}) 1`)), `mistyped numbers, per form (${text.match(/Mistyped phone number \([^)]*\) \d+/g)?.join(', ')})`);
       check(/Get Estimate Estimate · estimate form \d/.test(text) && /place suggestion Estimate · estimate form \d/.test(text), 'clicks by label and place; suggestions counted without their text');
+      check(text.includes('One-time code not confirmed (estimate page: wrong code) 1'), `a wrong code shows under Problems (${text.match(/One-time code not confirmed[^)]*\) \d+/g)?.join(', ')})`);
       await a.hover('#daily .col:last-child');
       const tip = (await a.locator('#daily .tip').textContent()).trim();
       check(/^1 visitor\d+ page views/.test(tip), `hovering a day shows its numbers ("${tip}")`);
@@ -605,8 +663,10 @@ async function main() {
     }
     // Privacy: the analytics hold no phone numbers, names, licences or addresses.
     const stored = storedBeacons(dev.dir);
-    const leaks = ['98708', '71324', '7911', '98111', '81112', 'Voiku', 'VNS8893', 'Gurpreet', 'Tricity Drivers', 'tricitydrivers', '03ABCDE', 'usually pay', pinned, pinned.split(',').slice(0, 2).join(',')].filter((x) => x && stored.includes(x));
-    check(stored.includes('estimate_completed') && !leaks.length, `analytics store no phone numbers, names, licences, agency details, comments or addresses (${leaks.join(', ') || 'none found'})`);
+    const codes = stub.messages.map((m) => (m.Body.match(/\b\d{6}\b/) || [])[0]).filter(Boolean);
+    const leaks = ['98708', '71324', '7911', '98111', '81112', 'Voiku', 'VNS8893', 'Gurpreet', 'Tricity Drivers', 'tricitydrivers', '03ABCDE', 'usually pay', pinned, pinned.split(',').slice(0, 2).join(','), ...codes].filter((x) => x && stored.includes(x));
+    check(stored.includes('estimate_completed') && codes.length >= 6 && !leaks.length,
+      `analytics store no phone numbers, one-time codes, names, licences, agency details, comments or addresses (${leaks.join(', ') || 'none found'})`);
 
     if (blocked.length) console.log(`  note: ${new Set(blocked).size} host path(s) unreachable from this sandbox and aborted: ${[...new Set(blocked.map((u) => new URL(u).host))].join(', ')}`);
     // Through the sandbox proxy, Google's abuse detection answers some batched
@@ -626,9 +686,30 @@ async function main() {
     const real = errors.filter((e) => !tileSorry(e) && !googleRpc(e) && !provoked(e) && !/deprecat|google\.maps\.Marker|image-slots\.state\.json|Marker is deprecated|gstatic\.com|fonts\.googleapis|ERR_CONNECTION|Failed to load resource/i.test(e));
     check(real.length === 0, `no console/page/HTTP errors (${real.length})`);
     real.forEach((e) => console.log('     ', e));
+
+    // Codes off — no Twilio, as on the live site until it is set up: the forms save in one step.
+    await dev.stop();
+    const plain = await startDev({ port: PORT, password: ADMIN_PASSWORD });
+    try {
+      const off = await ctx.newPage();
+      await off.goto(`${ORIGIN}/beta/`, { waitUntil: 'networkidle' });
+      await off.getByRole('button', { name: 'Join the Waitlist' }).first().click();
+      const d = off.getByRole('dialog', { name: 'Join the waitlist' });
+      await off.fill('#rb-wl-phone', '9811100031');
+      await d.locator('label:has(#rb-wl-consent)').click();
+      await d.getByRole('button', { name: 'Join the Waitlist' }).click();
+      check(await d.getByText(WAITLIST_JOINED).waitFor({ timeout: 10000 }).then(() => true).catch(() => false) && !(await off.$('#rb-wl-code')),
+        'codes off: the pop-up joins in one step, no code asked');
+      const row = (await download(plain, 'clients')).at(-1) || [];
+      check(row[2] === '+919811100031' && row[8] === 'Yes' && row[9] === '', `codes off: saved, Phone verified left blank (${row[2]}, "${row[9]}")`);
+      await off.close();
+    } finally {
+      await plain.stop();
+    }
   } finally {
     await browser.close();
     await dev.stop();
+    await stub.close();
   }
   console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
   process.exit(failures ? 1 : 0);

@@ -110,12 +110,18 @@ const FORMS = {
   contact: 'Contact page', estimate: 'estimate page', waitlist: 'Join the Waitlist pop-up', feedback: 'fare 👍/👎',
   buddy: 'Buddy application', agency: 'agency application',
 };
+/** Why a one-time code didn't go through (otp_failed, `kind`). */
+const CODE_FAILURES = {
+  wrong: 'wrong code', expired: 'code expired', too_many: 'too many tries', send_failed: 'SMS not sent',
+  resend_wait: 'asked again too soon', number_limit: 'too many codes', network_limit: 'too many codes', daily_cap: 'SMS not sent',
+};
 
 /** Every event named on the dashboard, and how it reads there. */
 export const PROBLEMS = {
   phone_invalid: (d) => `Mistyped phone number (${FORMS[d.form] || d.form || 'a form'})`,
   form_invalid: (d) => `Form sent incomplete (${FORMS[d.form] || d.form || 'a form'})`,
   save_failed: (d) => `A form could not be saved (${FORMS[d.form] || d.form || 'a form'})`,
+  otp_failed: (d) => `One-time code not confirmed (${FORMS[d.form] || d.form || 'a form'}: ${CODE_FAILURES[d.kind] || 'other'})`,
   maps_failed: () => 'Google Maps did not load',
   route_not_found: () => 'No driving route between the two places',
   route_failed: () => 'Route lookup failed',
@@ -229,7 +235,7 @@ export function summarize([counts, pages, clicks, perf, fares, details, people])
     if (r.km) { add('km_sum', '', Math.round(r.km) * r.c); add('km_n', '', r.c); }
   }
   for (const r of details) {
-    if (PROBLEMS[r.n]) add('problem', PROBLEMS[r.n]({ form: r.form }), r.c);
+    if (PROBLEMS[r.n]) add('problem', PROBLEMS[r.n]({ form: r.form, kind: r.kind }), r.c);
     if (r.n === 'js_error') add('js_error', r.msg || 'error', r.c);
     if (r.n === 'place_refused') {
       add('refused', `${r.kind === 'destination' ? 'Destination' : 'Pickup'}\t${[r.area, r.city].filter(Boolean).join(', ') || 'Unknown'}`, r.c);

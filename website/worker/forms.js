@@ -3,9 +3,15 @@
  * Contact page, /estimate/), the thumbs on fares shown at /estimate/, and
  * "Apply to be a Buddy" for individual Buddies and driver agencies. Validated
  * here, stored in D1, downloaded from /admin.
+ *
+ * With one-time codes on (otp.js), a form that carries a phone number saves
+ * only with a code: its first POST is checked and answered 202 with a code
+ * sent to the number; the same POST again with `code` saves it.
  */
+import { clock } from './analytics.js';
 import { addHit, networkHash, ready } from './db.js';
 import { json, sameOrigin } from './http.js';
+import { checkCode, otpOn, sendCode } from './otp.js';
 import {
   AGENCY_ERROR, CITY_ERROR, CONSENT_ERROR, CONTACT_ERROR, EMAIL_ERROR, GSTIN_ERROR, LICENCE_ERROR, NAME_ERROR,
   cleanComment, cleanText, describeTrip, isEmail, isGstin, normalizePhone, tripFare,
@@ -56,12 +62,38 @@ export async function handleForm(request, env, kind) {
   if (typeof body.website === 'string' && body.website.trim()) return json(200, { ok: true });
 
   const now = new Date().toISOString();
-  if (kind === 'waitlist') return waitlist(db, body, now);
+  // `at`: now, in seconds; test servers (RB_TEST) may move it with X-RB-Now to reach a code's expiry.
+  const ctx = { env, db, salt, network, at: Math.floor(clock(request, env) / 1000) };
+  if (kind === 'waitlist') return waitlist(ctx, body, now);
   if (kind === 'feedback') return feedback(db, body, now);
-  return buddy(db, body, now);
+  return buddy(ctx, body, now);
 }
 
-async function waitlist(db, body, now) {
+/**
+ * With one-time codes on: no `code` yet → send one and say where it went (202);
+ * a `code` → check it. Off: nothing to prove, and the form saves as it is.
+ * @returns {Promise<{verified: 1 | null} | {response: Response}>}
+ */
+async function provePhone(ctx, phone, code) {
+  if (!otpOn(ctx.env)) return { verified: null };
+  if (code == null || code === '') {
+    const sent = await sendCode(ctx, phone);
+    if (!sent.ok) return { response: json(sent.status, { ok: false, error: sent.error, reason: sent.reason, resendIn: sent.resendIn }) };
+    return {
+      response: json(202, {
+        ok: false, otp: 'sent', sentTo: sent.sentTo, resendIn: sent.resendIn, expiresIn: sent.expiresIn,
+        // Shown as it is by a page from before the code step.
+        error: 'Reload the page to confirm your number with a code.',
+      }),
+    };
+  }
+  const checked = await checkCode(ctx, phone, code);
+  if (!checked.ok) return { response: json(400, { ok: false, error: checked.error, reason: checked.reason, errors: { code: checked.error } }) };
+  return { verified: 1 };
+}
+
+async function waitlist(ctx, body, now) {
+  const { db } = ctx;
   if (!Object.hasOwn(SOURCES, body.source)) return BAD();
   const phone = normalizePhone(body.phone);
   const errors = {};
@@ -71,10 +103,13 @@ async function waitlist(db, body, now) {
   if (Object.hasOwn(body, 'consent') && body.consent !== true) errors.consent = CONSENT_ERROR;
   if (Object.keys(errors).length) return invalid(errors);
   const consent = body.consent === true ? 1 : null;
+  const proof = await provePhone(ctx, phone.phone, body.code);
+  if (proof.response) return proof.response;
+  const { verified } = proof;
 
   if (body.source !== 'estimate') {
-    await db.prepare('INSERT INTO waitlist (created_at, phone, source, consent) VALUES (?, ?, ?, ?)')
-      .bind(now, phone.phone, body.source, consent).run();
+    await db.prepare('INSERT INTO waitlist (created_at, phone, source, consent, verified) VALUES (?, ?, ?, ?, ?)')
+      .bind(now, phone.phone, body.source, consent, verified).run();
     return json(200, { ok: true });
   }
 
@@ -85,17 +120,17 @@ async function waitlist(db, body, now) {
     // The visitor voted on this fare first: that row becomes the signup, so the
     // vote and the number sit on one line of the download.
     const r = await db.prepare(`UPDATE waitlist SET created_at = ?1, updated_at = ?1, phone = ?2, consent = ?3,
-        trip = COALESCE(?4, trip), fare = COALESCE(?5, fare)
+        trip = COALESCE(?4, trip), fare = COALESCE(?5, fare), verified = ?7
       WHERE id = (SELECT id FROM waitlist WHERE estimate_id = ?6 AND phone = '' ORDER BY id LIMIT 1)`)
-      .bind(now, phone.phone, consent, trip, fare, est).run();
+      .bind(now, phone.phone, consent, trip, fare, est, verified).run();
     if (r.meta.changes) return json(200, { ok: true });
   }
   // A new row; a second number joining from the same fare carries its vote too.
-  await db.prepare(`INSERT INTO waitlist (created_at, phone, source, trip, fare, consent, estimate_id, vote, comment)
+  await db.prepare(`INSERT INTO waitlist (created_at, phone, source, trip, fare, consent, estimate_id, vote, comment, verified)
     VALUES (?1, ?2, 'estimate', ?3, ?4, ?5, ?6,
       (SELECT vote FROM waitlist WHERE estimate_id = ?6 ORDER BY id DESC LIMIT 1),
-      (SELECT comment FROM waitlist WHERE estimate_id = ?6 ORDER BY id DESC LIMIT 1))`)
-    .bind(now, phone.phone, trip, fare, consent, est).run();
+      (SELECT comment FROM waitlist WHERE estimate_id = ?6 ORDER BY id DESC LIMIT 1), ?7)`)
+    .bind(now, phone.phone, trip, fare, consent, est, verified).run();
   return json(200, { ok: true });
 }
 
@@ -123,7 +158,8 @@ async function feedback(db, body, now) {
   return json(200, { ok: true });
 }
 
-async function buddy(db, body, now) {
+async function buddy(ctx, body, now) {
+  const { db } = ctx;
   const phone = normalizePhone(body.phone);
   const city = cleanText(body.city, 60);
   const errors = {};
@@ -139,9 +175,11 @@ async function buddy(db, body, now) {
     if (email && !isEmail(email)) errors.email = EMAIL_ERROR;
     if (gstin && !isGstin(gstin)) errors.gstin = GSTIN_ERROR;
     if (Object.keys(errors).length) return invalid(errors);
+    const proof = await provePhone(ctx, phone.phone, body.code);
+    if (proof.response) return proof.response;
     const drivers = DRIVERS.includes(body.drivers) ? body.drivers : null;
-    await db.prepare('INSERT INTO agencies (created_at, agency, contact, phone, city, drivers, email, gstin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .bind(now, agency, contact, phone.phone, city, drivers, email || null, gstin || null).run();
+    await db.prepare('INSERT INTO agencies (created_at, agency, contact, phone, city, drivers, email, gstin, verified) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(now, agency, contact, phone.phone, city, drivers, email || null, gstin || null, proof.verified).run();
     return json(200, { ok: true });
   }
   const name = cleanText(body.name, 100);
@@ -152,8 +190,10 @@ async function buddy(db, body, now) {
   // A page cached from before the city field sends no `type`; keep its application.
   if (!city && body.type !== undefined) errors.city = CITY_ERROR;
   if (Object.keys(errors).length) return invalid(errors);
-  await db.prepare('INSERT INTO buddies (created_at, name, phone, licence, city) VALUES (?, ?, ?, ?, ?)')
-    .bind(now, name, phone.phone, licence, city || null).run();
+  const proof = await provePhone(ctx, phone.phone, body.code);
+  if (proof.response) return proof.response;
+  await db.prepare('INSERT INTO buddies (created_at, name, phone, licence, city, verified) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(now, name, phone.phone, licence, city || null, proof.verified).run();
   return json(200, { ok: true });
 }
 

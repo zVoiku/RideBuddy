@@ -4,7 +4,9 @@
  * Runs a grid of trips through src/estimate/fare-engine.js and through
  * `fare_breakdown` in backend/server.py (via the backend venv) and fails on the
  * first field that differs. This is the guarantee behind "the website quotes
- * what the app quotes": if either side changes, this goes red. Both engines
+ * what the app quotes": if either side changes, this goes red. One way and
+ * round trips: the website doesn't offer Hourly (the backend still prices it
+ * for the app, outside the rate table). Both engines
  * read the rates from rates.json; the rate table's own worked examples (v1.10
  * §2.3 and §5.4) are priced through both and must come out to the rupee.
  *
@@ -68,9 +70,6 @@ for (const km of kms) {
       }
     }
   }
-}
-for (const h of [0, 0.5, 1, 1.5, 2.5, 3, 4, 7.75, 12, 24]) {
-  trips.push({ tripType: 'hourly', oneWay: true, distanceKm: 0, durationHours: h, pickup: { date: '2026-09-12', time: '09:00' } });
 }
 
 // ---- the Python side ------------------------------------------------------

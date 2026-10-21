@@ -1,6 +1,8 @@
 /**
  * Rate Table v1.10 fare engine — a line-for-line port of `fare_breakdown` in
- * backend/server.py, so the website quotes exactly what the app quotes.
+ * backend/server.py, so the website quotes exactly what the app quotes. One
+ * way and round trips only: the website doesn't offer Hourly, which the
+ * backend still prices for the app (outside the rate table).
  *
  * The rates are not in this file: they are rates.json at the repo root, the
  * same file the backend reads, compiled into the page by the build. Change a
@@ -35,17 +37,6 @@ export function roundHalfEven(x) {
   if (d < 0.5) return f;
   if (d > 0.5) return f + 1;
   return f % 2 === 0 ? f : f + 1;
-}
-
-/**
- * Python's `round(x, 2)`. A true tie at the third decimal is only possible when
- * x*100 is exactly k+0.5 (e.g. 280.125), where Python goes to even; everywhere
- * else both languages pick the nearest representable value.
- */
-export function roundTo2(x) {
-  const scaled = x * 100;
-  if (scaled - Math.floor(scaled) === 0.5) return roundHalfEven(scaled) / 100;
-  return Number(x.toFixed(2));
 }
 
 /** `_half_up`: nearest integer, halves up (§1A). */
@@ -94,11 +85,11 @@ function nightSeconds(periods) {
 }
 
 /**
- * Port of `fare_breakdown`. `distanceKm` and `durationHours` are the one-way
- * route; a round trip drives it twice.
+ * Port of `fare_breakdown` for point-to-point trips. `distanceKm` and
+ * `durationHours` are the one-way route; a round trip drives it twice.
  *
  * @param {object} t
- * @param {'point_to_point'|'hourly'} t.tripType
+ * @param {'point_to_point'} t.tripType
  * @param {boolean} t.oneWay
  * @param {number} t.distanceKm
  * @param {number} [t.durationHours]
@@ -107,17 +98,7 @@ function nightSeconds(periods) {
  * @param {boolean} [t.customerStay]  round trips: the customer puts the Buddy up
  * @param {boolean} [t.driveThrough]  long drives: the drive-through instead of the rest stop
  */
-export function fareBreakdown({ tripType, oneWay, distanceKm, durationHours = 0, days = 0, pickup = null, customerStay = false, driveThrough = false }) {
-  if (tripType === 'hourly') {
-    const base = roundTo2(Math.max(1, durationHours) * FARE.hourly_rate);
-    return {
-      per_day: base, extra_time: 0, return_leg: 0, food: 0, stay: 0, night: 0,
-      trip_days: 0, overnights: 0, added_days: 0, stay_units: 0,
-      long_drive: false, drive_through: false, night_trigger: false,
-      total: base, uncovered_by_rate_table: true,
-    };
-  }
-
+export function fareBreakdown({ oneWay, distanceKm, durationHours = 0, days = 0, pickup = null, customerStay = false, driveThrough = false }) {
   const metres = halfUp(Math.max(0, distanceKm) * 1000);
   const driveS = halfUp(Math.max(0, durationHours) * 3600);
   const start = pickup ? clock(pickup.time) : null;
@@ -173,7 +154,7 @@ export function fareBreakdown({ tripType, oneWay, distanceKm, durationHours = 0,
   };
 }
 
-/** The customer-facing shape: `estimate_summary` in backend/server.py, plus the hourly hours. */
+/** The customer-facing shape: `estimate_summary` in backend/server.py. */
 export function estimate(trip) {
   const b = fareBreakdown(trip);
   const total = b.total;
@@ -189,12 +170,10 @@ export function estimate(trip) {
     stay_nights: nights,
     long_drive: b.long_drive,
     drive_through: b.drive_through,
-    hourly: b.uncovered_by_rate_table,
     night_start: FARE.night_start,
     night_end: FARE.night_end,
     night_grace_min: FARE.grace_min,
     long_drive_hours: FARE.long_drive_threshold_h,
-    hours: trip.tripType === 'hourly' ? Math.max(1, trip.durationHours || 0) : 0,
   };
 }
 

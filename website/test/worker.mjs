@@ -9,9 +9,11 @@ import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { startDev } from './dev-server.mjs';
 import {
-  CONSENT_ERROR, EMAIL_ERROR, GSTIN_ERROR, LINK_ONLY_ERROR, PHONE_ERROR, cleanComment, cleanText, csvCell, describeTrip,
-  groupINR, isEmail, isGstin, istStamp, networkOf, normalizePhone, shiftDay, splitStoredTrip, toCsv, tripFare,
+  CODE_EXPIRED, CODE_NETWORK_LIMIT, CODE_NUMBER_LIMIT, CODE_SEND_FAILED, CODE_TOO_MANY, CODE_WRONG, CONSENT_ERROR, EMAIL_ERROR,
+  GSTIN_ERROR, LINK_ONLY_ERROR, PHONE_ERROR, cleanComment, cleanText, csvCell, describeTrip, groupINR, isEmail, isGstin, istStamp,
+  maskPhone, networkOf, normalizePhone, shiftDay, splitStoredTrip, toCsv, tripFare,
 } from '../worker/lib.js';
+import { startTwilioStub } from './twilio-stub.mjs';
 import {
   DAY_SQL, DIRECT, aheadBand, cleanEvents, deviceOf, fareBand, isBot, sourceOf, speedBand, summarize,
 } from '../worker/stats.js';
@@ -43,8 +45,10 @@ function units() {
     ['919870871324', '+919870871324'],
     ['09870871324', '+919870871324'],
     ['(987) 087-1324', '+919870871324'],
-    ['0172 270 0000', '+911722700000'], // a landline with its STD code
-    ['+91 0172 2700000', '+911722700000'],
+    ['6000000000', '+916000000000'],
+    ['0172 270 0000', null], // a landline: a one-time code can't reach it
+    ['+91 0172 2700000', null],
+    ['5987654321', null], // Indian mobiles start 6–9
     ['0091 98708 71324', '+919870871324'],
     ['+44 7911 123456', null], // every form has a fixed +91: foreign numbers are refused
     ['0044 7911 123456', null],
@@ -63,6 +67,7 @@ function units() {
     same(r.ok ? r.phone : null, want, `phone ${JSON.stringify(input)} -> ${want ?? 'refused'}`);
     if (!want) same(r.error, PHONE_ERROR, `  …with the field message`);
   }
+  same(maskPhone('+919870871324'), '+91 XXXXX XX324', 'where a code went, without the number');
 
   same(describeTrip({ type: 'round', from: 'Sector 17', to: 'Shimla', date: '2026-10-12', ret: '2026-10-14', time: '09:00', fare: 5492 }),
     'Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00', 'trip: round (the fare has its own column)');
@@ -314,29 +319,29 @@ async function endpoints() {
     check(clients.text.startsWith('\uFEFF'), 'with a byte-order mark for Excel');
     const c = csvRows(clients.text);
     const after = (row) => row.replace(/^\d+,\d{4}-\d{2}-\d{2} \d{2}:\d{2},/, '');
-    same(c[0], 'ID,Submitted (IST),Phone,Source,Trip,Fare (₹),👍/👎,Comment,Consent,Repeat', 'clients header');
+    same(c[0], 'ID,Submitted (IST),Phone,Source,Trip,Fare (₹),👍/👎,Comment,Consent,Phone verified,Repeat', 'clients header');
     same(c.length, 11, 'nine signups and one vote from someone who never joined; the honeypot one is not listed');
-    check(/^1,\d{4}-\d{2}-\d{2} \d{2}:\d{2},\+919870871324,Contact page,,,,,,$/.test(c[1]), `first signup, normalised and timestamped in IST (${c[1]})`);
-    check(c[2].endsWith(',+919870871324,Contact page,,,,,,(repeat)') && c[3].endsWith('(repeat)'), 'the same number in other formats is marked (repeat)');
-    same([c[4], c[5], c[6]].map(after).join(' | '), '+919811100001,Home page,,,,,Yes, | +919811100002,How It Works page,,,,,Yes, | +919811100003,About page,,,,,Yes,',
-      'pop-up signups: the page they joined from, and the consent');
-    same(after(c[7]), '+919811100004,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,Yes,', 'the estimate signup: trip and fare in their own columns');
-    same(after(c[8]), '+919811100005,Estimate page,"One way · Sector 17 → Shimla · 12 Oct, 20:30",1860,👍,Too high for a one-way trip,Yes,', 'vote first, then joined: one row, latest vote, the comment kept');
-    same(after(c[9]), '+919811100006,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,👎,"Expected under 5,000",Yes,', 'joined first, then voted: the same row');
-    same(after(c[10]), ',Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,👎,,,', 'a vote from someone who never joined: no phone, never a repeat');
+    check(/^1,\d{4}-\d{2}-\d{2} \d{2}:\d{2},\+919870871324,Contact page,,,,,,,$/.test(c[1]), `first signup, normalised and timestamped in IST (${c[1]})`);
+    check(c[2].endsWith(',+919870871324,Contact page,,,,,,,(repeat)') && c[3].endsWith('(repeat)'), 'the same number in other formats is marked (repeat)');
+    same([c[4], c[5], c[6]].map(after).join(' | '), '+919811100001,Home page,,,,,Yes,, | +919811100002,How It Works page,,,,,Yes,, | +919811100003,About page,,,,,Yes,,',
+      'pop-up signups: the page they joined from, and the consent (a page cached with How It Works still saves)');
+    same(after(c[7]), '+919811100004,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,Yes,,', 'the estimate signup: trip and fare in their own columns');
+    same(after(c[8]), '+919811100005,Estimate page,"One way · Sector 17 → Shimla · 12 Oct, 20:30",1860,👍,Too high for a one-way trip,Yes,,', 'vote first, then joined: one row, latest vote, the comment kept');
+    same(after(c[9]), '+919811100006,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,👎,"Expected under 5,000",Yes,,', 'joined first, then voted: the same row');
+    same(after(c[10]), ',Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,👎,,,,', 'a vote from someone who never joined: no phone, never a repeat');
 
     const buddies = await admin(B, '/admin/buddies.csv', { user: 'Admin' });
     same(buddies.status, 200, 'buddies.csv downloads (username in any case)');
     const b = csvRows(buddies.text);
-    same(b[0], 'ID,Submitted (IST),Name,Phone,Licence,City or base,Repeat', 'buddies header');
-    check(b[1].endsWith(',Voiku Zavadschi,+919870871324,VNS8893,Mohali,'), `an application row (${b[1]})`);
-    check(b[2].endsWith(`,"'=HYPERLINK(""http://x"",""click"")",+919870871324,"PB01 2011, 0012345",,(repeat)`), 'a formula-like name opens as text; a licence with a comma stays one cell; same phone is a repeat');
+    same(b[0], 'ID,Submitted (IST),Name,Phone,Licence,City or base,Phone verified,Repeat', 'buddies header');
+    check(b[1].endsWith(',Voiku Zavadschi,+919870871324,VNS8893,Mohali,,'), `an application row (${b[1]})`);
+    check(b[2].endsWith(`,"'=HYPERLINK(""http://x"",""click"")",+919870871324,"PB01 2011, 0012345",,,(repeat)`), 'a formula-like name opens as text; a licence with a comma stays one cell; same phone is a repeat');
 
     const agencies = await admin(B, '/admin/agencies.csv');
     same(agencies.status, 200, 'agencies.csv downloads');
     const a = csvRows(agencies.text);
-    same(a[0], 'ID,Submitted (IST),Agency name,Contact person,Phone,City or base,Drivers,Work email,GSTIN,Repeat', 'agencies header');
-    same(a.slice(1).map(after).join(' | '), 'Tricity Drivers,Gurpreet Kaur,+919811122233,Panchkula,6–20,ops@tricitydrivers.in,03ABCDE1234F1Z5, | Solo Cabs,Aman,+919811122233,Zirakpur,,,,(repeat)',
+    same(a[0], 'ID,Submitted (IST),Agency name,Contact person,Phone,City or base,Drivers,Work email,GSTIN,Phone verified,Repeat', 'agencies header');
+    same(a.slice(1).map(after).join(' | '), 'Tricity Drivers,Gurpreet Kaur,+919811122233,Panchkula,6–20,ops@tricitydrivers.in,03ABCDE1234F1Z5,, | Solo Cabs,Aman,+919811122233,Zirakpur,,,,,(repeat)',
       'agency rows: email lower-cased, GSTIN upper-cased, optional fields blank, a repeat number marked');
 
     const dash = await admin(B, '/admin');
@@ -475,13 +480,109 @@ async function migration() {
     same((await post(B, '/api/buddy', { type: 'individual', name: 'New Applicant', phone: '9000000002', licence: 'PB01 2', city: 'Kharar' })).status, 200, 'an application with a city, into the older buddies table');
     same((await post(B, '/api/buddy', { type: 'agency', agency: 'Hill Drivers', contact: 'Ravi', phone: '9000000003', city: 'Mohali' })).status, 200, 'and an agency, into a table that did not exist');
     const c = csvRows((await admin(B, '/admin/clients.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
-    same(c.slice(1).join(' | '), '1,+919870871324,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,, | 2,+447911123456,Contact page,,,,,, | 3,,Estimate page,"One way · Mohali → Kasauli · 20 Oct, 08:00",1650,👎,Fine otherwise,,',
+    same(c.slice(1).join(' | '), '1,+919870871324,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,,, | 2,+447911123456,Contact page,,,,,,, | 3,,Estimate page,"One way · Mohali → Kasauli · 20 Oct, 08:00",1650,👎,Fine otherwise,,,',
       'old rows keep their data, the old fare is split into its column, new rows have every column');
     const b = csvRows((await admin(B, '/admin/buddies.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
-    same(b.slice(1).join(' | '), '1,Old Applicant,+919000000001,PB01 1,, | 2,New Applicant,+919000000002,PB01 2,Kharar,', 'the buddies table gains the city column');
+    same(b.slice(1).join(' | '), '1,Old Applicant,+919000000001,PB01 1,,, | 2,New Applicant,+919000000002,PB01 2,Kharar,,', 'the buddies table gains the city and phone-verified columns');
     same(csvRows((await admin(B, '/admin/agencies.csv')).text).length, 2, 'the agencies list exists and has the new application');
   } finally {
     await dev.stop();
+  }
+}
+
+/** One-time codes on (otp.js), Twilio played by test/twilio-stub.mjs: nothing saves without the code sent to the number. */
+async function otp() {
+  console.log('\none-time codes');
+  const stub = await startTwilioStub(8784);
+  const dev = await startDev({
+    port: 8785, password: PASSWORD,
+    vars: { RB_TEST: '1', TWILIO_ACCOUNT_SID: 'ACtest0001', TWILIO_AUTH_TOKEN: 'tok-secret', TWILIO_FROM: 'RIDEBD', TWILIO_API_BASE: stub.url, OTP_DAILY_CAP: '30' },
+  });
+  const B = dev.base;
+  const ip = (n) => ({ 'CF-Connecting-IP': `198.51.100.${n}` });
+  const later = (sec, n) => ({ ...ip(n), 'X-RB-Now': new Date(Date.now() + sec * 1000).toISOString() });
+  try {
+    const join = { phone: '98111 00101', source: 'home', consent: true };
+    const first = await post(B, '/api/waitlist', join, ip(1));
+    same(first.status, 202, 'a signup first gets a code');
+    same(JSON.stringify(['otp', 'sentTo', 'resendIn', 'expiresIn'].map((k) => json(first)?.[k])), '["sent","+91 XXXXX XX101",30,300]', '…and is told where it went, masked');
+    const sms = stub.messages.at(-1);
+    same(JSON.stringify([sms.account, sms.To, sms.From, sms.auth]), JSON.stringify(['ACtest0001', '+919811100101', 'RIDEBD', `Basic ${Buffer.from('ACtest0001:tok-secret').toString('base64')}`]),
+      'the SMS goes through Twilio, from the sender ID, with the account\'s credentials');
+    check(/^Your RideBuddy code is \d{6}\. It expires in 5 minutes\. Do not share it with anyone\.$/.test(sms.Body), `the SMS text (${sms.Body})`);
+    same(csvRows((await admin(B, '/admin/clients.csv')).text).length, 1, 'nothing is on the list before the code');
+
+    const code = stub.codeFor('+919811100101');
+    const wrong = code === '000000' ? '000001' : '000000';
+    const w1 = await post(B, '/api/waitlist', { ...join, code: wrong }, ip(1));
+    check(w1.status === 400 && json(w1)?.errors?.code === CODE_WRONG && json(w1)?.reason === 'wrong', `a wrong code is refused (${w1.status})`);
+    await post(B, '/api/waitlist', { ...join, code: wrong }, ip(1));
+    same(json(await post(B, '/api/waitlist', { ...join, code: wrong }, ip(1)))?.errors?.code, CODE_TOO_MANY, 'three wrong tries use the code up…');
+    same(json(await post(B, '/api/waitlist', { ...join, code }, ip(1)))?.errors?.code, CODE_TOO_MANY, '…so even the right one no longer works');
+    const soon = await post(B, '/api/waitlist', join, ip(1));
+    check(soon.status === 429 && json(soon)?.reason === 'resend_wait' && /^Wait \d+ seconds, then ask for a new code\.$/.test(json(soon)?.error || ''),
+      `a new code within 30 seconds is refused ("${json(soon)?.error}")`);
+    same((await post(B, '/api/waitlist', join, later(31, 1))).status, 202, 'after 30 seconds, a new code');
+    const code2 = stub.codeFor('+919811100101');
+    same((await post(B, '/api/waitlist', { ...join, code: code2 }, later(40, 1))).status, 200, 'the right code saves the signup');
+    same(json(await post(B, '/api/waitlist', { ...join, code: code2 }, later(45, 1)))?.errors?.code, CODE_EXPIRED, 'a code works once');
+
+    const about = { phone: '9811100102', source: 'about', consent: true };
+    await post(B, '/api/waitlist', about, ip(2));
+    same(json(await post(B, '/api/waitlist', { ...about, code: stub.codeFor('+919811100102') }, later(301, 2)))?.errors?.code, CODE_EXPIRED, 'a code past 5 minutes has expired');
+
+    const busy = { phone: '9811100103', source: 'home', consent: true };
+    const sends = [];
+    for (const sec of [0, 31, 62, 93]) sends.push(await post(B, '/api/waitlist', busy, later(sec, 3)));
+    check(sends.slice(0, 3).every((r) => r.status === 202) && sends[3].status === 429 && json(sends[3])?.error === CODE_NUMBER_LIMIT,
+      `three codes to a number an hour, then "${json(sends[3])?.error}"`);
+
+    stub.failNext = 1;
+    const refused = await post(B, '/api/waitlist', { phone: '9811100104', source: 'home', consent: true }, ip(4));
+    check(refused.status === 502 && json(refused)?.error === CODE_SEND_FAILED && json(refused)?.reason === 'send_failed', `Twilio refusing the SMS is reported (${refused.status})`);
+    same((await post(B, '/api/waitlist', { phone: '9811100104', source: 'home', consent: true }, ip(4))).status, 202, '…and the visitor can ask again at once');
+
+    const net = [];
+    for (let i = 0; i < 11; i += 1) net.push(await post(B, '/api/waitlist', { phone: `98112002${String(i).padStart(2, '0')}`, source: 'home', consent: true }, ip(5)));
+    check(net.slice(0, 10).every((r) => r.status === 202) && net[10].status === 429 && json(net[10])?.error === CODE_NETWORK_LIMIT,
+      `ten codes from one network an hour, then "${json(net[10])?.error}"`);
+
+    const quiet = stub.messages.length;
+    same(json(await post(B, '/api/waitlist', { phone: '9811100106', source: 'home', consent: false }, ip(6)))?.errors?.consent, CONSENT_ERROR, 'a form that doesn\'t pass is refused before any code…');
+    same((await post(B, '/api/waitlist', { phone: '9811100106', source: 'home', consent: true, website: 'http://spam.example' }, ip(6))).status, 200, '…and a filled honeypot gets its quiet 200…');
+    same(stub.messages.length, quiet, '…neither sends an SMS');
+
+    const individual = { type: 'individual', name: 'Harpreet Singh', phone: '9811100107', licence: 'PB01 20110012345', city: 'Mohali' };
+    same((await post(B, '/api/buddy', individual, ip(7))).status, 202, 'a Buddy application gets a code…');
+    same((await post(B, '/api/buddy', { ...individual, code: stub.codeFor('+919811100107') }, ip(7))).status, 200, '…and saves with it');
+    const agency = { type: 'agency', agency: 'Hill Drivers', contact: 'Ravi', phone: '9811100108', city: 'Mohali' };
+    same((await post(B, '/api/buddy', agency, ip(8))).status, 202, 'so does an agency application…');
+    same((await post(B, '/api/buddy', { ...agency, code: stub.codeFor('+919811100108') }, ip(8))).status, 200, '…saved with its code');
+
+    const trip = { type: 'one', from: 'Sector 17', to: 'Shimla', date: '2026-10-12', time: '09:00', fare: 1612 };
+    same((await post(B, '/api/feedback', { estimate_id: 'est_otp0000000000001', vote: 'down', trip }, ip(9))).status, 200, 'a vote needs no code');
+    const signup = { phone: '9811100109', source: 'estimate', consent: true, estimate_id: 'est_otp0000000000001', trip };
+    same((await post(B, '/api/waitlist', signup, ip(9))).status, 202, 'joining under that fare gets a code…');
+    same((await post(B, '/api/waitlist', { ...signup, code: stub.codeFor('+919811100109') }, ip(9))).status, 200, '…and lands on the vote\'s row');
+
+    const after = (row) => row.replace(/^\d+,\d{4}-\d{2}-\d{2} \d{2}:\d{2},/, '');
+    same(csvRows((await admin(B, '/admin/clients.csv')).text).slice(1).map(after).join(' | '),
+      '+919811100101,Home page,,,,,Yes,Yes, | +919811100109,Estimate page,"One way · Sector 17 → Shimla · 12 Oct, 09:00",1612,👎,,Yes,Yes,',
+      'the list: only numbers proven with a code, marked Phone verified');
+    same(csvRows((await admin(B, '/admin/buddies.csv')).text).slice(1).map(after).join(), 'Harpreet Singh,+919811100107,PB01 20110012345,Mohali,Yes,', 'buddies.csv: Phone verified');
+    same(csvRows((await admin(B, '/admin/agencies.csv')).text).slice(1).map(after).join(), 'Hill Drivers,Ravi,+919811100108,Mohali,,,,Yes,', 'agencies.csv: Phone verified');
+
+    // The daily cap (OTP_DAILY_CAP, 30 here): past it, no more SMS today.
+    let capped = null;
+    for (let i = 0; i < 40 && !capped; i += 1) {
+      const r = await post(B, '/api/waitlist', { phone: `98113003${String(i).padStart(2, '0')}`, source: 'home', consent: true }, ip(20 + i));
+      if (r.status === 503) capped = r;
+    }
+    check(!!capped && json(capped)?.reason === 'daily_cap' && json(capped)?.error === CODE_SEND_FAILED && stub.messages.length === 30,
+      `the site-wide daily cap stops the SMS at 30 (${stub.messages.length} sent)`);
+  } finally {
+    await dev.stop();
+    await stub.close();
   }
 }
 
@@ -491,6 +592,7 @@ async function main() {
   await locked();
   await endpoints();
   await migration();
+  await otp();
   await analytics();
   console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
   process.exit(failures ? 1 : 0);

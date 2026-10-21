@@ -4,7 +4,8 @@
  *
  * Each patch must match the artboard exactly `count` times (default 1), or the
  * build fails: a canvas re-export that changes one of these spots is caught
- * here, loudly, instead of shipping a half-patched page.
+ * here, loudly, instead of shipping a half-patched page. A `cut` patch removes
+ * everything between two markers, each of which must appear exactly once.
  */
 
 // ----- Every "Estimate" CTA leads to /estimate/ ------------------------------------
@@ -40,15 +41,17 @@ const ESTIMATE = [
   },
 ];
 
-// ----- Real URLs: /beta/, /beta/#how-it-works, #about, #contact, #apply ------------
+// ----- Real URLs: /beta/, /beta/#about, #contact, #apply ----------------------------
 
 const URLS = [
   {
     why: 'page <-> URL hash mapping',
     from: 'class Component extends DCLogic {',
     to: String.raw`// Real, shareable URLs for the artboard's pages (website/artboard-patches.mjs).
-const PAGE_HASH = { home: '', how: '#how-it-works', about: '#about', contact: '#contact' };
+const PAGE_HASH = { home: '', about: '#about', contact: '#contact' };
 const pageFromHash = () => Object.keys(PAGE_HASH).find((p) => PAGE_HASH[p] && PAGE_HASH[p] === window.location.hash) || 'home';
+// The How It Works page is gone: an old link to it opens Home, at a plain URL.
+if (window.location.hash === '#how-it-works') history.replaceState(null, '', window.location.pathname + window.location.search);
 
 class Component extends DCLogic {`,
   },
@@ -91,6 +94,11 @@ class Component extends DCLogic {`,
     });
     // Opened straight from a shared /beta/#apply link: counts as opening the form.
     if (this.state.applyOpen) this.track('buddy_application_opened', { via: 'link' });
+    // The code steps count down to "Resend OTP".
+    setInterval(() => {
+      const s = this.state;
+      if (s.wlStep === 'code' || s.contactStep === 'code' || s.applyStep === 'code') this.setState({ otpNow: Date.now() });
+    }, 1000);
   }`,
   },
   {
@@ -99,9 +107,9 @@ class Component extends DCLogic {`,
     to: "      underline: page === id ? 'var(--color-green-500)' : 'transparent', go: this.nav(id),\n      href: id === 'estimate' ? '/estimate/' : PAGE_HASH[id] || window.location.pathname,",
   },
   {
-    why: 'logo and "See the full journey" carry their URL',
+    why: 'the logo carries its URL',
     from: "      goHome: this.nav('home'), goHow: this.nav('how'),",
-    to: "      goHome: this.nav('home'), goHow: this.nav('how'),\n      homeHref: window.location.pathname, howHref: PAGE_HASH.how,",
+    to: "      goHome: this.nav('home'), goHow: this.nav('how'),\n      homeHref: window.location.pathname,",
   },
   {
     why: 'Round trips card carries its URL',
@@ -114,7 +122,7 @@ class Component extends DCLogic {`,
     to: "your Buddy brings you back.', go: this.presetTrip('one'), href: '/estimate/?type=one' },",
   },
   {
-    why: 'footer links carry their URLs (Terms and Privacy stay as they are)',
+    why: 'footer links carry their URLs (Terms and Privacy stay as they are); no How It Works',
     from: String.raw`      footerCols: [
         { title: 'Pages', items: [
           { label: 'Home', go: this.nav('home') }, { label: 'Estimate Fare', go: this.nav('estimate') }, { label: 'How It Works', go: this.nav('how') },
@@ -133,7 +141,7 @@ class Component extends DCLogic {`,
       ],`,
     to: String.raw`      footerCols: [
         { title: 'Pages', items: [
-          { label: 'Home', go: this.nav('home'), href: window.location.pathname }, { label: 'Estimate Fare', go: this.nav('estimate'), href: '/estimate/' }, { label: 'How It Works', go: this.nav('how'), href: PAGE_HASH.how },
+          { label: 'Home', go: this.nav('home'), href: window.location.pathname }, { label: 'Estimate Fare', go: this.nav('estimate'), href: '/estimate/' },
           { label: 'About', go: this.nav('about'), href: PAGE_HASH.about }, { label: 'Contact', go: this.nav('contact'), href: PAGE_HASH.contact },
         ] },
         { title: 'Services', items: [
@@ -150,7 +158,6 @@ class Component extends DCLogic {`,
   },
   { why: 'logo link', from: '<a href="#" onClick="{{ goHome }}"', to: '<a href="{{ homeHref }}" onClick="{{ goHome }}"' },
   { why: 'header and mobile-menu links', from: '<a href="#" onClick="{{ l.go }}"', to: '<a href="{{ l.href }}" onClick="{{ l.go }}"', count: 2 },
-  { why: '"See the full journey" link', from: '<a href="#" onClick="{{ goHow }}"', to: '<a href="{{ howHref }}" onClick="{{ goHow }}"' },
   { why: '"Estimate this trip" links', from: '<a href="#" onClick="{{ s.go }}"', to: '<a href="{{ s.href }}" onClick="{{ s.go }}"' },
   { why: 'About page "Get an Estimate" link', from: '<a href="#" onClick="{{ goEstimatorFromPage }}"', to: '<a href="/estimate/" onClick="{{ goEstimatorFromPage }}"' },
   { why: 'footer links', from: '<a href="#" onClick="{{ it.go }}"', to: '<a href="{{ it.href }}" onClick="{{ it.go }}"' },
@@ -168,9 +175,9 @@ const BOOKING = [
     to: `<button type="button" onClick="{{ openWaitlist }}" style="display:inline-flex;align-items:center;justify-content:center;gap:10px;white-space:nowrap;min-height:52px;padding:0 26px;cursor:pointer;background:transparent;border:1.5px solid rgba(245,240,232,.72);border-radius:var(--radius-lg);font-family:var(--font-body),DM Sans,sans-serif;font-size:16px;font-weight:500;color:var(--color-parchment)" style-hover="background:rgba(245,240,232,.14);border-color:var(--color-parchment)" style-active="transform:scale(0.98)" style-focus="box-shadow:0 0 0 3px rgba(245,240,232,.28);outline:none">Join the Waitlist</button>`,
   },
   {
-    why: 'no "Estimate Fare" in the header or phone menu: "Get an Estimate" is the same page',
+    why: 'header and phone menu: no "Estimate Fare" ("Get an Estimate" is the same page), no How It Works',
     from: "navLinks: [link('home', 'Home'), link('estimate', 'Estimate Fare'), link('how', 'How It Works'), ",
-    to: "navLinks: [link('home', 'Home'), link('how', 'How It Works'), ",
+    to: "navLinks: [link('home', 'Home'), ",
   },
 ];
 
@@ -179,21 +186,54 @@ const BOOKING = [
 // A field people never see and bots fill in; the Worker drops what arrives with it.
 const honeypot = (id) => `<input type="text" name="website" id="${id}" tabIndex="-1" autoComplete="off" aria-hidden="true" style="position:absolute;left:-10000px;width:1px;height:1px;opacity:0">`;
 
+/**
+ * A phone form's code step (website/worker/otp.js), as in the Phase 1 design:
+ * where the code went and "Change number", the 6-digit code, Verify Number,
+ * and "Resend OTP" after a countdown. `p` is the form's state prefix (wl,
+ * contact, apply), whose values codeValues() provides; `id` the code field's.
+ * One field rather than six boxes, so a pasted or auto-filled code lands whole.
+ */
+const codeStep = (p, id) => `<div style="display:flex;flex-direction:column;gap:16px">
+              <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 12px">
+                <span style="font-family:var(--font-body),sans-serif;font-size:14px;line-height:1.5;color:var(--color-charcoal)">{{ ${p}SentTo }}</span>
+                <button type="button" onClick="{{ ${p}ChangeNumber }}" style="border:none;background:transparent;padding:10px 0;cursor:pointer;font-family:var(--font-body),sans-serif;font-size:14px;font-weight:500;color:var(--color-green-500)" style-hover="color:var(--color-green-700)">Change number</button>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <label for="${id}" style="font-family:var(--font-body),sans-serif;font-size:13px;font-weight:500;color:#888">6-digit code</label>
+                <input id="${id}" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]*" aria-invalid="{{ ${p}CodeInvalid }}" value="{{ ${p}Code }}" onChange="{{ ${p}OnCode }}" placeholder="••••••" style="width:100%;box-sizing:border-box;min-height:52px;border-radius:var(--radius-lg);border:1.5px solid {{ ${p}CodeBorder }};background:var(--color-parchment);padding:0 16px;outline:none;font-family:var(--font-body),DM Sans,sans-serif;font-size:22px;font-weight:600;letter-spacing:0.4em;text-align:center;color:var(--color-charcoal)" style-focus="border-color:var(--color-green-500);box-shadow:0 0 0 3px rgba(74,92,47,.18)">
+                <sc-if value="{{ ${p}CodeError }}">
+                  <span role="alert" style="font-family:var(--font-body),sans-serif;font-size:13px;color:#C62828">{{ ${p}CodeError }}</span>
+                </sc-if>
+              </div>
+              <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Button" onClick="{{ ${p}Verify }}" disabled="{{ ${p}CantVerify }}" hint-size="100%,48px">{{ ${p}VerifyCta }}</x-import>
+              <div style="display:flex;justify-content:center;align-items:center;min-height:40px">
+                <sc-if value="{{ ${p}CanResend }}">
+                  <button type="button" onClick="{{ ${p}Resend }}" style="border:none;background:transparent;padding:10px 12px;cursor:pointer;font-family:var(--font-body),sans-serif;font-size:14px;font-weight:500;color:var(--color-green-500)" style-hover="color:var(--color-green-700)">Resend OTP</button>
+                </sc-if>
+                <sc-if value="{{ ${p}ResendWait }}">
+                  <span style="font-family:var(--font-body),sans-serif;font-size:14px;color:var(--color-grey-500)">{{ ${p}ResendLabel }}</span>
+                </sc-if>
+              </div>
+            </div>`;
+
 const FORMS = [
   {
     why: 'postForm() and honeypot() helpers',
     from: '  track(event, payload) {',
     to: String.raw`  /**
-   * Saves a form through the site's Worker. Resolves to { ok: true } or
-   * { ok: false, error, errors } and never throws: a failure is shown to the
-   * visitor, who can try again — never a success that saved nothing.
+   * Saves a form through the site's Worker. Resolves to { ok: true }; to
+   * { ok: false, otp: 'sent', sentTo, resendIn } when the Worker has sent a
+   * one-time code to the number and wants it back (website/worker/otp.js); or
+   * to { ok: false, error, errors, reason }. Never throws: a failure is shown
+   * to the visitor, who can try again — never a success that saved nothing.
    */
   async postForm(path, body) {
     try {
       const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.ok) return { ok: true };
-      return { ok: false, error: data.error || 'We couldn’t save that just now. Please try again.', errors: data.errors || {} };
+      if (res.status === 202 && data.otp === 'sent') return { ok: false, otp: 'sent', sentTo: data.sentTo, resendIn: data.resendIn || 30, errors: {} };
+      return { ok: false, error: data.error || 'We couldn’t save that just now. Please try again.', errors: data.errors || {}, reason: data.reason || '' };
     } catch (e) {
       return { ok: false, error: 'We couldn’t reach RideBuddy. Check your connection and try again.', errors: {} };
     }
@@ -202,6 +242,42 @@ const FORMS = [
   honeypot(id) {
     const el = document.getElementById(id);
     return el ? el.value : '';
+  }
+
+  /** A one-time code went out: the form (state prefix p: wl, contact, apply) moves to its code step. */
+  codeSent(p, r, form, fieldId) {
+    this.setState({ [p + 'Step']: 'code', [p + 'Code']: '', [p + 'CodeError']: '', [p + 'SentTo']: r.sentTo, [p + 'ResendAt']: Date.now() + r.resendIn * 1000, otpNow: Date.now() });
+    this.track('otp_sent', { form });
+    // Into the code field as soon as it is on the page.
+    const focus = (tries) => {
+      const el = document.getElementById(fieldId);
+      if (el) el.focus();
+      else if (tries > 0) setTimeout(() => focus(tries - 1), 50);
+    };
+    setTimeout(() => focus(20), 0);
+  }
+
+  /** The template values of a form's code step (codeStep() in artboard-patches.mjs). */
+  codeValues(p, verify, resend) {
+    const s = this.state;
+    const left = Math.max(0, Math.ceil(((s[p + 'ResendAt'] || 0) - (s.otpNow || 0)) / 1000));
+    const error = s[p + 'CodeError'] || '';
+    return {
+      [p + 'SentTo']: 'Code sent to ' + (s[p + 'SentTo'] || '') + '.',
+      [p + 'Code']: s[p + 'Code'] || '',
+      [p + 'OnCode']: (e) => this.setState({ [p + 'Code']: String(e.target.value).replace(/\D/g, '').slice(0, 6), [p + 'CodeError']: '' }),
+      [p + 'CodeError']: error,
+      [p + 'CodeBorder']: error ? '#C62828' : 'rgba(100,100,100,.18)',
+      [p + 'CodeInvalid']: error ? 'true' : 'false',
+      [p + 'CantVerify']: !!s[p + 'Sending'] || (s[p + 'Code'] || '').length !== 6,
+      [p + 'VerifyCta']: s[p + 'Sending'] ? 'Checking…' : 'Verify Number',
+      [p + 'Verify']: verify,
+      [p + 'CanResend']: left === 0 && !s[p + 'Sending'],
+      [p + 'ResendWait']: left > 0,
+      [p + 'ResendLabel']: 'Resend OTP in 0:' + String(left).padStart(2, '0'),
+      [p + 'Resend']: resend,
+      [p + 'ChangeNumber']: () => this.setState({ [p + 'Step']: 'form', [p + 'Code']: '', [p + 'CodeError']: '' }),
+    };
   }
 
   track(event, payload) {`,
@@ -235,7 +311,8 @@ const FORMS = [
     to: String.raw`  /**
    * Saved by the site's Worker (POST /api/buddy -> D1): an individual Buddy or a
    * driver agency. The Worker normalises the number and has the final word on
-   * every field; there is no SMS code.
+   * every field. With one-time codes on, its first answer is a code sent to the
+   * number, and the form asks for it before the application saves.
    */
   submitApply = async () => {
     const s = this.state;
@@ -244,7 +321,7 @@ const FORMS = [
     const errors = {};
     if (agency && !s.applyAgency.trim()) errors.agency = 'Enter the agency name.';
     if (!s.applyName.trim()) errors.name = agency ? 'Enter the contact person’s name.' : 'Enter your full name.';
-    if (s.applyPhone.length !== 10) errors.phone = 'Enter a 10-digit mobile number.';
+    if (!/^[6-9]\d{9}$/.test(s.applyPhone)) errors.phone = 'Enter a 10-digit mobile number.';
     if (!agency && !s.applyLicence.trim()) errors.licence = 'Enter your licence number.';
     if (!s.applyCity.trim()) errors.city = 'Enter your city or base.';
     if (Object.keys(errors).length) {
@@ -253,21 +330,37 @@ const FORMS = [
       this.setState({ applyErrors: errors });
       return;
     }
+    this.sendApply('');
+  };
 
-    this.setState({ applySending: true, applyErrors: {} });
+  verifyApply = () => this.sendApply(this.state.applyCode);
+  resendApply = () => this.sendApply('');
+
+  sendApply = async (code) => {
+    const s = this.state;
+    if (s.applySending) return;
+    const agency = s.applyType === 'agency';
+    const form = agency ? 'agency' : 'buddy';
+    const atCode = s.applyStep === 'code';
+    this.setState({ applySending: true, applyErrors: {}, applyCodeError: '' });
     const fields = agency
       ? { type: 'agency', agency: s.applyAgency, contact: s.applyName, phone: s.applyPhone, city: s.applyCity, drivers: s.applyFleet || null, email: s.applyEmail, gstin: s.applyGstin }
       : { type: 'individual', name: s.applyName, phone: s.applyPhone, licence: s.applyLicence, city: s.applyCity };
-    const r = await this.postForm('/api/buddy', Object.assign(fields, { website: this.honeypot('rb-hp-apply') }));
+    const r = await this.postForm('/api/buddy', Object.assign(fields, { website: this.honeypot('rb-hp-apply') }, code ? { code } : {}));
+    this.setState({ applySending: false });
+    if (r.otp === 'sent') { this.codeSent('apply', r, form, 'apply-code'); return; }
     if (!r.ok) {
-      // For the site's analytics: a mistyped number, another field, or a save that failed.
-      this.track(r.errors.phone ? 'phone_invalid' : Object.keys(r.errors).length ? 'form_invalid' : 'save_failed', { form: agency ? 'agency' : 'buddy' });
+      // For the site's analytics: a code that didn't go through, a mistyped number, another field, or a save that failed.
+      if (r.reason) this.track('otp_failed', { form, kind: r.reason });
+      else this.track(r.errors.phone ? 'phone_invalid' : Object.keys(r.errors).length ? 'form_invalid' : 'save_failed', { form });
+      if (atCode) { this.setState({ applyCodeError: r.errors.code || r.error }); return; }
       // The Worker calls the agency's contact person "contact"; the form shows it in the name field.
       const errs = Object.keys(r.errors).length ? Object.assign({}, r.errors, { name: r.errors.name || r.errors.contact }) : { form: r.error };
-      this.setState({ applySending: false, applyErrors: errs });
+      this.setState({ applyErrors: errs });
       return;
     }
-    this.setState({ applySending: false, applySent: true });
+    if (code) this.track('otp_verified', { form });
+    this.setState({ applySent: true, applyStep: 'form', applyCode: '' });
     this.track('buddy_application_submitted', { type: agency ? 'agency' : 'individual' });
   };`,
   },
@@ -286,21 +379,37 @@ const FORMS = [
     const { contactPhone, contactConsent, contactSending } = this.state;
     if (contactSending) return;
     const errs = {};
-    if (contactPhone.length !== 10) errs.contactError = 'Enter a 10-digit mobile number.';
+    if (!/^[6-9]\d{9}$/.test(contactPhone)) errs.contactError = 'Enter a 10-digit mobile number.';
     if (!contactConsent) errs.contactConsentError = 'Tick the box to join the waitlist.';
     if (Object.keys(errs).length) {
       if (errs.contactError) this.track('phone_invalid', { form: 'contact' });
       this.setState(Object.assign({ contactError: '', contactConsentError: '' }, errs));
       return;
     }
-    this.setState({ contactSending: true, contactError: '', contactConsentError: '' });
-    const r = await this.postForm('/api/waitlist', { phone: contactPhone, consent: true, source: 'contact', website: this.honeypot('rb-hp-contact') });
+    this.sendContact('');
+  };
+
+  verifyContact = () => this.sendContact(this.state.contactCode);
+  resendContact = () => this.sendContact('');
+
+  // Saved by the Worker (POST /api/waitlist); with one-time codes on, after the code.
+  sendContact = async (code) => {
+    const s = this.state;
+    if (s.contactSending) return;
+    const atCode = s.contactStep === 'code';
+    this.setState({ contactSending: true, contactError: '', contactConsentError: '', contactCodeError: '' });
+    const r = await this.postForm('/api/waitlist', Object.assign({ phone: s.contactPhone, consent: true, source: 'contact', website: this.honeypot('rb-hp-contact') }, code ? { code } : {}));
+    this.setState({ contactSending: false });
+    if (r.otp === 'sent') { this.codeSent('contact', r, 'contact', 'rb-contact-code'); return; }
     if (!r.ok) {
-      this.track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'contact' });
-      this.setState({ contactSending: false, contactError: r.errors.phone || (r.errors.consent ? '' : r.error), contactConsentError: r.errors.consent || '' });
+      if (r.reason) this.track('otp_failed', { form: 'contact', kind: r.reason });
+      else this.track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'contact' });
+      if (atCode) { this.setState({ contactCodeError: r.errors.code || r.error }); return; }
+      this.setState({ contactError: r.errors.phone || (r.errors.consent ? '' : r.error), contactConsentError: r.errors.consent || '' });
       return;
     }
-    this.setState({ contactSending: false, contactDone: true });
+    if (code) this.track('otp_verified', { form: 'contact' });
+    this.setState({ contactDone: true, contactStep: 'form', contactCode: '' });
     this.track('waitlist_joined', { source: 'contact' });
   };`,
   },
@@ -335,7 +444,7 @@ const FORMS = [
   {
     why: 'Contact form state for the template',
     from: '      contactDone: s.contactDone, contactPending: !s.contactDone,',
-    to: String.raw`      contactDone: s.contactDone, contactPending: !s.contactDone,
+    to: String.raw`      contactDone: s.contactDone, contactPending: !s.contactDone && s.contactStep !== 'code', contactAtCode: !s.contactDone && s.contactStep === 'code',
       contactSending: !!s.contactSending, contactCta: s.contactSending ? 'Joining…' : 'Join the Waitlist',
       contactConsent: !!s.contactConsent, contactConsentError: s.contactConsentError || '',
       onContactConsent: (e) => this.setState({ contactConsent: e.target.checked, contactConsentError: '' }),
@@ -348,7 +457,7 @@ const FORMS = [
               <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Button" onClick="{{ submitContact }}" disabled="{{ contactSending }}" hint-size="100%,48px">{{ contactCta }}</x-import>`,
   },
   {
-    why: 'Buddy pop-up: the new design\'s form, individual Buddy or driver agency, without the SMS code or consent tick',
+    why: 'Buddy pop-up: the new design\'s form, individual Buddy or driver agency, without the consent tick; then the one-time code step',
     from: String.raw`  <sc-if value="{{ applyOpen }}">
     <div style="position:fixed;inset:0;z-index:70;background:rgba(30,30,26,.5);display:flex;align-items:center;justify-content:center;padding:24px;overflow-y:auto">
       <div style="width:100%;max-width:460px;background:var(--color-white);border-radius:var(--radius-lg);box-shadow:var(--shadow-xl);padding:32px;animation:rb-fade-up 300ms cubic-bezier(.25,.46,.45,.94)">
@@ -458,6 +567,11 @@ const FORMS = [
             </sc-if>
           </div>
         </sc-if>
+        <sc-if value="{{ applyAtCode }}">
+          <div style="margin-top:24px">
+            ${codeStep('apply', 'apply-code')}
+          </div>
+        </sc-if>
       </div>
     </div>
   </sc-if>`,
@@ -502,14 +616,38 @@ const FORMS = [
       applyType: 'individual', applyCity: '', applyAgency: '', applyEmail: '', applyGstin: '', applyFleet: '',
       contactConsent: false, contactConsentError: '',
       wlOpen: false, wlPhone: '', wlConsent: false, wlErrors: {}, wlSending: false, wlDone: false,
+      // One-time code steps: 'form' or 'code', the code typed, where it went, when a new one may be asked for.
+      wlStep: 'form', wlCode: '', wlCodeError: '', wlSentTo: '', wlResendAt: 0,
+      contactStep: 'form', contactCode: '', contactCodeError: '', contactSentTo: '', contactResendAt: 0,
+      applyStep: 'form', applyCode: '', applyCodeError: '', applySentTo: '', applyResendAt: 0,
+      otpNow: 0,
     };`,
+  },
+  {
+    why: 'Buddy pop-up: the form, or its one-time code step',
+    from: '      applyForm: !s.applySent,',
+    to: "      applyForm: !s.applySent && s.applyStep !== 'code', applyAtCode: !s.applySent && s.applyStep === 'code',",
+  },
+  {
+    why: 'Contact page waitlist: its one-time code step, after the number',
+    from: '              <span style="font-family:var(--font-body),sans-serif;font-size:12px;color:var(--color-grey-500)">One message when the app is live. Nothing else.</span>\n            </div>\n          </sc-if>\n',
+    to: `              <span style="font-family:var(--font-body),sans-serif;font-size:12px;color:var(--color-grey-500)">One message when the app is live. Nothing else.</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ contactAtCode }}">
+            <div style="display:flex;flex-direction:column;gap:16px">
+              <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.015em;margin:0;color:var(--color-charcoal)">Join the waitlist.</h2>
+              ${codeStep('contact', 'rb-contact-code')}
+            </div>
+          </sc-if>
+`,
   },
 ];
 
 // ----- "Join the Waitlist": hero, closing band, and the pop-up they open -------------
 
 /** Where a pop-up signup was made: the page the visitor was on (forms.js SOURCES). */
-const WAITLIST_SOURCE = "{ home: 'home', how: 'how', about: 'about', contact: 'contact' }[this.state.page] || 'home'";
+const WAITLIST_SOURCE = "{ home: 'home', about: 'about', contact: 'contact' }[this.state.page] || 'home'";
 
 const WAITLIST = [
   {
@@ -520,7 +658,7 @@ const WAITLIST = [
 class Component extends DCLogic {`,
   },
   {
-    why: 'waitlist pop-up: open, close, and save through POST /api/waitlist (no SMS code)',
+    why: 'waitlist pop-up: open, close, and save through POST /api/waitlist (after a one-time code, when they are on)',
     from: '  openApply = (e) => {',
     to: String.raw`  openWaitlist = (e) => {
     if (e) e.preventDefault();
@@ -534,22 +672,37 @@ class Component extends DCLogic {`,
     const { wlPhone, wlConsent, wlSending } = this.state;
     if (wlSending) return;
     const errors = {};
-    if (wlPhone.length !== 10) errors.phone = 'Enter a 10-digit mobile number.';
+    if (!/^[6-9]\d{9}$/.test(wlPhone)) errors.phone = 'Enter a 10-digit mobile number.';
     if (!wlConsent) errors.consent = 'Tick the box to join the waitlist.';
     if (Object.keys(errors).length) {
       if (errors.phone) this.track('phone_invalid', { form: 'waitlist' });
       this.setState({ wlErrors: errors });
       return;
     }
+    this.sendWaitlist('');
+  };
+
+  verifyWaitlist = () => this.sendWaitlist(this.state.wlCode);
+  resendWaitlist = () => this.sendWaitlist('');
+
+  sendWaitlist = async (code) => {
+    const s = this.state;
+    if (s.wlSending) return;
     const source = ${WAITLIST_SOURCE};
-    this.setState({ wlSending: true, wlErrors: {} });
-    const r = await this.postForm('/api/waitlist', { phone: wlPhone, consent: true, source, website: this.honeypot('rb-hp-waitlist') });
+    const atCode = s.wlStep === 'code';
+    this.setState({ wlSending: true, wlErrors: {}, wlCodeError: '' });
+    const r = await this.postForm('/api/waitlist', Object.assign({ phone: s.wlPhone, consent: true, source, website: this.honeypot('rb-hp-waitlist') }, code ? { code } : {}));
+    this.setState({ wlSending: false });
+    if (r.otp === 'sent') { this.codeSent('wl', r, 'waitlist', 'rb-wl-code'); return; }
     if (!r.ok) {
-      this.track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'waitlist' });
-      this.setState({ wlSending: false, wlErrors: Object.keys(r.errors).length ? r.errors : { form: r.error } });
+      if (r.reason) this.track('otp_failed', { form: 'waitlist', kind: r.reason });
+      else this.track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'waitlist' });
+      if (atCode) { this.setState({ wlCodeError: r.errors.code || r.error }); return; }
+      this.setState({ wlErrors: Object.keys(r.errors).length ? r.errors : { form: r.error } });
       return;
     }
-    this.setState({ wlSending: false, wlDone: true });
+    if (code) this.track('otp_verified', { form: 'waitlist' });
+    this.setState({ wlDone: true, wlStep: 'form', wlCode: '' });
     this.track('waitlist_joined', { source });
   };
 
@@ -560,7 +713,11 @@ class Component extends DCLogic {`,
     from: '      bookBuddy: this.bookBuddy,',
     to: String.raw`      bookBuddy: this.bookBuddy,
       openWaitlist: this.openWaitlist, closeWaitlist: this.closeWaitlist, submitWaitlist: this.submitWaitlist,
-      wlOpen: s.wlOpen, wlDone: s.wlDone, wlPending: !s.wlDone,
+      wlOpen: s.wlOpen, wlDone: s.wlDone, wlPending: !s.wlDone && s.wlStep !== 'code', wlAtCode: !s.wlDone && s.wlStep === 'code',
+      // The one-time code steps of the three phone forms (codeStep()).
+      ...this.codeValues('wl', this.verifyWaitlist, this.resendWaitlist),
+      ...this.codeValues('contact', this.verifyContact, this.resendContact),
+      ...this.codeValues('apply', this.verifyApply, this.resendApply),
       wlPhone: s.wlPhone, onWlPhone: (e) => this.setState({ wlPhone: tenDigits(e.target.value), wlErrors: Object.assign({}, s.wlErrors, { phone: '' }) }),
       wlPhoneError: s.wlErrors.phone || '', wlPhoneBorder: s.wlErrors.phone ? '#C62828' : 'rgba(100,100,100,.18)', wlPhoneInvalid: s.wlErrors.phone ? 'true' : 'false',
       wlConsent: s.wlConsent, onWlConsent: (e) => this.setState({ wlConsent: e.target.checked, wlErrors: Object.assign({}, s.wlErrors, { consent: '' }) }),
@@ -620,6 +777,11 @@ class Component extends DCLogic {`,
             </sc-if>
           </div>
         </sc-if>
+        <sc-if value="{{ wlAtCode }}">
+          <div style="margin-top:24px">
+            ${codeStep('wl', 'rb-wl-code')}
+          </div>
+        </sc-if>
       </div>
     </div>
   </sc-if>
@@ -649,28 +811,52 @@ class Component extends DCLogic {`,
   },
 ];
 
-// ----- How It Works: the new design's FAQ --------------------------------------------
-// The eight questions of the new design, word for word except one sentence left
-// out: "The stay cost will be shown in your price breakdown when booking opens."
+// ----- No How It Works page ----------------------------------------------------------
+// The page goes, with the FAQ that lived on it, Home's "See the full journey"
+// link to it, and its links in the header, phone menu and footer (URLS, BOOKING).
+// Home keeps its short three-step section.
 
-const FAQ = [
+const HOW = [
   {
-    why: 'the FAQ on How It Works: the new design\'s eight questions',
+    why: 'the How It Works page, its FAQ included',
+    cut: ['  <!-- ══════════════════ HOW IT WORKS ══════════════════ -->', '  <!-- ══════════════════ ABOUT ══════════════════ -->'],
+  },
+  {
+    why: 'the FAQ\'s questions: nothing shows them any more, so none of them ships',
     from: String.raw`        ['Is this a cab service?', 'No. You travel in your own car; RideBuddy provides the driver.'],
         ['Is the estimate the final price?', "It's a specific estimate for your exact trip. Final fare is calculated when your trip ends, from the actual trip."],
         ['What about tolls?', "Tolls aren't part of the fare. You pay them directly on the road, in your own car — your FASTag, your call."],
         ["What does my Buddy's stay cost on multi-day trips?", '₹499 per night, included in your estimate — or arrange the stay yourself and it\u2019s excluded. Many hotels provide driver stay at no cost.'],
         ['Who are the Buddies?', 'Police-verified before their first trip, formally trained on hill roads, night driving and customer conduct, and rated by customers after every trip.'],
-        ['Which cities do you serve?', 'Pickups across the Chandigarh Tricity — Chandigarh, Mohali and Panchkula. Outstation destinations across North India.'],`,
-    to: String.raw`        ['When does booking open?', 'Soon. Join the waitlist and you’ll get one message when it does.'],
-        ['What happens after I join the waitlist?', 'Nothing until booking opens. Then one message, by SMS or WhatsApp. Nothing else.'],
-        ['Is this a cab service?', 'No. You travel in your own car. RideBuddy will provide the driver, called a Buddy.'],
-        ['Who are the Buddies?', 'Every Buddy is verified and trained before their first trip, and rated by you after every trip.'],
-        ['Is the estimate the final price?', 'It’s a specific estimate for your exact trip. The final fare is calculated when your trip ends, from the actual trip.'],
-        ['What about tolls and parking?', 'Tolls and parking aren’t part of the fare. You pay them directly, as you would on any trip in your own car.'],
-        ['What does my Buddy’s stay cost on multi-day trips?', 'Your estimate already includes it. Arranging the stay yourself? Choose Yes in the estimator and it’s removed. Many hotels give your Buddy a room at no cost.'],
-        ['Where can I travel?', 'Pickups across the Chandigarh Tricity: Chandigarh, Mohali and Panchkula.'],`,
+        ['Which cities do you serve?', 'Pickups across the Chandigarh Tricity — Chandigarh, Mohali and Panchkula. Outstation destinations across North India.'],
+`,
+    to: '',
+  },
+  {
+    why: 'Home: no "See the full journey" link to the How It Works page',
+    from: '\n        <a href="#" onClick="{{ goHow }}" style="display:inline-flex;align-items:center;gap:6px;margin-top:28px;font-family:var(--font-body),sans-serif;font-size:15px;font-weight:500">See the full journey\n          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>\n        </a>\n',
+    to: '\n',
   },
 ];
 
-export const ARTBOARD_PATCHES = [...ESTIMATE, ...URLS, ...BOOKING, ...FORMS, ...WAITLIST, ...FAQ];
+// ----- Buddies are "verified", not "police-verified" ---------------------------------
+
+const VERIFIED = [
+  {
+    why: 'Home, "Background-verified.": verified, not police-verified',
+    from: "body: 'Every Buddy is police-verified before their first trip.' }",
+    to: "body: 'Every Buddy is verified before their first trip.' }",
+  },
+  {
+    why: 'About: verified, not police-verified',
+    from: 'Every Buddy is police-verified, formally trained, and rated after every trip.',
+    to: 'Every Buddy is verified, formally trained, and rated after every trip.',
+  },
+  {
+    why: 'About, the standards list: verification, not police verification',
+    from: "{ text: 'Police verification before the first trip.' },",
+    to: "{ text: 'Verification before the first trip.' },",
+  },
+];
+
+export const ARTBOARD_PATCHES = [...ESTIMATE, ...URLS, ...BOOKING, ...FORMS, ...WAITLIST, ...HOW, ...VERIFIED];

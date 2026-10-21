@@ -14,6 +14,15 @@ export const GSTIN_ERROR = 'Enter the 15-character GSTIN, or leave it blank.';
 export const CONSENT_ERROR = 'Tick the box to join the waitlist.';
 export const LINK_ONLY_ERROR = 'Add a few words. Links alone aren’t saved.';
 
+// One-time codes (otp.js), worded as in the Phase 1 design.
+export const CODE_WRONG = 'That code doesn’t match. Try again.';
+export const CODE_EXPIRED = 'This code has expired. Get a new OTP.';
+export const CODE_TOO_MANY = 'Too many attempts. Get a new OTP.';
+export const CODE_SEND_FAILED = 'Couldn’t send the code. Try again in a minute.';
+export const CODE_NUMBER_LIMIT = 'Too many codes for this number. Try again in an hour.';
+export const CODE_NETWORK_LIMIT = 'Too many codes from your network. Please try again later.';
+export const codeWait = (seconds) => `Wait ${seconds} seconds, then ask for a new code.`;
+
 /**
  * Control characters out, runs of whitespace collapsed, trimmed, and capped at
  * `max` characters (code points, so a name is never cut mid-character).
@@ -28,7 +37,8 @@ export function cleanText(value, max) {
  * Indian mobile numbers, in whatever format they were typed or pasted. Every
  * form shows a fixed +91 in front of the field, so foreign numbers are refused:
  * the number must come to exactly 10 digits once a +91, 91 or 0 prefix is
- * gone. Stored as +91XXXXXXXXXX.
+ * gone, starting 6–9 as Indian mobiles do — a landline can't get a one-time
+ * code (otp.js). Stored as +91XXXXXXXXXX.
  *
  * @returns {{ok: true, phone: string} | {ok: false, error: string}}
  */
@@ -44,8 +54,11 @@ export function normalizePhone(input) {
     digits = digits.slice(2);
   }
   if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
-  return digits.length === 10 ? { ok: true, phone: `+91${digits}` } : { ok: false, error: PHONE_ERROR };
+  return /^[6-9]\d{9}$/.test(digits) ? { ok: true, phone: `+91${digits}` } : { ok: false, error: PHONE_ERROR };
 }
+
+/** "+919870871324" -> "+91 XXXXX XX324": where a code went, without the number. */
+export const maskPhone = (phone) => `+91 XXXXX XX${String(phone).slice(-3)}`;
 
 /**
  * A comment on a fare: cleaned, at most 280 characters. A comment that is only
