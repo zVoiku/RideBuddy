@@ -3,12 +3,12 @@
  * /estimate — the customer app's fare estimate, on the web.
  *
  * Mirrors frontend/app/home.tsx (the form) and frontend/app/booking/summary.tsx
- * (the result): trip type, pickup and destination from Google Places, pickup
- * date and time, return date and the stay question for round trips, hours for
- * hourly; then the routed distance and drive time go through the same fare
+ * (the result): round trip or one way, pickup and destination from Google
+ * Places, pickup date and time, return date and the stay question for round
+ * trips; then the routed distance and drive time go through the same fare
  * engine the backend runs, and the result shows one number plus the app's
  * inclusion lines. Booking is not on the website — the result leads to the
- * waitlist.
+ * waitlist. (The app also offers Hourly; the website does not.)
  */
 import { FARE, estimate, formatINR, roundTripDays } from './fare-engine.js';
 import * as maps from './maps.js';
@@ -48,16 +48,19 @@ function track(event, payload) {
 
 /**
  * Saves a form through the site's Worker (website/worker/index.js). Resolves
- * to { ok: true } or { ok: false, error, errors } and never throws: a failure
- * is shown to the visitor, who can try again. The /beta artboard carries the
- * same helper (artboard-patches.mjs).
+ * to { ok: true }; to { ok: false, otp: 'sent', sentTo, resendIn } when the
+ * Worker has sent a one-time code to the number and wants it back
+ * (website/worker/otp.js); or to { ok: false, error, errors, reason }. Never
+ * throws: a failure is shown to the visitor, who can try again. The /beta
+ * artboard carries the same helper (artboard-patches.mjs).
  */
 async function postForm(path, body) {
   try {
     const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ok) return { ok: true };
-    return { ok: false, error: data.error || 'We couldn’t save that just now. Please try again.', errors: data.errors || {} };
+    if (res.status === 202 && data.otp === 'sent') return { ok: false, otp: 'sent', sentTo: data.sentTo, resendIn: data.resendIn || 30, errors: {} };
+    return { ok: false, error: data.error || 'We couldn’t save that just now. Please try again.', errors: data.errors || {}, reason: data.reason || '' };
   } catch (e) {
     return { ok: false, error: 'We couldn’t reach RideBuddy. Check your connection and try again.', errors: {} };
   }
@@ -94,9 +97,8 @@ function newEstimateId() {
 function tripOf(result) {
   const l = result.labels;
   return {
-    type: result.hourly ? 'hourly' : l.round ? 'round' : 'one',
+    type: l.round ? 'round' : 'one',
     from: l.pickup, to: l.destination, date: l.date, ret: l.ret, time: l.time,
-    hours: result.hourly ? result.hours : undefined,
     fare: result.total_fare,
   };
 }
@@ -118,6 +120,22 @@ function PhoneField({ id, value, onChange, error }) {
           aria-invalid={error ? 'true' : undefined} aria-describedby={error ? `${id}-err` : undefined} />
       </div>
       {error && <span className="rb-error-msg" id={`${id}-err`}>{error}</span>}
+    </div>
+  );
+}
+
+/**
+ * The one-time code, as on every phone form of the site: one field rather than
+ * six boxes, so a pasted or auto-filled code ("From Messages") lands whole.
+ */
+function CodeField({ id, value, onChange, error }) {
+  return (
+    <div className="rb-field">
+      <label className="rb-label" htmlFor={id}>6-digit code</label>
+      <input id={id} className={'rb-code' + (error ? ' rb-code--error' : '')} type="text" inputMode="numeric" autoComplete="one-time-code"
+        pattern="[0-9]*" placeholder="••••••" value={value} onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 6))}
+        aria-invalid={error ? 'true' : undefined} aria-describedby={error ? `${id}-err` : undefined} />
+      {error && <span className="rb-error-msg" id={`${id}-err`} role="alert">{error}</span>}
     </div>
   );
 }
@@ -269,7 +287,6 @@ function FarePanel({ fare, estimateId, trip }) {
 const TRIP_TYPES = [
   { id: 'round', label: 'Round Trip' },
   { id: 'one', label: 'One Way' },
-  { id: 'hourly', label: 'Hourly' },
 ];
 
 // ----- Place field: the web twin of CityPicker.tsx --------------------------------
@@ -524,7 +541,7 @@ function MapPicker({ kind, initial, onClose, onPick }) {
 
 // ----- Route map: the web twin of LiveMap + the summary screen's tap-to-expand ----
 
-function RouteMap({ route, pickup, hourly, joined }) {
+function RouteMap({ route, pickup, joined }) {
   const el = useRef(null);
   const map = useRef(null);
   const renderer = useRef(null);
@@ -557,7 +574,7 @@ function RouteMap({ route, pickup, hourly, joined }) {
           icon: { path: g.SymbolPath.CIRCLE, scale: 13, fillColor: color, fillOpacity: 1, strokeColor: '#F5F0E8', strokeWeight: 2 },
         });
 
-        if (route && !hourly) {
+        if (route) {
           const { DirectionsRenderer } = await g.importLibrary('routes');
           renderer.current = new DirectionsRenderer({
             map: m, directions: route.result, suppressMarkers: true,
@@ -574,7 +591,7 @@ function RouteMap({ route, pickup, hourly, joined }) {
       }
     })();
     return () => { dead = true; };
-  }, [route, pickup, hourly]);
+  }, [route, pickup]);
 
   // Re-layout after toggling fullscreen, exactly as the app refits on expand.
   useEffect(() => {
@@ -584,7 +601,7 @@ function RouteMap({ route, pickup, hourly, joined }) {
     const t = setTimeout(() => {
       window.google.maps.event.trigger(m, 'resize');
       const bounds = route?.result?.routes?.[0]?.bounds;
-      if (bounds && !hourly) m.fitBounds(bounds, 40);
+      if (bounds) m.fitBounds(bounds, 40);
       else m.setCenter(pickup);
     }, 60);
     return () => clearTimeout(t);
@@ -611,13 +628,12 @@ const SITE = '/beta/';
 // "Get an Estimate" is this page's link, so there is no "Estimate Fare" item.
 const SITE_LINKS = [
   { label: 'Home', href: SITE },
-  { label: 'How It Works', href: `${SITE}#how-it-works` },
   { label: 'About', href: `${SITE}#about` },
   { label: 'Contact', href: `${SITE}#contact` },
 ];
 
 /**
- * The /beta artboard's header — logo, the four pages, "Get an Estimate", and a
+ * The /beta artboard's header — logo, the three pages, "Get an Estimate", and a
  * full-screen menu below 1120px. Here "Get an Estimate" stays on the page and
  * brings back the form (inputs kept) instead of reloading it.
  */
@@ -677,14 +693,13 @@ function SiteHeader() {
 const PRESET = new URLSearchParams(window.location.search).get('type');
 
 function App() {
-  const [tripType, setTripType] = useState(['round', 'one', 'hourly'].includes(PRESET) ? PRESET : 'round');
+  const [tripType, setTripType] = useState(['round', 'one'].includes(PRESET) ? PRESET : 'round');
   const [pickup, setPickup] = useState({ text: '', place: null });
   const [destination, setDestination] = useState({ text: '', place: null });
   const [departDate, setDepartDate] = useState(istDate(1));
   const [returnDate, setReturnDate] = useState(istDate(2));
   const [pickupTime, setPickupTime] = useState('09:00');
   const [stayArranged, setStayArranged] = useState(false);
-  const [hours, setHours] = useState('4');
   const [errors, setErrors] = useState({});
   const [view, setView] = useState('form');
   const [route, setRoute] = useState(null);
@@ -697,6 +712,13 @@ function App() {
   const [waDone, setWaDone] = useState(false);
   const [waErrors, setWaErrors] = useState({});
   const [waSending, setWaSending] = useState(false);
+  // The one-time code step (website/worker/otp.js): where the code went, the
+  // code typed, and when another may be asked for.
+  const [waStep, setWaStep] = useState('form');
+  const [waCode, setWaCode] = useState('');
+  const [waSentTo, setWaSentTo] = useState('');
+  const [waResendAt, setWaResendAt] = useState(0);
+  const [clock, setClock] = useState(0);
   // The field people never see and bots fill in; the Worker drops what arrives with it.
   const honeypot = useRef(null);
   // Place details resolve asynchronously after a suggestion is chosen; the
@@ -711,7 +733,6 @@ function App() {
   const mapsFailed = useRef(false);
 
   const isRound = tripType === 'round';
-  const isHourly = tripType === 'hourly';
   // The stay question is for round trips over more than one day (§5.2).
   const multiDay = isRound && !!departDate && !!returnDate && returnDate > departDate;
 
@@ -743,13 +764,12 @@ function App() {
   const missing = (() => {
     const when = isRound ? 'departure' : 'pickup';
     if (!pickup.place) return 'Choose your pickup from the suggestions or on the map.';
-    if (!isHourly && !destination.place) return 'Choose your destination from the suggestions or on the map.';
+    if (!destination.place) return 'Choose your destination from the suggestions or on the map.';
     if (!departDate) return `Pick the ${when} date.`;
     if (departDate < istDate(0)) return `The ${when} date has already passed.`;
     if (isRound && !returnDate) return 'Pick the return date.';
     if (isRound && !(roundTripDays(departDate, returnDate) >= 1)) return 'The return date is before the departure date.';
     if (!pickupTime) return 'Pick the pickup time.';
-    if (isHourly && !(parseFloat(hours) > 0)) return 'Enter how many hours you need your Buddy for.';
     return '';
   })();
 
@@ -757,35 +777,28 @@ function App() {
     if (resolving || missing) return;
     const next = {};
     if (!pickup.place) next.pickup = 'Pick your pickup point from the suggestions.';
-    if (!isHourly && !destination.place) next.destination = 'Pick a destination from the suggestions.';
+    if (!destination.place) next.destination = 'Pick a destination from the suggestions.';
     let days = 1;
     if (isRound) {
       days = roundTripDays(departDate, returnDate);
       if (!(days >= 1)) next.date = 'Return date falls before departure.';
     }
-    const h = parseFloat(hours);
-    if (isHourly && !(h > 0)) next.hours = 'How many hours do you need your Buddy for?';
     setErrors(next);
     if (Object.keys(next).length) return;
 
     setView('loading');
     try {
-      let inputs, r = null;
-      if (isHourly) {
-        inputs = { tripType: 'hourly', oneWay: true, distanceKm: 0, durationHours: h, pickup: { date: departDate, time: pickupTime } };
-      } else {
-        r = await maps.getDirections(pickup.place, destination.place);
-        if (!r) throw new Error('no-route');
-        inputs = {
-          tripType: 'point_to_point', oneWay: !isRound,
-          distanceKm: r.distance_km, durationHours: r.duration_min / 60, days,
-          pickup: { date: departDate, time: pickupTime }, customerStay: multiDay && stayArranged, driveThrough: false,
-        };
-      }
+      const r = await maps.getDirections(pickup.place, destination.place);
+      if (!r) throw new Error('no-route');
+      const inputs = {
+        tripType: 'point_to_point', oneWay: !isRound,
+        distanceKm: r.distance_km, durationHours: r.duration_min / 60, days,
+        pickup: { date: departDate, time: pickupTime }, customerStay: multiDay && stayArranged, driveThrough: false,
+      };
       // Snapshot what the result describes: the form can change under it once
       // the customer taps "Edit trip details", and the result must not.
       const est = priced(inputs, {
-        pickup: pickup.place.main_text, destination: destination.place?.main_text || '', round: isRound,
+        pickup: pickup.place.main_text, destination: destination.place.main_text, round: isRound,
         date: departDate, ret: isRound ? returnDate : null, time: pickupTime,
       });
       setRoute(r);
@@ -795,8 +808,8 @@ function App() {
       track('estimate_completed', {
         trip: tripType,
         pickup_area: pickup.place.area || '', pickup_city: pickup.place.city || '',
-        dest_city: isHourly ? '' : destination.place.city || '',
-        km: r ? Math.round(r.distance_km) : 0,
+        dest_city: destination.place.city || '',
+        km: Math.round(r.distance_km),
         fare: est.total_fare,
         ahead: Math.round((Date.parse(departDate) - Date.parse(istDate(0))) / 864e5),
         days: est.trip_days || 0,
@@ -836,40 +849,72 @@ function App() {
   // Joins the waitlist with the trip just priced, so the call back starts from
   // what the customer wants, and any 👍/👎 on this fare lands on the same row.
   // The Worker validates the number and words the trip.
-  const submitWaitlist = async () => {
+  const submitWaitlist = () => {
     if (waSending) return;
     const next = {};
-    if (waPhone.length !== 10) next.phone = PHONE_ERROR;
+    if (!/^[6-9]\d{9}$/.test(waPhone)) next.phone = PHONE_ERROR;
     if (!waConsent) next.consent = CONSENT_ERROR;
     setWaErrors(next);
     if (Object.keys(next).length) {
       if (next.phone) track('phone_invalid', { form: 'estimate' });
       return;
     }
+    sendWaitlist('');
+  };
+
+  // With one-time codes on, the first POST sends a code to the number and the
+  // waitlist asks for it; the same POST with the code saves.
+  const sendWaitlist = async (code) => {
+    if (waSending) return;
+    const atCode = waStep === 'code';
     setWaSending(true);
     const r = await postForm('/api/waitlist', {
       phone: waPhone, consent: true, source: 'estimate', estimate_id: estimateId,
-      website: honeypot.current?.value || '', trip: tripOf(result),
+      website: honeypot.current?.value || '', trip: tripOf(result), ...(code ? { code } : {}),
     });
     setWaSending(false);
-    if (!r.ok) {
-      track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'estimate' });
-      setWaErrors(r.errors.phone || r.errors.consent ? r.errors : { phone: r.error });
+    if (r.otp === 'sent') {
+      setWaStep('code');
+      setWaCode('');
+      setWaErrors({});
+      setWaSentTo(r.sentTo);
+      setWaResendAt(Date.now() + r.resendIn * 1000);
+      setClock(Date.now());
+      track('otp_sent', { form: 'estimate' });
+      // Into the code field as soon as it is on the page.
+      const focus = (tries) => {
+        const el = document.getElementById('rb-waitlist-code');
+        if (el) el.focus();
+        else if (tries > 0) setTimeout(() => focus(tries - 1), 50);
+      };
+      setTimeout(() => focus(20), 0);
       return;
     }
+    if (!r.ok) {
+      if (r.reason) track('otp_failed', { form: 'estimate', kind: r.reason });
+      else track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'estimate' });
+      if (atCode) setWaErrors({ code: r.errors.code || r.error });
+      else setWaErrors(r.errors.phone || r.errors.consent ? r.errors : { phone: r.error });
+      return;
+    }
+    if (code) track('otp_verified', { form: 'estimate' });
+    setWaStep('form');
     setWaDone(true);
     track('waitlist_joined', { source: 'estimate' });
   };
+
+  // The code step counts down to "Resend OTP".
+  useEffect(() => {
+    if (waStep !== 'code') return undefined;
+    const t = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [waStep]);
+  const resendIn = Math.max(0, Math.ceil((waResendAt - clock) / 1000));
 
   // The conditions, as Rate Table v1.10 §2.4 words them (and as the app's
   // summary.tsx shows them).
   const conditions = result ? (() => {
     const out = [];
-    if (result.hourly) {
-      out.push({ text: `Includes your Buddy for ${result.hours} hour${result.hours === 1 ? '' : 's'}.` });
-      out.push({ text: 'Tolls are extra, paid by you on the road.', excluded: true });
-      return out;
-    }
     out.push({ text: `Includes ${result.duty_hours_per_day} hours of your Buddy's time from pickup${result.trip_days > 1 ? `, on each of the ${result.trip_days} days` : ''}.` });
     out.push({ text: "Includes your Buddy's food." });
     if (result.stay_included) out.push({ text: `Includes your Buddy's stay for ${result.stay_nights} ${result.stay_nights === 1 ? 'night' : 'nights'}.` });
@@ -880,15 +925,10 @@ function App() {
     return out;
   })() : [];
 
-  const routeLine = result ? (
-    result.hourly
-      ? `${result.labels.pickup} · Hourly · ${result.hours} hour${result.hours === 1 ? '' : 's'}`
-      : `${result.labels.pickup} → ${result.labels.destination} · ${result.labels.round ? 'Round Trip' : 'One Way'} · ${result.trip_days} day${result.trip_days === 1 ? '' : 's'}`
-  ) : '';
-  // Hourly trips have no route, so their disclaimer leaves the drive time out.
-  const disclaimer = result?.hourly
-    ? 'Indicative fare for the date, time and hours you entered. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.'
-    : 'Indicative fare for the route, date and time you entered, using the route’s standard drive time without traffic. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
+  const routeLine = result
+    ? `${result.labels.pickup} → ${result.labels.destination} · ${result.labels.round ? 'Round Trip' : 'One Way'} · ${result.trip_days} day${result.trip_days === 1 ? '' : 's'}`
+    : '';
+  const disclaimer = 'Indicative fare for the route, date and time you entered, using the route’s standard drive time without traffic. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
 
   return (
     <>
@@ -921,13 +961,11 @@ function App() {
                   onChange={(text) => { setPickup({ text, place: null }); err('pickup', ''); }}
                   onSelect={(place, msg) => { setPickup(place ? { text: place.description, place } : { text: pickup.text, place: null }); err('pickup', msg || ''); }} />
 
-                {!isHourly && (
-                  <PlaceField label="Destination" icon={<Icon d={NAV} />} placeholder="Where are you headed" kind="destination"
-                    value={destination} error={errors.destination} onBusy={(b) => setBusyFields((m) => ({ ...m, destination: b }))}
-                    onOpenMap={() => setPicker('destination')}
-                    onChange={(text) => { setDestination({ text, place: null }); err('destination', ''); }}
-                    onSelect={(place, msg) => { setDestination(place ? { text: place.description, place } : { text: destination.text, place: null }); err('destination', msg || ''); }} />
-                )}
+                <PlaceField label="Destination" icon={<Icon d={NAV} />} placeholder="Where are you headed" kind="destination"
+                  value={destination} error={errors.destination} onBusy={(b) => setBusyFields((m) => ({ ...m, destination: b }))}
+                  onOpenMap={() => setPicker('destination')}
+                  onChange={(text) => { setDestination({ text, place: null }); err('destination', ''); }}
+                  onSelect={(place, msg) => { setDestination(place ? { text: place.description, place } : { text: destination.text, place: null }); err('destination', msg || ''); }} />
 
                 <div className="rb-grid">
                   <Input label={isRound ? 'Departure date' : 'Pickup date'} type="date" value={departDate} min={istDate(0)}
@@ -937,10 +975,6 @@ function App() {
                       onChange={(e) => { setReturnDate(e.target.value); err('date', ''); }} />
                   )}
                   <Input label="Pickup time" type="time" value={pickupTime} onChange={(e) => setPickupTime(e.target.value)} />
-                  {isHourly && (
-                    <Input label="Hours" type="number" min="1" step="0.5" inputMode="decimal" icon={<Icon d={CLOCK} />} value={hours}
-                      error={errors.hours || undefined} onChange={(e) => { setHours(e.target.value); err('hours', ''); }} />
-                  )}
                 </div>
 
                 {multiDay && (
@@ -973,8 +1007,8 @@ function App() {
             <div className="rb-result" data-rb-region="estimate result">
               <p className="rb-result__route">{routeLine}</p>
 
-              <RouteMap route={route} pickup={pickup.place} hourly={result.hourly} joined={!!route && !result.hourly} />
-              {route && !result.hourly && <TripTiles route={route} round={result.labels.round} />}
+              <RouteMap route={route} pickup={pickup.place} joined />
+              <TripTiles route={route} round={result.labels.round} />
 
               {result.long_drive && <LongDrive driveThrough={result.drive_through} onChange={setDriveThrough} />}
               <FarePanel key={estimateId} fare={result.total_fare} estimateId={estimateId} trip={tripOf(result)} />
@@ -1007,13 +1041,32 @@ function App() {
                       <h3>Join the waitlist.</h3>
                       <p>Booking opens soon. Waitlist members go first.</p>
                     </div>
-                    <PhoneField id="rb-waitlist-phone" value={waPhone} error={waErrors.phone}
-                      onChange={(v) => { setWaPhone(v); setWaErrors((e) => ({ ...e, phone: '' })); }} />
-                    <ConsentTick id="rb-waitlist-consent" checked={waConsent} error={waErrors.consent}
-                      onChange={(v) => { setWaConsent(v); setWaErrors((e) => ({ ...e, consent: '' })); }} />
-                    <input ref={honeypot} type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" className="rb-hp" />
-                    <Button onClick={submitWaitlist} disabled={waSending}>{waSending ? 'Joining…' : 'Join the Waitlist'}</Button>
-                    <small>One message when the app is live. Nothing else.</small>
+                    {waStep === 'code' ? (
+                      <>
+                        <div className="rb-sent">
+                          <span>Code sent to {waSentTo}.</span>
+                          <button type="button" className="rb-linkbtn" onClick={() => { setWaStep('form'); setWaCode(''); setWaErrors({}); }}>Change number</button>
+                        </div>
+                        <CodeField id="rb-waitlist-code" value={waCode} error={waErrors.code}
+                          onChange={(v) => { setWaCode(v); setWaErrors({}); }} />
+                        <Button onClick={() => sendWaitlist(waCode)} disabled={waSending || waCode.length !== 6}>{waSending ? 'Checking…' : 'Verify Number'}</Button>
+                        <div className="rb-resend">
+                          {resendIn > 0
+                            ? <span>Resend OTP in 0:{String(resendIn).padStart(2, '0')}</span>
+                            : <button type="button" className="rb-linkbtn" onClick={() => sendWaitlist('')} disabled={waSending}>Resend OTP</button>}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <PhoneField id="rb-waitlist-phone" value={waPhone} error={waErrors.phone}
+                          onChange={(v) => { setWaPhone(v); setWaErrors((e) => ({ ...e, phone: '' })); }} />
+                        <ConsentTick id="rb-waitlist-consent" checked={waConsent} error={waErrors.consent}
+                          onChange={(v) => { setWaConsent(v); setWaErrors((e) => ({ ...e, consent: '' })); }} />
+                        <input ref={honeypot} type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" className="rb-hp" />
+                        <Button onClick={submitWaitlist} disabled={waSending}>{waSending ? 'Joining…' : 'Join the Waitlist'}</Button>
+                        <small>One message when the app is live. Nothing else.</small>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

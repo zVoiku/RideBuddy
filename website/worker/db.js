@@ -9,6 +9,7 @@ const SCHEMA = [
   // The lists. The client waitlist also holds the thumbs on fares shown at
   // /estimate/: one row per estimate voted on, phone '' until (unless) that
   // visitor joins from the same estimate. `estimate_id` ties the two together.
+  // `verified` is 1 where the number was proven with a one-time code (otp.js).
   `CREATE TABLE IF NOT EXISTS waitlist (
      id INTEGER PRIMARY KEY AUTOINCREMENT,
      created_at TEXT NOT NULL,
@@ -20,7 +21,8 @@ const SCHEMA = [
      comment TEXT,
      consent INTEGER,
      estimate_id TEXT,
-     updated_at TEXT
+     updated_at TEXT,
+     verified INTEGER
    )`,
   'CREATE INDEX IF NOT EXISTS waitlist_phone ON waitlist (phone, id)',
   `CREATE TABLE IF NOT EXISTS buddies (
@@ -29,7 +31,8 @@ const SCHEMA = [
      name TEXT NOT NULL,
      phone TEXT NOT NULL,
      licence TEXT NOT NULL,
-     city TEXT
+     city TEXT,
+     verified INTEGER
    )`,
   'CREATE INDEX IF NOT EXISTS buddies_phone ON buddies (phone, id)',
   `CREATE TABLE IF NOT EXISTS agencies (
@@ -41,9 +44,21 @@ const SCHEMA = [
      city TEXT NOT NULL,
      drivers TEXT,
      email TEXT,
-     gstin TEXT
+     gstin TEXT,
+     verified INTEGER
    )`,
   'CREATE INDEX IF NOT EXISTS agencies_phone ON agencies (phone, id)',
+  // One-time codes (otp.js): the latest code sent to a number, kept as a salted
+  // hash for five minutes and three tries. `who` is a salted hash of the number.
+  `CREATE TABLE IF NOT EXISTS otp_codes (
+     who TEXT PRIMARY KEY,
+     hash TEXT NOT NULL,
+     expires_at INTEGER NOT NULL,
+     tries INTEGER NOT NULL DEFAULT 0,
+     sent_at INTEGER NOT NULL
+   )`,
+  // Codes sent per IST day, site-wide: the daily cap on SMS spend.
+  'CREATE TABLE IF NOT EXISTS otp_daily (day TEXT PRIMARY KEY, n INTEGER NOT NULL)',
   // Recent submissions per network, for the flood cap. Rows older than an hour
   // are deleted as new ones arrive; the network is stored only as a salted hash.
   'CREATE TABLE IF NOT EXISTS hits (bucket TEXT NOT NULL, at INTEGER NOT NULL)',
@@ -79,10 +94,13 @@ const SCHEMA = [
  * exists": a column that is already there fails as a duplicate, which is fine.
  * SCHEMA_VERSION in meta records that this has run.
  */
-const SCHEMA_VERSION = '2';
+const SCHEMA_VERSION = '3';
 const ADDED_COLUMNS = [
+  // 2: votes, consent and cities
   ['waitlist', 'fare INTEGER'], ['waitlist', 'vote TEXT'], ['waitlist', 'comment TEXT'], ['waitlist', 'consent INTEGER'],
   ['waitlist', 'estimate_id TEXT'], ['waitlist', 'updated_at TEXT'], ['buddies', 'city TEXT'],
+  // 3: one-time codes
+  ['waitlist', 'verified INTEGER'], ['buddies', 'verified INTEGER'], ['agencies', 'verified INTEGER'],
 ];
 const AFTER_COLUMNS = ['CREATE INDEX IF NOT EXISTS waitlist_estimate ON waitlist (estimate_id)'];
 

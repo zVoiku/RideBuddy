@@ -5,7 +5,7 @@
 | `/` | Holding page — "RideBuddy — Coming soon" | `src/index.html` |
 | `/estimate/` | The fare estimator — the customer app's estimate flow, on the web | `src/estimate/` |
 | `/beta/` | The design-canvas artboard, shared by link (`noindex`) | `../Webpage`, assembled by `build.mjs` |
-| `/api/waitlist`, `/api/feedback`, `/api/buddy` | Where the site's forms and the fare 👍/👎 save | `worker/forms.js` → D1 |
+| `/api/waitlist`, `/api/feedback`, `/api/buddy` | Where the site's forms and the fare 👍/👎 save — the phone forms after a one-time code, once Twilio is set up | `worker/forms.js`, `worker/otp.js` → D1 |
 | `/site.js`, `/api/e` | The site's own analytics: the script on every page, and where it reports | `src/site.js`, `worker/analytics.js` → D1 |
 | `/admin` | The three lists as CSV downloads and the analytics dashboard, behind a password | `worker/admin.js`, `worker/dashboard.js` |
 
@@ -21,7 +21,7 @@ git-ignored `../.dev.vars` to open the local `/admin`).
 result in `frontend/app/booking/summary.tsx`.
 
 - **Header** — the main site's header, element for element: logo, Home ·
-  How It Works · About · Contact, "Get an Estimate", and the full-screen menu
+  About · Contact, "Get an Estimate", and the full-screen menu
   below 1120px (`SiteHeader` in `src/estimate/app.jsx`, styles in
   `src/estimate/index.html`, CTA from the same design-system `Button`). There
   is no "Estimate Fare" link — "Get an Estimate" goes to the same page — so
@@ -30,9 +30,10 @@ result in `frontend/app/booking/summary.tsx`.
   one constant, `SITE` — change it when the site moves to the root.
   `verify.mjs` measures this header and `/beta/`'s (and both phone menus) and
   fails if they drift apart.
-- **Form** — trip type (Round Trip / One Way / Hourly), pickup and destination
-  from Google Places, pickup date and time, return date and the stay question
-  for round trips, hours for hourly. No booking: the result leads to the
+- **Form** — trip type (Round Trip / One Way), pickup and destination from
+  Google Places, pickup date and time, return date and the stay question for
+  round trips. No Hourly on the website (the app still offers it); an old
+  `?type=hourly` link opens a round trip. No booking: the result leads to the
   waitlist.
 - **Map picker** — each place field carries a map button that opens a modal
   map. **Tap one of Google's places and it is selected by name** ("National
@@ -50,21 +51,21 @@ result in `frontend/app/booking/summary.tsx`.
 - **Fare** — Rate Table v1.10. `src/estimate/fare-engine.js` is a
   line-for-line port of `fare_breakdown` in `backend/server.py`: Trip Days of
   12 hours' duty, the one-way return charge, the long-drive rule (rest stop or
-  drive-through), the night charge on more than 15 minutes of duty between
-  10 PM and 6 AM IST, and the legacy ₹249/h hourly rate, summed exactly from
-  whole metres and seconds and rounded once, halves up. The rates themselves
+  drive-through) and the night charge on more than 15 minutes of duty between
+  10 PM and 6 AM IST, summed exactly from whole metres and seconds and rounded
+  once, halves up. One way and round trips only: Hourly is the backend's alone. The rates themselves
   are `../rates.json` (see "The rates" below). `npm test` runs over 10,000
   trips through both engines and fails on the first differing field, and
   prices all sixteen of the rate table's worked examples through both.
 - **Get Estimate** stays disabled until the trip is complete, with one line
   under it saying what is still missing (a pickup chosen from the suggestions
   or the map, a destination, a date that hasn't passed, a return on or after
-  the departure, a time, the hours).
+  the departure, a time).
 - **Result** — the route on an interactive map with tap-to-expand, and under
   it two tiles: EST. TRIP TIME and EST. DISTANCE (time to the nearest 5
   minutes, distance to the km, as §2.4 says; the fare uses the exact values;
-  a round trip shows the total and "… each way", one way says "One way"; none
-  for hourly). Past 12 hours of driving, the safety warning ("This trip needs
+  a round trip shows the total and "… each way", one way says "One way").
+  Past 12 hours of driving, the safety warning ("This trip needs
   more than 12 hours of driving. Your Buddy needs rest for a safe trip. The
   fare includes a rest stop.") and a switch, "Drive through without the rest
   stop — only if you and your Buddy both agree", that re-prices the same route
@@ -77,8 +78,8 @@ result in `frontend/app/booking/summary.tsx`.
   fare — the same lines the app shows,
   then "Final fare is calculated when your trip ends." and the disclaimer
   ("Indicative fare for the route, date and time you entered, … Terms of Use
-  apply."; hourly has its own wording). Then "Edit trip details" and the
-  waitlist (+91 field and the consent tick). No "Book a Buddy" until booking
+  apply."). Then "Edit trip details" and the waitlist (+91 field and the
+  consent tick, then the one-time code when codes are on). No "Book a Buddy" until booking
   opens; no deposit line, no itemisation (§2.4). A vote and a signup made on
   the same fare land on the same row of the clients list (see below).
 
@@ -87,7 +88,8 @@ only on round trips over more than one day (§5.2); a same-day round trip long
 enough for a rest stop includes its stay.
 
 **The rates.** Every rate is in `rates.json` at the repo root — Rate Table
-v1.10 §3.4, plus the deposit and the legacy hourly rate. The backend reads it
+v1.10 §3.4, plus the deposit and the app's legacy hourly rate (the website
+has no Hourly). The backend reads it
 at startup; `build.mjs` compiles it into `/estimate/` and into `/beta/`'s
 `rate-config.js` (built from `src/estimate/artboard-rates.js`, so the
 artboard's copy of the rates is never shipped). To change a rate: edit
@@ -120,11 +122,12 @@ rather than a blank page.
 The site's forms email nothing: they post JSON to the Worker
 (`worker/index.js`), which validates, stores a row in Cloudflare D1 and
 answers `{ ok: true }` — or an error the page shows under the field, so a
-failed save is never shown as a success. No form sends a code by SMS.
+failed save is never shown as a success. Once Twilio is set up, every form
+that carries a phone number confirms it with a one-time code first (below).
 
 | Form | Where | Endpoint | D1 table |
 |---|---|---|---|
-| Join the Waitlist pop-up | `/beta/`'s hero and the closing band on every page | `POST /api/waitlist` (`source: home \| how \| about \| contact`, the page it was opened on) | `waitlist` |
+| Join the Waitlist pop-up | `/beta/`'s hero and the closing band on every page | `POST /api/waitlist` (`source: home \| about \| contact`, the page it was opened on; `how` from pages cached before How It Works went) | `waitlist` |
 | Join the waitlist | `/beta/#contact` | `POST /api/waitlist` (`source: contact`) | `waitlist` |
 | Join the waitlist | under an `/estimate/` result | `POST /api/waitlist` (`source: estimate`, the trip and its `estimate_id`) | `waitlist` |
 | 👍/👎 on a fare, and a 👎's comment | an `/estimate/` result | `POST /api/feedback` (`estimate_id`, `vote: up \| down`, optional `comment`, the trip) | `waitlist` |
@@ -134,7 +137,8 @@ failed save is never shown as a success. No form sends a code by SMS.
 - **Phone numbers** (`normalizePhone` in `worker/lib.js`): Indian mobiles only.
   Every form shows a fixed `+91` beside a 10-digit field; whatever is typed or
   pasted must come to 10 digits once a `+91` / `0091` / `91` / `0` prefix is
-  gone, and is stored as `+91XXXXXXXXXX`. Any other country code is refused.
+  gone, starting 6–9 as mobiles do, and is stored as `+91XXXXXXXXXX`. Any other
+  country code, and any landline, is refused: a code can't reach them.
 - **Consent.** Every waitlist form has the tick "Send me an SMS or WhatsApp
   when booking opens. I agree to the Privacy Policy and Terms of Use." and
   can't be sent without it; the row's Consent column says Yes. A page cached
@@ -165,6 +169,20 @@ failed save is never shown as a success. No form sends a code by SMS.
   per network per hour across the forms, plus 60 votes (IPv6 counted per /64).
   The network is stored as a salted hash and forgotten after an hour. If junk
   still gets through, Cloudflare Turnstile is the next step.
+- **One-time codes** (`worker/otp.js`), as in the Phase 1 design. On as soon
+  as Twilio is configured (below); until then the forms save in one step, as
+  they always have, and the Phone verified column stays blank. When on, a phone
+  form's first POST is validated and answered `202` with a 6-digit code sent
+  by SMS to the number ("Code sent to +91 XXXXX XX324." on the page, with
+  "Change number"); the same POST again with `code` saves it, marked Phone
+  verified. Codes last 5 minutes and 3 tries; a new one can be asked for after
+  30 seconds ("Resend OTP in 0:30"); at most 3 codes to a number and 10 to a
+  network an hour, and `OTP_DAILY_CAP` (default 300) codes a day site-wide, so
+  a flood can't run up the SMS bill. D1 keeps only a salted hash of the latest
+  code per number, never the code. Messages: "That code doesn’t match. Try
+  again." · "This code has expired. Get a new OTP." · "Too many attempts. Get a
+  new OTP." · "Couldn’t send the code. Try again in a minute." The 👍/👎 needs
+  no code.
 - **Tables create themselves** on first use (`CREATE TABLE IF NOT EXISTS`), so
   the database needed no setup step. Columns added since are added to an older
   database in place the first time the Worker opens it (`ADDED_COLUMNS` in
@@ -175,11 +193,13 @@ each list's count and a **Download CSV** button:
 
 | File | Columns |
 |---|---|
-| `ridebuddy-clients-YYYY-MM-DD.csv` | ID, Submitted (IST), Phone, Source, Trip, Fare (₹), 👍/👎, Comment, Consent, Repeat |
-| `ridebuddy-buddies-YYYY-MM-DD.csv` | ID, Submitted (IST), Name, Phone, Licence, City or base, Repeat |
-| `ridebuddy-agencies-YYYY-MM-DD.csv` | ID, Submitted (IST), Agency name, Contact person, Phone, City or base, Drivers, Work email, GSTIN, Repeat |
+| `ridebuddy-clients-YYYY-MM-DD.csv` | ID, Submitted (IST), Phone, Source, Trip, Fare (₹), 👍/👎, Comment, Consent, Phone verified, Repeat |
+| `ridebuddy-buddies-YYYY-MM-DD.csv` | ID, Submitted (IST), Name, Phone, Licence, City or base, Phone verified, Repeat |
+| `ridebuddy-agencies-YYYY-MM-DD.csv` | ID, Submitted (IST), Agency name, Contact person, Phone, City or base, Drivers, Work email, GSTIN, Phone verified, Repeat |
 
-In the clients list, Phone is blank on a vote from someone who didn't join;
+Phone verified is Yes where the number was confirmed with a one-time code
+(blank while codes are off, and on rows from before them). In the clients
+list, Phone is blank on a vote from someone who didn't join;
 Comment is only ever a 👎's. The CSVs are UTF-8 with a byte-order mark so Excel
 shows ₹ and non-Latin names correctly, and a cell starting `=`, `+`, `-` or `@`
 is prefixed with `'` so it opens as text (phone numbers excepted). Note that
@@ -195,6 +215,32 @@ is imported as text.
 - To delete a row: Cloudflare → **Storage & databases → D1 → ridebuddy →
   Console**, then `DELETE FROM waitlist WHERE id = 17;` (or `buddies`,
   `agencies`), using the ID column of the download.
+
+### Setting up the one-time codes (Twilio)
+
+1. **DLT registration (India).** Every SMS to an Indian number must come from
+   a sender registered on a TRAI DLT portal (Jio, Airtel, Vi or BSNL — one is
+   enough): register RideBuddy Private Limited as a Principal Entity, a 6-letter
+   sender ID (header), e.g. `RIDEBD`, and a service-implicit content template
+   for the code, word for word the message the Worker sends:
+   `Your RideBuddy code is {#var#}. It expires in 5 minutes. Do not share it with anyone.`
+   Approval usually takes a few working days.
+2. **Twilio.** Upgrade the account from trial (a trial only reaches verified
+   numbers), then register the India sender ID with Twilio, giving the DLT
+   entity ID, header and template ID — Twilio's guide: [Register Your
+   Alphanumeric Sender ID in India](https://support.twilio.com/hc/en-us/articles/21162166457755-Documents-Required-and-Instructions-to-Register-Your-Alphanumeric-Sender-ID-in-India).
+   Optionally put the sender in a Messaging Service.
+3. **Cloudflare** — Workers & Pages → ridebuddy → Settings → Variables and
+   secrets: `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` as **secrets**,
+   `TWILIO_FROM` as a variable (the sender ID, or the Messaging Service SID
+   `MG…`). Optional: `OTP_SMS_TEXT` if the approved template differs (keep
+   `{code}` where the code goes), `OTP_DAILY_CAP` to change the daily cap.
+   Saving deploys; from then on every phone form asks for a code. Remove any of
+   the three to switch codes off again.
+
+Twilio's error codes (never the message, which can quote the number) show in
+the Worker's logs if an SMS is refused; the visitor sees "Couldn’t send the
+code. Try again in a minute." and nothing is kept.
 
 ## Analytics
 
@@ -218,8 +264,11 @@ Named events: `estimator_opened`, `estimate_started`, `estimate_completed`,
 city only), `route_not_found`, `route_failed`, `maps_failed`, `map_point_picked`,
 `fare_feedback` (`vote: up | down`, and whether a comment was sent — never
 its text), `waitlist_opened` (the pop-up, and the page it was opened on),
-`waitlist_joined` (`source: home | how | about | contact | estimate`),
-`phone_invalid`, `form_invalid`, `save_failed` (`form: …`),
+`waitlist_joined` (`source: home | about | contact | estimate`),
+`phone_invalid`, `form_invalid`, `save_failed` (`form: …`), `otp_sent`,
+`otp_verified`, `otp_failed` (`form`, and `kind`: wrong, expired, too_many,
+send_failed, resend_wait, number_limit, network_limit, daily_cap — shown under
+Problems; never the code),
 `buddy_application_opened` (including from a `/beta/#apply` link),
 `buddy_application_submitted` (`type: individual | agency`).
 
@@ -309,31 +358,39 @@ canvas into `Webpage/` and rebuild.
 5. **Every "Estimate" CTA navigates to `/estimate/`** — nav link, hero button,
    the Round/One-way cards, the closing band. The artboard's own estimator is
    superseded; there is one estimator, not two.
-6. **Real URLs.** Its pages switch in place, so they get hashes:
-   `/beta/#how-it-works`, `#about`, `#contact` (Home is plain `/beta/`), with
-   Back and Forward working and real `href`s on the links. `/beta/#apply`
-   opens the Buddy application — one link to share with drivers.
+6. **Real URLs.** Its pages switch in place, so they get hashes: `#about`,
+   `#contact` (Home is plain `/beta/`), with Back and Forward working and real
+   `href`s on the links. `/beta/#apply` opens the Buddy application — one link
+   to share with drivers.
 7. **The forms save, as in the Phase 1 design.** The Contact-page waitlist
    (a fixed `+91` field and the consent tick) posts to `/api/waitlist`. Apply
    to be a Buddy is the Phase 1 pop-up — "Individual Buddy" or "Driver agency"
-   and their fields — without its consent tick and verification code: "Send
-   Application" posts to `/api/buddy` and confirms "Application received.
-   We’ll contact you when onboarding opens."
+   and their fields — without its consent tick: "Send Application" posts to
+   `/api/buddy` and confirms "Application received. We’ll contact you when
+   onboarding opens." With one-time codes on, each of the three /beta phone
+   forms then shows the design's code step (`codeStep()` in the patches) and
+   saves after the code.
 8. **Booking isn't open yet.** The home hero's "Book a Buddy · Coming soon"
    becomes the design's "Join the Waitlist", which opens a pop-up: the `+91`
-   field and the tick, no code ("You're on the waitlist. We'll message you
-   once."). Every page ends with the design's closing band, "Plan the trip
-   now. Book it soon." — "Get an Estimate" and "Join the Waitlist". The
-   header and phone menu have no "Estimate Fare" link, since "Get an
-   Estimate" goes to the same page (the footer keeps its links). Escape
-   closes the pop-ups.
-9. **The FAQ** on How It Works is the Phase 1 design's eight questions, less
-   its "The stay cost will be shown in your price breakdown" sentence.
-10. **Analytics.** The forms report mistyped numbers and failed saves, and a
-   Buddy form opened from a `/beta/#apply` link counts as opened. `/site.js` is
-   added to the page like every other.
+   field and the tick, then the code when codes are on ("You're on the
+   waitlist. We'll message you once."). Every page ends with the design's
+   closing band, "Plan the trip now. Book it soon." — "Get an Estimate" and
+   "Join the Waitlist". The header and phone menu have no "Estimate Fare"
+   link, since "Get an Estimate" goes to the same page (the footer keeps its
+   links). Escape closes the pop-ups.
+9. **No How It Works page.** The page goes, with its FAQ, Home's "See the full
+   journey" link and its links in the header, phone menu and footer; an old
+   `/beta/#how-it-works` link opens Home. Home keeps its short three-step
+   section ("How it works · Your car. Our Buddy. That's it.").
+10. **Buddies are "verified".** "Police-verified" becomes "verified" on Home
+   and About, and About's standards list says "Verification before the first
+   trip."
+11. **Analytics.** The forms report mistyped numbers, failed saves and codes
+   that didn't go through, and a Buddy form opened from a `/beta/#apply` link
+   counts as opened. `/site.js` is added to the page like every other.
 
-5–10 are text patches listed in `artboard-patches.mjs`. Each must match the
+5–11 are text patches listed in `artboard-patches.mjs` (a `cut` patch removes
+everything between two markers). Each must match the
 artboard an exact number of times (once, unless it says otherwise). A canvas
 re-export that changes one of those spots fails the build here, loudly,
 instead of shipping a half-patched page.
@@ -350,7 +407,7 @@ NODE_PATH=/opt/node22/lib/node_modules PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
   node test/verify.mjs   # end to end in a browser against real Google APIs
 ```
 
-`test:worker` covers phone formats (foreign numbers refused), the trip
+`test:worker` covers phone formats (foreign numbers and landlines refused), the trip
 wording and its fare, comments (links alone refused), email and GSTIN checks,
 CSV quoting and formula neutralising, the dashboard's lists and votes, the analytics' event cleaning, devices, sources and bands, and a
 day's totals computed by running `DAY_SQL` on Node's own SQLite; then over
@@ -359,7 +416,12 @@ messages, the consent tick, every waitlist source, wrong origin, non-JSON,
 oversize, honeypot), votes saved without a phone and joined to the signup made
 from the same fare (either order, the latest vote winning, the comment kept),
 individual and agency applications, `(repeat)` marking, all three CSV layouts,
-Basic auth and its lockout, the HTTPS redirect, the flood cap; an older
+Basic auth and its lockout, the HTTPS redirect, the flood cap; one-time codes
+against `test/twilio-stub.mjs` (the SMS Twilio is asked to send, wrong and
+used-up codes, the 30-second wait, expiry after 5 minutes, the limits per
+number, per network and per day, Twilio refusing, honeypot and invalid forms
+sending nothing, all three forms saving only with the code, marked Phone
+verified); an older
 database (the columns and rows production had before votes, consent, cities
 and agencies) upgraded in place with its rows intact —
 and, with a test clock (`RB_TEST=1` plus an `X-RB-Now` header, test servers
@@ -370,8 +432,8 @@ dashboard section, a label sent to inject HTML shown escaped, the daily CSV,
 months, and a backlog summed eight days at a time.
 
 `verify.mjs` serves `dist/` and the Worker with `wrangler dev`, drives the
-pages headless — one way, a late departure, a three-day round trip, hourly, a
-same-day Jaipur round trip long enough for the long-drive rule (warning, rest
+pages headless — no Hourly (an old `?type=hourly` link opens a round trip),
+one way, a late departure, a three-day round trip, a same-day Jaipur round trip long enough for the long-drive rule (warning, rest
 stop, then the drive-through switch and back), an out-of-area pickup, the map
 picker (open, drag, re-caption, tap a place, confirm, then price the pinned
 point), fullscreen map, mobile viewport — and re-prices every estimate with
@@ -382,14 +444,20 @@ disclaimers. Then the forms: a 👎 with a comment,
 then joining the waitlist under the same estimate (one row with the vote), the
 `/beta` Contact waitlist, the hero's Join the Waitlist pop-up, an individual
 Buddy application and a driver agency's from `/beta/#apply`, each refused once
-(a short number, no tick, a short GSTIN) and then read back from the admin
-download; plus `/beta`'s URLs, Back, the closing band and the CTA redirect. The two headers are measured side by side at 1280px
+(a short number, no tick, a short GSTIN), then confirmed with the one-time
+code the stand-in Twilio received (a wrong code refused, "Change number",
+the resend countdown, focus on the code field) and read back from the admin
+download, Phone verified; plus `/beta`'s URLs, Back, no How It Works (an old
+link opens Home), "verified" not "police-verified", the closing band and the
+CTA redirect. Last of all, a server with codes off: the pop-up saves in one
+step. The two headers are measured side by side at 1280px
 and 390px — every part's box, font and colour, and the open phone menu — and
 must match except for the current page. Last, `/admin` must count the run
 exactly (one visitor, every fare shown, signups and both kinds of
 application, the 👎, the funnels, destinations, mistyped numbers per form,
-clicks), its chart must show a day on hover, and the stored events must hold
-no phone number, name, licence, agency detail, comment or address.
+clicks, the wrong code under Problems), its chart must show a day on hover,
+and the stored events must hold no phone number, one-time code, name,
+licence, agency detail, comment or address.
 
 Tapping a place icon is exercised by firing the click Google fires for one (a
 click carrying a `placeId`) rather than hunting for the icon's pixel, which is
@@ -445,8 +513,13 @@ Validate config changes locally with `npx wrangler deploy --dry-run`.
   `/estimate/`) still has its unwired waitlist; it is dead code, left as is.
 - **"Privacy Policy" and "Terms of Use"** in the consent tick and the
   disclaimer are plain text: there are no such pages yet to link to.
-- **Hourly is priced at the legacy ₹249/h** and is not in Rate Table v1.10;
-  the backend marks it `uncovered_by_rate_table`.
+- **No Hourly on the website.** The app still offers it, priced by the
+  backend at the legacy ₹249/h, outside Rate Table v1.10
+  (`uncovered_by_rate_table`).
+- **One-time codes cost money and need DLT.** They stay off until Twilio and
+  the DLT registration are done (see "Setting up the one-time codes"). A
+  visitor who confirms a number gets no lasting "remembered" state: joining
+  again from another form asks for a new code.
 - **Drive-through is estimate-only.** The website shows its price behind the
   switch (§1C, Phase 1); a booking is always the rest stop, since the
   drive-through needs both Terms of Use to allow it first (compliance item 4).

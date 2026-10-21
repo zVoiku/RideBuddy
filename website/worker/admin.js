@@ -169,36 +169,36 @@ const VOTE = { up: '👍', down: '👎' };
 /** Signups, and the 👍/👎 on fares: phone blank where the voter didn't join. */
 async function clientsCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, phone, source, trip, fare, vote, comment, consent, ${REPEAT('waitlist')} AS is_repeat FROM waitlist t ORDER BY id`,
+    `SELECT id, created_at, phone, source, trip, fare, vote, comment, consent, verified, ${REPEAT('waitlist')} AS is_repeat FROM waitlist t ORDER BY id`,
   ).all();
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Phone', 'Source', 'Trip', 'Fare (₹)', '👍/👎', 'Comment', 'Consent', 'Repeat'],
+    ['ID', 'Submitted (IST)', 'Phone', 'Source', 'Trip', 'Fare (₹)', '👍/👎', 'Comment', 'Consent', 'Phone verified', 'Repeat'],
     results.map((r) => {
       const { trip, fare } = splitStoredTrip(r.trip, r.fare);
       return [r.id, istStamp(r.created_at), r.phone, SOURCES[r.source] || r.source, trip, fare ?? '', VOTE[r.vote] || '',
-        r.comment || '', r.consent ? 'Yes' : '', r.is_repeat ? '(repeat)' : ''];
+        r.comment || '', r.consent ? 'Yes' : '', r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : ''];
     }),
   );
 }
 
 async function buddiesCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, name, phone, licence, city, ${REPEAT('buddies')} AS is_repeat FROM buddies t ORDER BY id`,
+    `SELECT id, created_at, name, phone, licence, city, verified, ${REPEAT('buddies')} AS is_repeat FROM buddies t ORDER BY id`,
   ).all();
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Name', 'Phone', 'Licence', 'City or base', 'Repeat'],
-    results.map((r) => [r.id, istStamp(r.created_at), r.name, r.phone, r.licence, r.city || '', r.is_repeat ? '(repeat)' : '']),
+    ['ID', 'Submitted (IST)', 'Name', 'Phone', 'Licence', 'City or base', 'Phone verified', 'Repeat'],
+    results.map((r) => [r.id, istStamp(r.created_at), r.name, r.phone, r.licence, r.city || '', r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : '']),
   );
 }
 
 async function agenciesCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, agency, contact, phone, city, drivers, email, gstin, ${REPEAT('agencies')} AS is_repeat FROM agencies t ORDER BY id`,
+    `SELECT id, created_at, agency, contact, phone, city, drivers, email, gstin, verified, ${REPEAT('agencies')} AS is_repeat FROM agencies t ORDER BY id`,
   ).all();
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Agency name', 'Contact person', 'Phone', 'City or base', 'Drivers', 'Work email', 'GSTIN', 'Repeat'],
+    ['ID', 'Submitted (IST)', 'Agency name', 'Contact person', 'Phone', 'City or base', 'Drivers', 'Work email', 'GSTIN', 'Phone verified', 'Repeat'],
     results.map((r) => [r.id, istStamp(r.created_at), r.agency, r.contact, r.phone, r.city, r.drivers || '', r.email || '', r.gstin || '',
-      r.is_repeat ? '(repeat)' : '']),
+      r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : '']),
   );
 }
 

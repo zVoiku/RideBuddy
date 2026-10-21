@@ -106,6 +106,16 @@ function mapsKey() {
 
 function patchArtboard(html) {
   for (const p of ARTBOARD_PATCHES) {
+    if (p.cut) {
+      // Everything from the first marker up to (not including) the second goes;
+      // each marker must appear exactly once, in that order.
+      const [start, end] = p.cut;
+      const counts = [start, end].map((m) => html.split(m).length - 1);
+      const i = html.indexOf(start), j = html.indexOf(end);
+      if (counts.join() !== '1,1' || j < i) throw new Error(`artboard cut "${p.why}": markers found ${counts.join(' and ')} times — the canvas changed; update artboard-patches.mjs`);
+      html = html.slice(0, i) + (p.to || '') + html.slice(j);
+      continue;
+    }
     const want = p.count ?? 1;
     const n = html.split(p.from).length - 1;
     if (n !== want) throw new Error(`artboard patch "${p.why}" matched ${n} times, expected ${want} — the canvas changed; update artboard-patches.mjs`);

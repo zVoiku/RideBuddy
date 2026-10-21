@@ -29,7 +29,7 @@ RideBuddy-partner/     Driver app — self-contained Expo project, own package.j
 website/               ridebuddy.co.in on Cloudflare Workers (see website/README.md)
   build.mjs            builds dist/: holding page, /estimate/, /beta/ artboard
   src/site.js          the site's own cookieless analytics (added to every page)
-  worker/              Worker script: forms and analytics -> D1, /admin lists + dashboard
+  worker/              Worker script: forms (+ one-time codes) and analytics -> D1, /admin lists + dashboard
 rates.json             Every fare rate (Rate Table v1.10): read by the backend and the website build
 scripts/capture.js     Playwright script: screenshots the whole flow (web build)
 .claude/               SessionStart hook that installs deps + scaffolds .env
@@ -70,6 +70,11 @@ Not committed (git-ignored). The SessionStart hook scaffolds safe defaults.
 `website/.env`
 - `GOOGLE_MAPS_BROWSER_KEY` — the site's own key, restricted to its web addresses;
   on Cloudflare it is a build variable (see `website/README.md`)
+
+Cloudflare (the `ridebuddy` Worker's variables and secrets, not a file)
+- `ADMIN_PASSWORD` — opens `/admin`; without it `/admin` stays locked
+- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` (secrets), `TWILIO_FROM` — turn on the
+  one-time codes on the site's phone forms (`website/worker/otp.js`); off while any is missing
 
 Never commit a Google key: the repo is public. The apps' key is built into the
 native app, so after changing it run `npx expo prebuild --clean` and rebuild.

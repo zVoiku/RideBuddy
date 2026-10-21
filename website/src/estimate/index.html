@@ -290,6 +290,16 @@
     flex: 1; min-width: 0; border: none; outline: none; background: transparent; padding: 0 14px;
     font-family: inherit; font-size: 15px; letter-spacing: 0.02em; color: var(--color-charcoal);
   }
+  /* The one-time code step (website/worker/otp.js). */
+  .rb-sent { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; font-size: 14px; line-height: 1.5; }
+  .rb-linkbtn { border: none; background: transparent; padding: 10px 0; cursor: pointer; font: inherit; font-size: 14px; font-weight: 500; color: var(--color-green-500); }
+  .rb-linkbtn:hover { color: var(--color-green-700); }
+  .rb-linkbtn:disabled { color: var(--color-grey-400); cursor: default; }
+  .rb-code { width: 100%; box-sizing: border-box; min-height: 52px; border-radius: var(--radius-lg); border: 1.5px solid rgba(100,100,100,.18); background: var(--color-parchment);
+    padding: 0 16px; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 22px; font-weight: 600; letter-spacing: 0.4em; text-align: center; color: var(--color-charcoal); }
+  .rb-code:focus { outline: none; border-color: var(--color-green-500); box-shadow: 0 0 0 3px rgba(74,92,47,.18); }
+  .rb-code--error { border-color: #C62828; }
+  .rb-resend { display: flex; justify-content: center; align-items: center; min-height: 40px; font-size: 14px; color: var(--color-grey-500); }
   .rb-consent { display: flex; flex-direction: column; }
   /* The label keeps a 44px tap area; the error sits under its text, not under that. */
   .rb-consent .rb-error-msg { margin-top: -12px; }
