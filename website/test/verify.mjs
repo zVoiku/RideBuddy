@@ -16,7 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { startDev } from './dev-server.mjs';
-import { startTwilioStub } from './twilio-stub.mjs';
+import { startTwoFactorStub } from './twofactor-stub.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium, request } = require('playwright');
@@ -157,13 +157,13 @@ async function main() {
   check(!withinService('destination', { lat: 19.076, lng: 72.8777 }).ok, 'radius gate: Mumbai is refused as a destination');
 
   // The site as Cloudflare serves it: static files first, the Worker for /api and
-  // /admin — with one-time codes on, Twilio played by test/twilio-stub.mjs.
-  const stub = await startTwilioStub(8783);
+  // /admin — with one-time codes on, 2Factor played by test/twofactor-stub.mjs.
+  const stub = await startTwoFactorStub(8783);
   const dev = await startDev({
     port: PORT, password: ADMIN_PASSWORD,
-    vars: { RB_TEST: '1', TWILIO_ACCOUNT_SID: 'ACverify', TWILIO_AUTH_TOKEN: 'verify-token', TWILIO_FROM: 'RIDEBD', TWILIO_API_BASE: stub.url },
+    vars: { RB_TEST: '1', TWOFACTOR_API_KEY: 'verify-key', TWOFACTOR_API_BASE: stub.url },
   });
-  /** Types the code the stand-in Twilio got for `phone` and verifies it, after one wrong try when `wrongFirst`. */
+  /** Types the code the stand-in 2Factor got for `phone` and verifies it, after one wrong try when `wrongFirst`. */
   const enterCode = async (pg, scope, fieldId, phone, wrongFirst = false) => {
     const code = stub.codeFor(phone);
     if (wrongFirst) {
@@ -663,7 +663,7 @@ async function main() {
     }
     // Privacy: the analytics hold no phone numbers, names, licences or addresses.
     const stored = storedBeacons(dev.dir);
-    const codes = stub.messages.map((m) => (m.Body.match(/\b\d{6}\b/) || [])[0]).filter(Boolean);
+    const codes = stub.messages.map((m) => m.code).filter(Boolean);
     const leaks = ['98708', '71324', '7911', '98111', '81112', 'Voiku', 'VNS8893', 'Gurpreet', 'Tricity Drivers', 'tricitydrivers', '03ABCDE', 'usually pay', pinned, pinned.split(',').slice(0, 2).join(','), ...codes].filter((x) => x && stored.includes(x));
     check(stored.includes('estimate_completed') && codes.length >= 6 && !leaks.length,
       `analytics store no phone numbers, one-time codes, names, licences, agency details, comments or addresses (${leaks.join(', ') || 'none found'})`);
@@ -687,7 +687,7 @@ async function main() {
     check(real.length === 0, `no console/page/HTTP errors (${real.length})`);
     real.forEach((e) => console.log('     ', e));
 
-    // Codes off — no Twilio, as on the live site until it is set up: the forms save in one step.
+    // Codes off — no 2Factor key, as on the live site until it is set up: the forms save in one step.
     await dev.stop();
     const plain = await startDev({ port: PORT, password: ADMIN_PASSWORD });
     try {

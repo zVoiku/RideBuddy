@@ -73,8 +73,9 @@ Not committed (git-ignored). The SessionStart hook scaffolds safe defaults.
 
 Cloudflare (the `ridebuddy` Worker's variables and secrets, not a file)
 - `ADMIN_PASSWORD` — opens `/admin`; without it `/admin` stays locked
-- `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` (secrets), `TWILIO_FROM` — turn on the
-  one-time codes on the site's phone forms (`website/worker/otp.js`); off while any is missing
+- `TWOFACTOR_API_KEY` (secret) — 2factor.in; turns on the one-time codes on the site's
+  phone forms (`website/worker/otp.js`), off while missing. `TWOFACTOR_TEMPLATE` (optional)
+  names RideBuddy's own DLT-approved template in 2Factor; without it 2Factor's default is used
 
 Never commit a Google key: the repo is public. The apps' key is built into the
 native app, so after changing it run `npx expo prebuild --clean` and rebuild.

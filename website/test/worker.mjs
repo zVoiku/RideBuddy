@@ -13,7 +13,7 @@ import {
   GSTIN_ERROR, LINK_ONLY_ERROR, PHONE_ERROR, cleanComment, cleanText, csvCell, describeTrip, groupINR, isEmail, isGstin, istStamp,
   maskPhone, networkOf, normalizePhone, shiftDay, splitStoredTrip, toCsv, tripFare,
 } from '../worker/lib.js';
-import { startTwilioStub } from './twilio-stub.mjs';
+import { startTwoFactorStub } from './twofactor-stub.mjs';
 import {
   DAY_SQL, DIRECT, aheadBand, cleanEvents, deviceOf, fareBand, isBot, sourceOf, speedBand, summarize,
 } from '../worker/stats.js';
@@ -490,13 +490,13 @@ async function migration() {
   }
 }
 
-/** One-time codes on (otp.js), Twilio played by test/twilio-stub.mjs: nothing saves without the code sent to the number. */
+/** One-time codes on (otp.js), 2Factor played by test/twofactor-stub.mjs: nothing saves without the code sent to the number. */
 async function otp() {
   console.log('\none-time codes');
-  const stub = await startTwilioStub(8784);
+  const stub = await startTwoFactorStub(8784);
   const dev = await startDev({
     port: 8785, password: PASSWORD,
-    vars: { RB_TEST: '1', TWILIO_ACCOUNT_SID: 'ACtest0001', TWILIO_AUTH_TOKEN: 'tok-secret', TWILIO_FROM: 'RIDEBD', TWILIO_API_BASE: stub.url, OTP_DAILY_CAP: '30' },
+    vars: { RB_TEST: '1', TWOFACTOR_API_KEY: 'test-key-0001', TWOFACTOR_TEMPLATE: 'RideBuddy OTP', TWOFACTOR_API_BASE: stub.url, OTP_DAILY_CAP: '30' },
   });
   const B = dev.base;
   const ip = (n) => ({ 'CF-Connecting-IP': `198.51.100.${n}` });
@@ -507,9 +507,9 @@ async function otp() {
     same(first.status, 202, 'a signup first gets a code');
     same(JSON.stringify(['otp', 'sentTo', 'resendIn', 'expiresIn'].map((k) => json(first)?.[k])), '["sent","+91 XXXXX XX101",30,300]', '…and is told where it went, masked');
     const sms = stub.messages.at(-1);
-    same(JSON.stringify([sms.account, sms.To, sms.From, sms.auth]), JSON.stringify(['ACtest0001', '+919811100101', 'RIDEBD', `Basic ${Buffer.from('ACtest0001:tok-secret').toString('base64')}`]),
-      'the SMS goes through Twilio, from the sender ID, with the account\'s credentials');
-    check(/^Your RideBuddy code is \d{6}\. It expires in 5 minutes\. Do not share it with anyone\.$/.test(sms.Body), `the SMS text (${sms.Body})`);
+    same(JSON.stringify([sms.method, sms.key, sms.phone, sms.template]), JSON.stringify(['GET', 'test-key-0001', '9811100101', 'RideBuddy OTP']),
+      'the code goes to 2Factor with the API key, the 10-digit number and the named template');
+    check(/^\d{6}$/.test(sms.code), `…and a 6-digit code made by the Worker (${sms.code})`);
     same(csvRows((await admin(B, '/admin/clients.csv')).text).length, 1, 'nothing is on the list before the code');
 
     const code = stub.codeFor('+919811100101');
@@ -539,7 +539,7 @@ async function otp() {
 
     stub.failNext = 1;
     const refused = await post(B, '/api/waitlist', { phone: '9811100104', source: 'home', consent: true }, ip(4));
-    check(refused.status === 502 && json(refused)?.error === CODE_SEND_FAILED && json(refused)?.reason === 'send_failed', `Twilio refusing the SMS is reported (${refused.status})`);
+    check(refused.status === 502 && json(refused)?.error === CODE_SEND_FAILED && json(refused)?.reason === 'send_failed', `2Factor refusing the SMS (Status "Error", on HTTP 200) is reported (${refused.status})`);
     same((await post(B, '/api/waitlist', { phone: '9811100104', source: 'home', consent: true }, ip(4))).status, 202, '…and the visitor can ask again at once');
 
     const net = [];
