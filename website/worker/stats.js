@@ -114,6 +114,7 @@ const FORMS = {
 const CODE_FAILURES = {
   wrong: 'wrong code', expired: 'code expired', too_many: 'too many tries', send_failed: 'SMS not sent',
   resend_wait: 'asked again too soon', number_limit: 'too many codes', network_limit: 'too many codes', daily_cap: 'SMS not sent',
+  not_configured: 'no 2Factor key on Cloudflare',
 };
 
 /** Every event named on the dashboard, and how it reads there. */

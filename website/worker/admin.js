@@ -15,6 +15,7 @@ import { addHit, countHits, networkHash, ready, sha256Hex } from './db.js';
 import { SOURCES } from './forms.js';
 import { ADMIN_HEADERS, plain } from './http.js';
 import { istDay, istStamp, shiftDay, splitStoredTrip, toCsv } from './lib.js';
+import { otpReady } from './otp.js';
 
 const ADMIN_FAILURE_CAP = 10;
 const RANGES = [1, 7, 30, 90];
@@ -86,7 +87,7 @@ async function dashboard(request, env, url) {
   ]);
   return renderDashboard({
     range: { days, from, to: today }, lists, stats, before, signups: { now, before: prev },
-    excluded: isExcluded(request), link: campaignLink(url), stamp: istStamp,
+    excluded: isExcluded(request), link: campaignLink(url), stamp: istStamp, otp: otpReady(env),
   });
 }
 

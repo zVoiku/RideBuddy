@@ -5,7 +5,7 @@
 | `/` | Holding page — "RideBuddy — Coming soon" | `src/index.html` |
 | `/estimate/` | The fare estimator — the customer app's estimate flow, on the web | `src/estimate/` |
 | `/beta/` | The design-canvas artboard, shared by link (`noindex`) | `../Webpage`, assembled by `build.mjs` |
-| `/api/waitlist`, `/api/feedback`, `/api/buddy` | Where the site's forms and the fare 👍/👎 save — the phone forms after a one-time code, once 2Factor is set up | `worker/forms.js`, `worker/otp.js` → D1 |
+| `/api/waitlist`, `/api/feedback`, `/api/buddy` | Where the site's forms and the fare 👍/👎 save — the phone forms only after a one-time code (2Factor) | `worker/forms.js`, `worker/otp.js` → D1 |
 | `/site.js`, `/api/e` | The site's own analytics: the script on every page, and where it reports | `src/site.js`, `worker/analytics.js` → D1 |
 | `/admin` | The three lists as CSV downloads and the analytics dashboard, behind a password | `worker/admin.js`, `worker/dashboard.js` |
 
@@ -79,7 +79,7 @@ result in `frontend/app/booking/summary.tsx`.
   then "Final fare is calculated when your trip ends." and the disclaimer
   ("Indicative fare for the route, date and time you entered, … Terms of Use
   apply."). Then "Edit trip details" and the waitlist (+91 field and the
-  consent tick, then the one-time code when codes are on). No "Book a Buddy" until booking
+  consent tick, then the one-time code). No "Book a Buddy" until booking
   opens; no deposit line, no itemisation (§2.4). A vote and a signup made on
   the same fare land on the same row of the clients list (see below).
 
@@ -122,7 +122,7 @@ rather than a blank page.
 The site's forms email nothing: they post JSON to the Worker
 (`worker/index.js`), which validates, stores a row in Cloudflare D1 and
 answers `{ ok: true }` — or an error the page shows under the field, so a
-failed save is never shown as a success. Once 2Factor is set up, every form
+failed save is never shown as a success. Every form
 that carries a phone number confirms it with a one-time code first (below).
 
 | Form | Where | Endpoint | D1 table |
@@ -169,10 +169,11 @@ that carries a phone number confirms it with a one-time code first (below).
   per network per hour across the forms, plus 60 votes (IPv6 counted per /64).
   The network is stored as a salted hash and forgotten after an hour. If junk
   still gets through, Cloudflare Turnstile is the next step.
-- **One-time codes** (`worker/otp.js`), as in the Phase 1 design. On as soon
-  as 2Factor (2factor.in) is configured (below); until then the forms save in one step, as
-  they always have, and the Phone verified column stays blank. When on, a phone
-  form's first POST is validated and answered `202` with a 6-digit code sent
+- **One-time codes** (`worker/otp.js`), as in the Phase 1 design, always
+  required: nothing with a phone number saves without one. Without the 2Factor
+  key (below) no code can be sent, so every phone form answers "Couldn’t send
+  the code. Try again in a minute." and saves nothing; `/admin` says whether
+  the Worker has the key. A phone form's first POST is validated and answered `202` with a 6-digit code sent
   by SMS to the number ("Code sent to +91 XXXXX XX324." on the page, with
   "Change number"); the same POST again with `code` saves it, marked Phone
   verified. Codes last 5 minutes and 3 tries; a new one can be asked for after
@@ -198,7 +199,7 @@ each list's count and a **Download CSV** button:
 | `ridebuddy-agencies-YYYY-MM-DD.csv` | ID, Submitted (IST), Agency name, Contact person, Phone, City or base, Drivers, Work email, GSTIN, Phone verified, Repeat |
 
 Phone verified is Yes where the number was confirmed with a one-time code
-(blank while codes are off, and on rows from before them). In the clients
+(blank on rows saved before the codes). In the clients
 list, Phone is blank on a vote from someone who didn't join;
 Comment is only ever a 👎's. The CSVs are UTF-8 with a byte-order mark so Excel
 shows ₹ and non-Latin names correctly, and a cell starting `=`, `+`, `-` or `@`
@@ -225,8 +226,11 @@ https://2factor.in/API/V1/{key}/SMS/{10-digit number}/{code}[/{template}]`.
 1. **The API key** — Cloudflare → Workers & Pages → ridebuddy → Settings →
    Variables and secrets → Add → type **Secret**, name `TWOFACTOR_API_KEY`,
    value the key from 2Factor's dashboard. Saving deploys, and from then on
-   every phone form asks for a code. Delete it to switch codes off again.
-   Never put the key in the repository: it is public.
+   every phone form sends the code. It must be this runtime setting, not the
+   **Build** section's variables (where the Maps key lives): a build variable
+   never reaches the Worker. `/admin` shows "One-time codes: on" once it's
+   right, and the Worker's logs name the missing secret otherwise. Never put
+   the key in the repository: it is public.
 2. **Credits** — 2Factor is prepaid: keep SMS credits on the account (dashboard,
    or `https://2factor.in/API/V1/{key}/BAL/SMS` for the balance). An empty
    balance means "Couldn’t send the code. Try again in a minute." for everyone.
@@ -373,12 +377,12 @@ canvas into `Webpage/` and rebuild.
    to be a Buddy is the Phase 1 pop-up — "Individual Buddy" or "Driver agency"
    and their fields — without its consent tick: "Send Application" posts to
    `/api/buddy` and confirms "Application received. We’ll contact you when
-   onboarding opens." With one-time codes on, each of the three /beta phone
-   forms then shows the design's code step (`codeStep()` in the patches) and
-   saves after the code.
+   onboarding opens." Each of the three /beta phone forms then shows the
+   design's code step (`codeStep()` in the patches) and saves only after the
+   code.
 8. **Booking isn't open yet.** The home hero's "Book a Buddy · Coming soon"
    becomes the design's "Join the Waitlist", which opens a pop-up: the `+91`
-   field and the tick, then the code when codes are on ("You're on the
+   field and the tick, then the code ("You're on the
    waitlist. We'll message you once."). Every page ends with the design's
    closing band, "Plan the trip now. Book it soon." — "Get an Estimate" and
    "Join the Waitlist". The header and phone menu have no "Estimate Fare"
@@ -412,6 +416,10 @@ npm run build && npm run test:worker
 NODE_PATH=/opt/node22/lib/node_modules PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers \
   node test/verify.mjs   # end to end in a browser against real Google APIs
 ```
+
+The suites about the forms' fields and lists run with `OTP_OFF=1`, which
+saves without a code and works only beside `RB_TEST=1` on test servers; the
+codes have a suite of their own, and the no-key refusal is checked too.
 
 `test:worker` covers phone formats (foreign numbers and landlines refused), the trip
 wording and its fare, comments (links alone refused), email and GSTIN checks,
@@ -455,8 +463,8 @@ code the stand-in 2Factor received (a wrong code refused, "Change number",
 the resend countdown, focus on the code field) and read back from the admin
 download, Phone verified; plus `/beta`'s URLs, Back, no How It Works (an old
 link opens Home), "verified" not "police-verified", the closing band and the
-CTA redirect. Last of all, a server with codes off: the pop-up saves in one
-step. The two headers are measured side by side at 1280px
+CTA redirect. Last of all, a server without the 2Factor key: the pop-up says
+the code couldn't be sent, confirms nothing, and nothing is saved. The two headers are measured side by side at 1280px
 and 390px — every part's box, font and colour, and the open phone menu — and
 must match except for the current page. Last, `/admin` must count the run
 exactly (one visitor, every fare shown, signups and both kinds of
@@ -522,9 +530,10 @@ Validate config changes locally with `npx wrangler deploy --dry-run`.
 - **No Hourly on the website.** The app still offers it, priced by the
   backend at the legacy ₹249/h, outside Rate Table v1.10
   (`uncovered_by_rate_table`).
-- **One-time codes cost money.** They stay off until the 2Factor key is on
-  Cloudflare, and say RideBuddy only once the DLT template is approved and
-  named (see "Setting up the one-time codes"). A
+- **One-time codes cost money, and the forms depend on them.** Without the
+  2Factor key, or with no SMS credit left, no phone form can save. The SMS
+  says RideBuddy only once the DLT template is approved and named (see
+  "Setting up the one-time codes"). A
   visitor who confirms a number gets no lasting "remembered" state: joining
   again from another form asks for a new code.
 - **Drive-through is estimate-only.** The website shows its price behind the

@@ -1,8 +1,8 @@
 /**
  * One-time codes: a number is proven by a 6-digit code sent to it by SMS before
- * a form saves it (forms.js). On when 2Factor (2factor.in) is configured — the
- * TWOFACTOR_API_KEY secret — and off otherwise, when the forms save as they
- * always have.
+ * a form saves it (forms.js) — always: without the TWOFACTOR_API_KEY secret
+ * (2factor.in) no code can be sent, so nothing with a phone number saves, and
+ * the visitor is told the code couldn't be sent.
  *
  * The code is made here, and D1 keeps only a salted hash of it, for five
  * minutes and three tries. 2Factor's SMS OTP API only delivers it, in a
@@ -24,7 +24,11 @@ const PER_NUMBER = 3; // codes to one number an hour
 const PER_NETWORK = 10; // codes one network can ask for an hour
 const DAILY = 300; // codes a day, site-wide; OTP_DAILY_CAP overrides
 
-export const otpOn = (env) => !!env.TWOFACTOR_API_KEY;
+/** The Worker can send codes: the 2Factor key is set (shown on /admin). */
+export const otpReady = (env) => !!env.TWOFACTOR_API_KEY;
+
+/** Test servers only (RB_TEST): OTP_OFF lets suites about other things save in one step. */
+export const otpSkipped = (env) => env.RB_TEST === '1' && env.OTP_OFF === '1';
 
 const who = async (salt, phone) => (await sha256Hex(`${salt}|otp|${phone}`)).slice(0, 32);
 const codeHash = (salt, phone, code) => sha256Hex(`${salt}|code|${phone}|${code}`);
@@ -44,6 +48,10 @@ function newCode() {
  *   | {ok: false, status: number, reason: string, error: string, resendIn?: number}>}
  */
 export async function sendCode({ env, db, salt, network, at }, phone) {
+  if (!otpReady(env)) {
+    console.error('otp: TWOFACTOR_API_KEY is not set (Settings → Variables and secrets, as a Secret): no code can be sent');
+    return { ok: false, status: 503, reason: 'not_configured', error: CODE_SEND_FAILED };
+  }
   const t = at;
   const key = await who(salt, phone);
   const last = await db.prepare('SELECT sent_at FROM otp_codes WHERE who = ?').bind(key).first('sent_at');

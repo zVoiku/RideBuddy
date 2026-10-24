@@ -238,8 +238,13 @@ async function locked() {
     check(page.status === 503 && page.text.includes('ADMIN_PASSWORD'), `/admin is locked, with the setup steps (${page.status})`);
     const file = await admin(dev.base, '/admin/clients.csv');
     check(file.status === 503 && !file.text.includes('+91'), `the downloads are locked too, whatever the credentials (${file.status})`);
-    const saved = await post(dev.base, '/api/waitlist', { phone: '9870871324', source: 'contact' });
-    check(saved.status === 200, `signups are still saved meanwhile (${saved.status})`);
+    // No TWOFACTOR_API_KEY either: no code can be sent, so nothing with a phone number saves.
+    const refused = await post(dev.base, '/api/waitlist', { phone: '9870871324', source: 'contact', consent: true });
+    check(refused.status === 503 && json(refused)?.reason === 'not_configured' && json(refused)?.error === CODE_SEND_FAILED,
+      `without the 2Factor key, a signup is refused: "${json(refused)?.error}" (${refused.status})`);
+    const app = await post(dev.base, '/api/buddy', { type: 'individual', name: 'A B', phone: '9870871324', licence: 'X1', city: 'Mohali' });
+    same(app.status, 503, '…and so is a Buddy application');
+    same((await post(dev.base, '/api/feedback', { estimate_id: 'est_nokey00000000001', vote: 'up' })).status, 200, 'a 👍 on a fare needs no code and still saves');
   } finally {
     await dev.stop();
   }
@@ -247,7 +252,8 @@ async function locked() {
 
 async function endpoints() {
   console.log('\nwith ADMIN_PASSWORD');
-  const dev = await startDev({ port: 8787, password: PASSWORD });
+  // OTP_OFF (test servers only): this suite is about the forms' fields and lists; the one-time codes have their own.
+  const dev = await startDev({ port: 8787, password: PASSWORD, vars: { RB_TEST: '1', OTP_OFF: '1' } });
   const B = dev.base;
   try {
     for (const [p, want] of [['/', 200], ['/beta/', 200], ['/estimate/', 200], ['/no-such-page', 404]]) {
@@ -349,6 +355,7 @@ async function endpoints() {
     check(dash.status === 200 && /Client waitlist 9 entries · 7 different numbers/.test(dv) && /Buddy applications 2 entries · 1 number\b/.test(dv)
       && /Driver agencies 2 entries · 1 number\b/.test(dv), `the admin page counts entries and numbers; votes without a phone are not signups (${dv.match(/Client waitlist[^.]*?numbers?/)?.[0]})`);
     check(/👍 The fare works 1 👎 It doesn’t 2/.test(dv), 'the dashboard counts the latest vote on each fare');
+    check(/One-time codes: no 2Factor key ?, so no phone form can save\. Add TWOFACTOR_API_KEY as a Secret/.test(dv), 'the admin page says when the 2Factor key is missing');
     check(dash.headers['cache-control'] === 'no-store' && /noindex/.test(dash.headers['x-robots-tag'] || ''), 'admin responses are never cached or indexed');
 
     // Getting in.
@@ -473,7 +480,7 @@ async function migration() {
     "INSERT INTO waitlist (created_at, phone, source, trip) VALUES ('2026-10-01T06:00:00.000Z', '+447911123456', 'contact', NULL)",
     "INSERT INTO buddies (created_at, name, phone, licence) VALUES ('2026-10-01T07:00:00.000Z', 'Old Applicant', '+919000000001', 'PB01 1')",
   ].join('; ');
-  const dev = await startDev({ port: 8786, password: PASSWORD, seed });
+  const dev = await startDev({ port: 8786, password: PASSWORD, seed, vars: { RB_TEST: '1', OTP_OFF: '1' } });
   const B = dev.base;
   try {
     same((await post(B, '/api/feedback', { estimate_id: 'est_migration00000001', vote: 'down', comment: 'Fine otherwise', trip: { type: 'one', from: 'Mohali', to: 'Kasauli', date: '2026-10-20', time: '08:00', fare: 1650 } })).status, 200, 'a vote is saved into the older waitlist table');
@@ -511,6 +518,7 @@ async function otp() {
       'the code goes to 2Factor with the API key, the 10-digit number and the named template');
     check(/^\d{6}$/.test(sms.code), `…and a 6-digit code made by the Worker (${sms.code})`);
     same(csvRows((await admin(B, '/admin/clients.csv')).text).length, 1, 'nothing is on the list before the code');
+    check(/One-time codes: on ?\. Every phone form saves only after the code/.test(visible((await admin(B, '/admin')).text)), 'the admin page says the codes are on');
 
     const code = stub.codeFor('+919811100101');
     const wrong = code === '000000' ? '000001' : '000000';

@@ -25,7 +25,11 @@
   // Errors from the script show under Workers & Pages → ridebuddy → Logs.
   "observability": {
     "enabled": true
-  }
-  // ADMIN_PASSWORD is a secret set in the dashboard (Settings → Variables and
-  // secrets), never in this file. Until it exists, /admin stays locked.
+  },
+  // Variables added in the dashboard (TWOFACTOR_TEMPLATE, OTP_DAILY_CAP) survive
+  // each deploy from GitHub; without this, a deploy deletes them.
+  "keep_vars": true
+  // ADMIN_PASSWORD and TWOFACTOR_API_KEY are secrets set in the dashboard
+  // (Settings → Variables and secrets), never in this file. Until they exist,
+  // /admin stays locked and no phone form can save.
 }

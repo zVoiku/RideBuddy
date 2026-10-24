@@ -4,14 +4,14 @@
  * "Apply to be a Buddy" for individual Buddies and driver agencies. Validated
  * here, stored in D1, downloaded from /admin.
  *
- * With one-time codes on (otp.js), a form that carries a phone number saves
- * only with a code: its first POST is checked and answered 202 with a code
- * sent to the number; the same POST again with `code` saves it.
+ * A form that carries a phone number saves only with a one-time code (otp.js):
+ * its first POST is checked and answered 202 with a code sent to the number;
+ * the same POST again with the right `code` saves it. No code sent, no save.
  */
 import { clock } from './analytics.js';
 import { addHit, networkHash, ready } from './db.js';
 import { json, sameOrigin } from './http.js';
-import { checkCode, otpOn, sendCode } from './otp.js';
+import { checkCode, otpSkipped, sendCode } from './otp.js';
 import {
   AGENCY_ERROR, CITY_ERROR, CONSENT_ERROR, CONTACT_ERROR, EMAIL_ERROR, GSTIN_ERROR, LICENCE_ERROR, NAME_ERROR,
   cleanComment, cleanText, describeTrip, isEmail, isGstin, normalizePhone, tripFare,
@@ -70,12 +70,12 @@ export async function handleForm(request, env, kind) {
 }
 
 /**
- * With one-time codes on: no `code` yet → send one and say where it went (202);
- * a `code` → check it. Off: nothing to prove, and the form saves as it is.
+ * No `code` yet → send one and say where it went (202); a `code` → check it.
+ * Only a right code lets the form save.
  * @returns {Promise<{verified: 1 | null} | {response: Response}>}
  */
 async function provePhone(ctx, phone, code) {
-  if (!otpOn(ctx.env)) return { verified: null };
+  if (otpSkipped(ctx.env)) return { verified: null };
   if (code == null || code === '') {
     const sent = await sendCode(ctx, phone);
     if (!sent.ok) return { response: json(sent.status, { ok: false, error: sent.error, reason: sent.reason, resendIn: sent.resendIn }) };

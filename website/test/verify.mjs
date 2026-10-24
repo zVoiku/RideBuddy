@@ -687,7 +687,7 @@ async function main() {
     check(real.length === 0, `no console/page/HTTP errors (${real.length})`);
     real.forEach((e) => console.log('     ', e));
 
-    // Codes off — no 2Factor key, as on the live site until it is set up: the forms save in one step.
+    // No 2Factor key on the server: no code can be sent, so the form says so and nothing saves.
     await dev.stop();
     const plain = await startDev({ port: PORT, password: ADMIN_PASSWORD });
     try {
@@ -698,10 +698,11 @@ async function main() {
       await off.fill('#rb-wl-phone', '9811100031');
       await d.locator('label:has(#rb-wl-consent)').click();
       await d.getByRole('button', { name: 'Join the Waitlist' }).click();
-      check(await d.getByText(WAITLIST_JOINED).waitFor({ timeout: 10000 }).then(() => true).catch(() => false) && !(await off.$('#rb-wl-code')),
-        'codes off: the pop-up joins in one step, no code asked');
-      const row = (await download(plain, 'clients')).at(-1) || [];
-      check(row[2] === '+919811100031' && row[8] === 'Yes' && row[9] === '', `codes off: saved, Phone verified left blank (${row[2]}, "${row[9]}")`);
+      const said = await d.locator('[role="alert"]').first().textContent({ timeout: 10000 }).catch(() => '');
+      check(said === 'Couldn’t send the code. Try again in a minute.' && await d.getByText(WAITLIST_JOINED).count() === 0 && !(await off.$('#rb-wl-code')),
+        `no 2Factor key: the pop-up says the code couldn't be sent, and doesn't confirm ("${said}")`);
+      const kept = (await download(plain, 'clients')).length;
+      check(kept === 0, `no 2Factor key: nothing is saved (${kept} rows)`);
       await off.close();
     } finally {
       await plain.stop();

@@ -7,8 +7,8 @@
  *   POST /api/waitlist   client waitlist (every page, /estimate/)    forms.js
  *   POST /api/feedback   👍/👎 on a fare at /estimate/                forms.js
  *   POST /api/buddy      "Apply to be a Buddy", Buddies and agencies forms.js
- *                        (both phone forms ask for a one-time code   otp.js
- *                        once 2Factor is configured)
+ *                        (both phone forms save only after a         otp.js
+ *                        one-time code, sent through 2Factor)
  *   POST /api/e          the site's own analytics (src/site.js)      analytics.js
  *   GET  /admin …        lists, analytics, downloads, behind a password  admin.js
  *
