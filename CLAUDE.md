@@ -73,8 +73,9 @@ Not committed (git-ignored). The SessionStart hook scaffolds safe defaults.
 
 Cloudflare (the `ridebuddy` Worker's variables and secrets, not a file)
 - `ADMIN_PASSWORD` — opens `/admin`; without it `/admin` stays locked
-- `TWOFACTOR_API_KEY` (secret) — 2factor.in; turns on the one-time codes on the site's
-  phone forms (`website/worker/otp.js`), off while missing. `TWOFACTOR_TEMPLATE` (optional)
+- `TWOFACTOR_API_KEY` (secret, runtime — not a Build variable) — 2factor.in; sends the
+  one-time codes every phone form on the site requires (`website/worker/otp.js`).
+  Without it no phone form can save; `/admin` shows whether the Worker has it. `TWOFACTOR_TEMPLATE` (optional)
   names RideBuddy's own DLT-approved template in 2Factor; without it 2Factor's default is used
 
 Never commit a Google key: the repo is public. The apps' key is built into the
