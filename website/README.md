@@ -5,7 +5,7 @@
 | `/` | Holding page — "RideBuddy — Coming soon" | `src/index.html` |
 | `/estimate/` | The fare estimator — the customer app's estimate flow, on the web | `src/estimate/` |
 | `/beta/` | The design-canvas artboard, shared by link (`noindex`) | `../Webpage`, assembled by `build.mjs` |
-| `/api/waitlist`, `/api/feedback`, `/api/buddy` | Where the site's forms and the fare 👍/👎 save — the phone forms after a one-time code, once Twilio is set up | `worker/forms.js`, `worker/otp.js` → D1 |
+| `/api/waitlist`, `/api/feedback`, `/api/buddy` | Where the site's forms and the fare 👍/👎 save — the phone forms after a one-time code, once 2Factor is set up | `worker/forms.js`, `worker/otp.js` → D1 |
 | `/site.js`, `/api/e` | The site's own analytics: the script on every page, and where it reports | `src/site.js`, `worker/analytics.js` → D1 |
 | `/admin` | The three lists as CSV downloads and the analytics dashboard, behind a password | `worker/admin.js`, `worker/dashboard.js` |
 
@@ -122,7 +122,7 @@ rather than a blank page.
 The site's forms email nothing: they post JSON to the Worker
 (`worker/index.js`), which validates, stores a row in Cloudflare D1 and
 answers `{ ok: true }` — or an error the page shows under the field, so a
-failed save is never shown as a success. Once Twilio is set up, every form
+failed save is never shown as a success. Once 2Factor is set up, every form
 that carries a phone number confirms it with a one-time code first (below).
 
 | Form | Where | Endpoint | D1 table |
@@ -170,7 +170,7 @@ that carries a phone number confirms it with a one-time code first (below).
   The network is stored as a salted hash and forgotten after an hour. If junk
   still gets through, Cloudflare Turnstile is the next step.
 - **One-time codes** (`worker/otp.js`), as in the Phase 1 design. On as soon
-  as Twilio is configured (below); until then the forms save in one step, as
+  as 2Factor (2factor.in) is configured (below); until then the forms save in one step, as
   they always have, and the Phone verified column stays blank. When on, a phone
   form's first POST is validated and answered `202` with a 6-digit code sent
   by SMS to the number ("Code sent to +91 XXXXX XX324." on the page, with
@@ -216,31 +216,37 @@ is imported as text.
   Console**, then `DELETE FROM waitlist WHERE id = 17;` (or `buddies`,
   `agencies`), using the ID column of the download.
 
-### Setting up the one-time codes (Twilio)
+### Setting up the one-time codes (2Factor)
 
-1. **DLT registration (India).** Every SMS to an Indian number must come from
-   a sender registered on a TRAI DLT portal (Jio, Airtel, Vi or BSNL — one is
-   enough): register RideBuddy Private Limited as a Principal Entity, a 6-letter
-   sender ID (header), e.g. `RIDEBD`, and a service-implicit content template
-   for the code, word for word the message the Worker sends:
-   `Your RideBuddy code is {#var#}. It expires in 5 minutes. Do not share it with anyone.`
-   Approval usually takes a few working days.
-2. **Twilio.** Upgrade the account from trial (a trial only reaches verified
-   numbers), then register the India sender ID with Twilio, giving the DLT
-   entity ID, header and template ID — Twilio's guide: [Register Your
-   Alphanumeric Sender ID in India](https://support.twilio.com/hc/en-us/articles/21162166457755-Documents-Required-and-Instructions-to-Register-Your-Alphanumeric-Sender-ID-in-India).
-   Optionally put the sender in a Messaging Service.
-3. **Cloudflare** — Workers & Pages → ridebuddy → Settings → Variables and
-   secrets: `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` as **secrets**,
-   `TWILIO_FROM` as a variable (the sender ID, or the Messaging Service SID
-   `MG…`). Optional: `OTP_SMS_TEXT` if the approved template differs (keep
-   `{code}` where the code goes), `OTP_DAILY_CAP` to change the daily cap.
-   Saving deploys; from then on every phone form asks for a code. Remove any of
-   the three to switch codes off again.
+The Worker makes each code and checks it itself (limits, expiry, tries);
+2Factor's SMS OTP API only delivers it: `GET
+https://2factor.in/API/V1/{key}/SMS/{10-digit number}/{code}[/{template}]`.
 
-Twilio's error codes (never the message, which can quote the number) show in
-the Worker's logs if an SMS is refused; the visitor sees "Couldn’t send the
-code. Try again in a minute." and nothing is kept.
+1. **The API key** — Cloudflare → Workers & Pages → ridebuddy → Settings →
+   Variables and secrets → Add → type **Secret**, name `TWOFACTOR_API_KEY`,
+   value the key from 2Factor's dashboard. Saving deploys, and from then on
+   every phone form asks for a code. Delete it to switch codes off again.
+   Never put the key in the repository: it is public.
+2. **Credits** — 2Factor is prepaid: keep SMS credits on the account (dashboard,
+   or `https://2factor.in/API/V1/{key}/BAL/SMS` for the balance). An empty
+   balance means "Couldn’t send the code. Try again in a minute." for everyone.
+3. **The message.** Every SMS to an Indian number must match a template
+   approved on TRAI's DLT system. Without `TWOFACTOR_TEMPLATE`, 2Factor sends
+   the code in its own default, pre-approved OTP template and sender ID, which
+   works at once but doesn't say RideBuddy. For a RideBuddy message: register
+   RideBuddy Private Limited on a DLT portal (Jio, Airtel, Vi or BSNL) as a
+   Principal Entity, with a 6-letter sender ID (e.g. `RIDEBD`) and a
+   service-implicit template such as
+   `Your RideBuddy code is {#var#}. It expires in 5 minutes. Do not share it with anyone.`;
+   add the sender ID and template, with their DLT IDs, in 2Factor's dashboard;
+   then add a Cloudflare variable `TWOFACTOR_TEMPLATE` with the template's name
+   there. Codes last 5 minutes here, so the template should say 5 minutes or
+   no time at all.
+4. Optional: `OTP_DAILY_CAP` (default 300) changes the site-wide daily cap.
+
+If 2Factor refuses an SMS, its reason shows in the Worker's logs (numbers
+masked; the URL, which holds the key, is never logged); the visitor sees
+"Couldn’t send the code. Try again in a minute." and nothing is kept.
 
 ## Analytics
 
@@ -417,9 +423,9 @@ oversize, honeypot), votes saved without a phone and joined to the signup made
 from the same fare (either order, the latest vote winning, the comment kept),
 individual and agency applications, `(repeat)` marking, all three CSV layouts,
 Basic auth and its lockout, the HTTPS redirect, the flood cap; one-time codes
-against `test/twilio-stub.mjs` (the SMS Twilio is asked to send, wrong and
+against `test/twofactor-stub.mjs` (what 2Factor is asked to send, wrong and
 used-up codes, the 30-second wait, expiry after 5 minutes, the limits per
-number, per network and per day, Twilio refusing, honeypot and invalid forms
+number, per network and per day, 2Factor refusing, honeypot and invalid forms
 sending nothing, all three forms saving only with the code, marked Phone
 verified); an older
 database (the columns and rows production had before votes, consent, cities
@@ -445,7 +451,7 @@ then joining the waitlist under the same estimate (one row with the vote), the
 `/beta` Contact waitlist, the hero's Join the Waitlist pop-up, an individual
 Buddy application and a driver agency's from `/beta/#apply`, each refused once
 (a short number, no tick, a short GSTIN), then confirmed with the one-time
-code the stand-in Twilio received (a wrong code refused, "Change number",
+code the stand-in 2Factor received (a wrong code refused, "Change number",
 the resend countdown, focus on the code field) and read back from the admin
 download, Phone verified; plus `/beta`'s URLs, Back, no How It Works (an old
 link opens Home), "verified" not "police-verified", the closing band and the
@@ -516,8 +522,9 @@ Validate config changes locally with `npx wrangler deploy --dry-run`.
 - **No Hourly on the website.** The app still offers it, priced by the
   backend at the legacy ₹249/h, outside Rate Table v1.10
   (`uncovered_by_rate_table`).
-- **One-time codes cost money and need DLT.** They stay off until Twilio and
-  the DLT registration are done (see "Setting up the one-time codes"). A
+- **One-time codes cost money.** They stay off until the 2Factor key is on
+  Cloudflare, and say RideBuddy only once the DLT template is approved and
+  named (see "Setting up the one-time codes"). A
   visitor who confirms a number gets no lasting "remembered" state: joining
   again from another form asks for a new code.
 - **Drive-through is estimate-only.** The website shows its price behind the
