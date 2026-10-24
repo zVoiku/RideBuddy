@@ -272,7 +272,7 @@ export function renderDashboard(v) {
     The client waitlist download also has the 👍/👎 votes on fares, including votes from visitors who didn't join (no phone).</p>
     ${otp
       ? '<p class="note">One-time codes: <b>on</b>. Every phone form saves only after the code sent by SMS through 2Factor.</p>'
-      : '<p class="notice" role="alert">One-time codes: <b>no 2Factor key</b>, so no phone form can save. Add <code>TWOFACTOR_API_KEY</code> as a <b>Secret</b> under Workers &amp; Pages → ridebuddy → Settings → Variables and secrets (not under Build).</p>'}
+      : '<p class="notice" role="alert">One-time codes: <b>no 2Factor key</b>, so no phone form can save. Add <code>TWOFACTOR_API_KEY</code> as a <b>Secret</b> under Workers &amp; Pages → ridebuddy → Settings → Variables and secrets (not the card under Build, beside the Maps key: the Worker never sees that one).</p>'}
   </section>
 
   ${stats.pending ? `<p class="notice" role="status">Still adding up ${stats.pending} earlier ${stats.pending === 1 ? 'day' : 'days'} in this period. Reload in a moment to include ${stats.pending === 1 ? 'it' : 'them'}.</p>` : ''}

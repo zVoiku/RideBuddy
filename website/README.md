@@ -226,9 +226,10 @@ https://2factor.in/API/V1/{key}/SMS/{10-digit number}/{code}[/{template}]`.
 1. **The API key** — Cloudflare → Workers & Pages → ridebuddy → Settings →
    Variables and secrets → Add → type **Secret**, name `TWOFACTOR_API_KEY`,
    value the key from 2Factor's dashboard. Saving deploys, and from then on
-   every phone form sends the code. It must be this runtime setting, not the
-   **Build** section's variables (where the Maps key lives): a build variable
-   never reaches the Worker. `/admin` shows "One-time codes: on" once it's
+   every phone form sends the code. It must be this runtime setting, near the
+   top of Settings — not the "Variables and secrets" card under **Build**
+   (beside `GOOGLE_MAPS_BROWSER_KEY`, just above Deploy Hooks): a build
+   variable is handed to the build only, never to the running Worker. `/admin` shows "One-time codes: on" once it's
    right, and the Worker's logs name the missing secret otherwise. Never put
    the key in the repository: it is public.
 2. **Credits** — 2Factor is prepaid: keep SMS credits on the account (dashboard,
