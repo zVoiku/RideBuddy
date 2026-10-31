@@ -517,10 +517,12 @@ The site's address is `ridebuddy.co.in`; `www.ridebuddy.co.in` sends visitors
 there. Both are set in Cloudflare's dashboard, not in `wrangler.jsonc` (which
 has no `routes`, so a deploy leaves them alone):
 
-1. **Custom domains** — Workers & Pages → ridebuddy → Settings → Domains &
-   Routes: `ridebuddy.co.in` and `www.ridebuddy.co.in`. Adding one creates its
+1. **Custom domains** — Workers & Pages → ridebuddy → Domains → **Add
+   Domain**: `ridebuddy.co.in` and `www.ridebuddy.co.in`. Adding one creates its
    DNS record and certificate; it fails if the name already has a DNS record,
-   so delete that record (DNS → Records) first.
+   so delete that record (DNS → Records) first. Use Add Domain, not Add Route:
+   a route (like the `*.ridebuddy.co.in/*` one there) only runs the Worker
+   for a name that already has a DNS record, and creates none.
 2. **The redirect** — the `ridebuddy.co.in` zone → Rules → Redirect Rules,
    template "Redirect from WWW to root": `http.host eq "www.ridebuddy.co.in"`
    → `concat("https://ridebuddy.co.in", http.request.uri.path)`, 301, query
