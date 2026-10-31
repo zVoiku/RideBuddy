@@ -511,6 +511,25 @@ database, so test submissions from a preview land in the real lists.
 
 Validate config changes locally with `npx wrangler deploy --dry-run`.
 
+### The two addresses
+
+The site's address is `ridebuddy.co.in`; `www.ridebuddy.co.in` sends visitors
+there. Both are set in Cloudflare's dashboard, not in `wrangler.jsonc` (which
+has no `routes`, so a deploy leaves them alone):
+
+1. **Custom domains** — Workers & Pages → ridebuddy → Settings → Domains &
+   Routes: `ridebuddy.co.in` and `www.ridebuddy.co.in`. Adding one creates its
+   DNS record and certificate; it fails if the name already has a DNS record,
+   so delete that record (DNS → Records) first.
+2. **The redirect** — the `ridebuddy.co.in` zone → Rules → Redirect Rules,
+   template "Redirect from WWW to root": `http.host eq "www.ridebuddy.co.in"`
+   → `concat("https://ridebuddy.co.in", http.request.uri.path)`, 301, query
+   string kept. Redirect Rules run before the Worker, so one address serves
+   the pages, the forms and the analytics.
+
+The pages' `og:url` uses `ridebuddy.co.in`, and the Maps key's referrers must
+allow `ridebuddy.co.in/*`.
+
 ## Known limitations
 
 - **One shared admin password**, no per-person accounts or audit trail. If
