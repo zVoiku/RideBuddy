@@ -12,24 +12,15 @@
  */
 import { FARE, estimate, formatINR, roundTripDays } from './fare-engine.js';
 import * as maps from './maps.js';
+import {
+  Button, Chip, CodeStep, ConsentTick, CONSENT_ERROR, Done, Honeypot, Icon, Input, MOBILE, PHONE_ERROR, PhoneField,
+  postForm, track, useCodeForm, WAITLIST_JOINED,
+} from '../shared/ui.jsx';
+import { SiteHeader } from '../shared/header.jsx';
 
 const { useState, useEffect, useRef } = React;
 
-// Design-system primitives, with plain fallbacks so a bundle hiccup degrades
-// to unstyled inputs rather than a blank page.
-const DS = window.RideBuddyDesignSystem_f63581 || {};
-const Button = DS.Button || (({ children, fullWidth, size, variant, ...rest }) => <button className="rb-btn rb-btn--primary" {...rest}>{children}</button>);
-const Chip = DS.Chip || (({ selected, children, ...rest }) => <button type="button" aria-pressed={selected} className="rb-chip" {...rest}>{children}</button>);
-const Input = DS.Input || (({ label, icon, error, ...rest }) => (
-  <label className="rb-field"><span className="rb-label">{label}</span><input className="rb-input" {...rest} />{error && <span className="rb-error-msg">{error}</span>}</label>
-));
-
 // Icons from the artboard.
-const Icon = ({ d, size = 18, stroke = 'currentColor' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    {[].concat(d).map((p, i) => <path key={i} d={p} />)}
-  </svg>
-);
 const PIN = 'M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0';
 const NAV = 'm3 11 19-9-9 19-2-8-8-2z';
 const CLOCK = ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M12 6v6l4 2'];
@@ -37,34 +28,6 @@ const ROUTE = ['M6 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', 'M9 19h8.5a3.5 3.5 0 0 0 0-
 const ALERT = ['M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', 'M12 9v4', 'M12 17h.01'];
 const THUMB_UP = ['M7 10v12', 'M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z'];
 const THUMB_DOWN = ['M17 14V2', 'M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z'];
-
-const PHONE_ERROR = 'Enter a 10-digit mobile number.';
-const CONSENT_ERROR = 'Tick the box to join the waitlist.';
-const CONSENT = 'Send me an SMS or WhatsApp when booking opens. I agree to the Privacy Policy and Terms of Use.';
-
-function track(event, payload) {
-  (window.dataLayer = window.dataLayer || []).push(Object.assign({ event }, payload || {}));
-}
-
-/**
- * Saves a form through the site's Worker (website/worker/index.js). Resolves
- * to { ok: true }; to { ok: false, otp: 'sent', sentTo, resendIn } when the
- * Worker has sent a one-time code to the number and wants it back
- * (website/worker/otp.js); or to { ok: false, error, errors, reason }. Never
- * throws: a failure is shown to the visitor, who can try again. The /beta
- * artboard carries the same helper (artboard-patches.mjs).
- */
-async function postForm(path, body) {
-  try {
-    const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.ok) return { ok: true };
-    if (res.status === 202 && data.otp === 'sent') return { ok: false, otp: 'sent', sentTo: data.sentTo, resendIn: data.resendIn || 30, errors: {} };
-    return { ok: false, error: data.error || 'We couldn’t save that just now. Please try again.', errors: data.errors || {}, reason: data.reason || '' };
-  } catch (e) {
-    return { ok: false, error: 'We couldn’t reach RideBuddy. Check your connection and try again.', errors: {} };
-  }
-}
 
 /** Today's date in IST, +offset days — the page prices on Indian wall-clock time whatever the visitor's zone. */
 function istDate(offsetDays = 0) {
@@ -103,54 +66,7 @@ function tripOf(result) {
   };
 }
 
-/** Digits only, at most ten: a pasted "+91 98765 43210" keeps its last ten. */
-const tenDigits = (v) => { const d = String(v).replace(/\D/g, ''); return d.length > 10 ? d.slice(-10) : d; };
-
 // ----- Small parts of the result ---------------------------------------------------
-
-/** Mobile number with a fixed +91, as on every form of the site. */
-function PhoneField({ id, value, onChange, error }) {
-  return (
-    <div className="rb-field">
-      <label className="rb-label" htmlFor={id}>Mobile number</label>
-      <div className={'rb-phone' + (error ? ' rb-phone--error' : '')}>
-        <span className="rb-phone__cc" aria-hidden="true">+91</span>
-        <input id={id} type="tel" inputMode="numeric" autoComplete="tel-national" placeholder="10-digit mobile"
-          value={value} onChange={(e) => onChange(tenDigits(e.target.value))}
-          aria-invalid={error ? 'true' : undefined} aria-describedby={error ? `${id}-err` : undefined} />
-      </div>
-      {error && <span className="rb-error-msg" id={`${id}-err`}>{error}</span>}
-    </div>
-  );
-}
-
-/**
- * The one-time code, as on every phone form of the site: one field rather than
- * six boxes, so a pasted or auto-filled code ("From Messages") lands whole.
- */
-function CodeField({ id, value, onChange, error }) {
-  return (
-    <div className="rb-field">
-      <label className="rb-label" htmlFor={id}>6-digit code</label>
-      <input id={id} className={'rb-code' + (error ? ' rb-code--error' : '')} type="text" inputMode="numeric" autoComplete="one-time-code"
-        pattern="[0-9]*" placeholder="••••••" value={value} onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 6))}
-        aria-invalid={error ? 'true' : undefined} aria-describedby={error ? `${id}-err` : undefined} />
-      {error && <span className="rb-error-msg" id={`${id}-err`} role="alert">{error}</span>}
-    </div>
-  );
-}
-
-function ConsentTick({ id, checked, onChange, error }) {
-  return (
-    <div className="rb-consent">
-      <label htmlFor={id}>
-        <input id={id} type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-        <span>{CONSENT}</span>
-      </label>
-      {error && <span className="rb-error-msg">{error}</span>}
-    </div>
-  );
-}
 
 /** Under the route map: the drive time and distance, each way too on a round trip. */
 function TripTiles({ route, round }) {
@@ -620,74 +536,6 @@ function RouteMap({ route, pickup, joined }) {
   );
 }
 
-// ----- Site header: the main site's, as on /beta ----------------------------------
-
-// Where the rest of the site lives. When the beta moves to the root, change this.
-const SITE = '/beta/';
-
-// "Get an Estimate" is this page's link, so there is no "Estimate Fare" item.
-const SITE_LINKS = [
-  { label: 'Home', href: SITE },
-  { label: 'About', href: `${SITE}#about` },
-  { label: 'Contact', href: `${SITE}#contact` },
-];
-
-/**
- * The /beta artboard's header — logo, the three pages, "Get an Estimate", and a
- * full-screen menu below 1120px. Here "Get an Estimate" stays on the page and
- * brings back the form (inputs kept) instead of reloading it.
- */
-function SiteHeader() {
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
-
-  const toForm = (e) => {
-    e.preventDefault();
-    setOpen(false);
-    window.dispatchEvent(new CustomEvent('rb-get-estimate'));
-  };
-  const link = (l) => <a key={l.label} href={l.href} onClick={() => setOpen(false)}>{l.label}</a>;
-
-  return (
-    <>
-      <div className="rb-header__in">
-        <a className="rb-brand" href={SITE} aria-label="RideBuddy home">
-          <img src="/logomark.svg" alt="" />
-          <span>RideBuddy</span>
-        </a>
-        <nav className="rb-nav" aria-label="Main">
-          {SITE_LINKS.map(link)}
-          <div className="rb-nav__cta">
-            <Button fullWidth={false} size="sm" onClick={toForm}><span style={{ whiteSpace: 'nowrap' }}>Get an Estimate</span></Button>
-          </div>
-        </nav>
-        <button type="button" className="rb-burger" aria-label="Menu" aria-expanded={open} onClick={() => setOpen(true)}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M3 12h18M3 18h18" /></svg>
-        </button>
-      </div>
-      {open && (
-        <div className="rb-menu" role="dialog" aria-modal="true" aria-label="Menu">
-          <div className="rb-menu__top">
-            <button type="button" className="rb-menu__close" aria-label="Close" onClick={() => setOpen(false)}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-            </button>
-          </div>
-          <div className="rb-menu__links">
-            {SITE_LINKS.map(link)}
-            <div className="rb-menu__cta"><Button onClick={toForm}>Get an Estimate</Button></div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
 // ----- The page ------------------------------------------------------------------
 
 const PRESET = new URLSearchParams(window.location.search).get('type');
@@ -711,15 +559,8 @@ function App() {
   const [waConsent, setWaConsent] = useState(false);
   const [waDone, setWaDone] = useState(false);
   const [waErrors, setWaErrors] = useState({});
-  const [waSending, setWaSending] = useState(false);
-  // The one-time code step (website/worker/otp.js): where the code went, the
-  // code typed, and when another may be asked for.
-  const [waStep, setWaStep] = useState('form');
-  const [waCode, setWaCode] = useState('');
-  const [waSentTo, setWaSentTo] = useState('');
-  const [waResendAt, setWaResendAt] = useState(0);
-  const [clock, setClock] = useState(0);
-  // The field people never see and bots fill in; the Worker drops what arrives with it.
+  // The one-time code step (website/worker/otp.js).
+  const wa = useCodeForm('/api/waitlist', 'rb-waitlist-code');
   const honeypot = useRef(null);
   // Place details resolve asynchronously after a suggestion is chosen; the
   // estimate must not run against a half-selected field.
@@ -850,9 +691,9 @@ function App() {
   // what the customer wants, and any 👍/👎 on this fare lands on the same row.
   // The Worker validates the number and words the trip.
   const submitWaitlist = () => {
-    if (waSending) return;
+    if (wa.sending) return;
     const next = {};
-    if (!/^[6-9]\d{9}$/.test(waPhone)) next.phone = PHONE_ERROR;
+    if (!MOBILE.test(waPhone)) next.phone = PHONE_ERROR;
     if (!waConsent) next.consent = CONSENT_ERROR;
     setWaErrors(next);
     if (Object.keys(next).length) {
@@ -862,54 +703,18 @@ function App() {
     sendWaitlist('');
   };
 
-  // With one-time codes on, the first POST sends a code to the number and the
-  // waitlist asks for it; the same POST with the code saves.
+  // The first POST sends a code to the number and the waitlist asks for it;
+  // the same POST with the code saves.
   const sendWaitlist = async (code) => {
-    if (waSending) return;
-    const atCode = waStep === 'code';
-    setWaSending(true);
-    const r = await postForm('/api/waitlist', {
+    const r = await wa.submit({
       phone: waPhone, consent: true, source: 'estimate', estimate_id: estimateId,
-      website: honeypot.current?.value || '', trip: tripOf(result), ...(code ? { code } : {}),
-    });
-    setWaSending(false);
-    if (r.otp === 'sent') {
-      setWaStep('code');
-      setWaCode('');
-      setWaErrors({});
-      setWaSentTo(r.sentTo);
-      setWaResendAt(Date.now() + r.resendIn * 1000);
-      setClock(Date.now());
-      track('otp_sent', { form: 'estimate' });
-      // Into the code field as soon as it is on the page.
-      const focus = (tries) => {
-        const el = document.getElementById('rb-waitlist-code');
-        if (el) el.focus();
-        else if (tries > 0) setTimeout(() => focus(tries - 1), 50);
-      };
-      setTimeout(() => focus(20), 0);
-      return;
-    }
-    if (!r.ok) {
-      if (r.reason) track('otp_failed', { form: 'estimate', kind: r.reason });
-      else track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'estimate' });
-      if (atCode) setWaErrors({ code: r.errors.code || r.error });
-      else setWaErrors(r.errors.phone || r.errors.consent ? r.errors : { phone: r.error });
-      return;
-    }
-    if (code) track('otp_verified', { form: 'estimate' });
-    setWaStep('form');
+      website: honeypot.current?.value || '', trip: tripOf(result),
+    }, { form: 'estimate', code });
+    if (!r) return;
+    if (!r.ok) { setWaErrors(r.errors.phone || r.errors.consent ? r.errors : { phone: r.error }); return; }
     setWaDone(true);
     track('waitlist_joined', { source: 'estimate' });
   };
-
-  // The code step counts down to "Resend OTP".
-  useEffect(() => {
-    if (waStep !== 'code') return undefined;
-    const t = setInterval(() => setClock(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [waStep]);
-  const resendIn = Math.max(0, Math.ceil((waResendAt - clock) / 1000));
 
   // The conditions, as Rate Table v1.10 §2.4 words them (and as the app's
   // summary.tsx shows them).
@@ -1031,39 +836,23 @@ function App() {
 
               <div className="rb-book">
                 {waDone ? (
-                  <div className="rb-done">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1B5E20" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="m20 6-11 11-5-5" /></svg>
-                    <span>You're on the waitlist. We'll message you once.</span>
-                  </div>
+                  <Done>{WAITLIST_JOINED}</Done>
                 ) : (
                   <div id="waitlist" className="rb-waitlist">
                     <div>
                       <h3>Join the waitlist.</h3>
                       <p>Booking opens soon. Waitlist members go first.</p>
                     </div>
-                    {waStep === 'code' ? (
-                      <>
-                        <div className="rb-sent">
-                          <span>Code sent to {waSentTo}.</span>
-                          <button type="button" className="rb-linkbtn" onClick={() => { setWaStep('form'); setWaCode(''); setWaErrors({}); }}>Change number</button>
-                        </div>
-                        <CodeField id="rb-waitlist-code" value={waCode} error={waErrors.code}
-                          onChange={(v) => { setWaCode(v); setWaErrors({}); }} />
-                        <Button onClick={() => sendWaitlist(waCode)} disabled={waSending || waCode.length !== 6}>{waSending ? 'Checking…' : 'Verify Number'}</Button>
-                        <div className="rb-resend">
-                          {resendIn > 0
-                            ? <span>Resend OTP in 0:{String(resendIn).padStart(2, '0')}</span>
-                            : <button type="button" className="rb-linkbtn" onClick={() => sendWaitlist('')} disabled={waSending}>Resend OTP</button>}
-                        </div>
-                      </>
+                    {wa.step === 'code' ? (
+                      <CodeStep f={wa} onVerify={() => sendWaitlist(wa.code)} onResend={() => sendWaitlist('')} />
                     ) : (
                       <>
                         <PhoneField id="rb-waitlist-phone" value={waPhone} error={waErrors.phone}
                           onChange={(v) => { setWaPhone(v); setWaErrors((e) => ({ ...e, phone: '' })); }} />
                         <ConsentTick id="rb-waitlist-consent" checked={waConsent} error={waErrors.consent}
                           onChange={(v) => { setWaConsent(v); setWaErrors((e) => ({ ...e, consent: '' })); }} />
-                        <input ref={honeypot} type="text" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" className="rb-hp" />
-                        <Button onClick={submitWaitlist} disabled={waSending}>{waSending ? 'Joining…' : 'Join the Waitlist'}</Button>
+                        <Honeypot ref={honeypot} />
+                        <Button onClick={submitWaitlist} disabled={wa.sending}>{wa.sending ? 'Joining…' : 'Join the Waitlist'}</Button>
                         <small>One message when the app is live. Nothing else.</small>
                       </>
                     )}
@@ -1093,5 +882,6 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('rb-header')).render(<SiteHeader />);
+// The header's "Get an Estimate" stays on this page and brings back the form.
+ReactDOM.createRoot(document.getElementById('rb-header')).render(<SiteHeader onGetEstimate={() => window.dispatchEvent(new CustomEvent('rb-get-estimate'))} />);
 ReactDOM.createRoot(document.getElementById('app')).render(<App />);

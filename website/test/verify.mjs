@@ -1,6 +1,6 @@
 /**
  * End-to-end check of the site: /estimate/ against the real Google Maps APIs,
- * and the forms on /estimate/ and /beta/ through the Worker into D1.
+ * and the forms on /estimate/, /about/, /contact/ and /beta/ through the Worker into D1.
  *
  * Serves dist/ and the Worker with `wrangler dev` (throwaway local D1), drives
  * the pages headless, re-prices every estimate with the backend's
@@ -98,8 +98,8 @@ async function download(dev, list) {
 }
 
 /**
- * The header's parts, measured the same way on /beta/ (the artboard) and
- * /estimate/: box, and the styles that make it look the way it does.
+ * The header's parts, measured the same way on /beta/ (the artboard) and the
+ * standalone pages: box, and the styles that make it look the way it does.
  */
 function headerGeometry() {
   const box = (el) => { const b = el.getBoundingClientRect(); return [b.x, b.y, b.width, b.height].map(Math.round).join(','); };
@@ -453,59 +453,118 @@ async function main() {
     await mobile.screenshot({ path: path.join(SHOTS, 'estimate-mobile.png'), fullPage: true });
     await mobile.close();
 
-    // /beta: real URLs for its pages, and both of its forms save.
-    const beta = await ctx.newPage();
-    beta.on('pageerror', (e) => errors.push('PAGEERROR /beta ' + String(e).slice(0, 200)));
-    beta.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
-    await beta.goto(`${ORIGIN}/beta/#contact`, { waitUntil: 'networkidle' });
-    const contactShown = await beta.waitForSelector('#rb-contact-phone', { timeout: 30000 }).then(() => true).catch(() => false);
-    check(contactShown, '/beta/#contact opens the Contact page');
-    await beta.screenshot({ path: path.join(SHOTS, 'beta-contact.png'), fullPage: true });
-    const contactForm = beta.locator('#rb-contact-phone').locator('xpath=ancestor::div[.//button][1]');
-    await beta.fill('#rb-contact-phone', '12345');
+    // Contact (/contact/), reached by an old /beta/#contact link: the waitlist card
+    // takes the number in place, and saves after the code.
+    const contact = await ctx.newPage();
+    contact.on('pageerror', (e) => errors.push('PAGEERROR /contact ' + String(e).slice(0, 200)));
+    contact.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
+    await contact.goto(`${ORIGIN}/beta/#contact`, { waitUntil: 'networkidle' });
+    await contact.waitForURL('**/contact/', { timeout: 15000 }).catch(() => {});
+    const contactShown = await contact.waitForSelector('#rb-contact-phone', { timeout: 30000 }).then(() => true).catch(() => false);
+    check(new URL(contact.url()).pathname === '/contact/' && contactShown, `an old /beta/#contact link opens /contact/ (${new URL(contact.url()).pathname})`);
+    const contactText = await contact.evaluate(() => document.body.innerText);
+    check(contactText.includes('Write to us.') && await contact.locator('.rb-email a').getAttribute('href') === 'mailto:support@ridebuddy.co.in'
+      && contactText.includes('Leave a number and we\'ll reach out when booking opens. Waitlist members go first.') && contactText.includes('Drive with RideBuddy.'),
+      'Contact: "Write to us.", the email, the waitlist card as before, and "Become a Buddy"');
+    await contact.screenshot({ path: path.join(SHOTS, 'contact.png'), fullPage: true });
+    const contactForm = contact.locator('#rb-contact-waitlist');
+    await contact.fill('#rb-contact-phone', '12345');
     await contactForm.getByRole('button', { name: 'Join the Waitlist' }).click();
-    const cErrs = await beta.locator('[role="alert"]').allTextContents();
+    const cErrs = await contactForm.locator('[role="alert"]').allTextContents();
     check(cErrs.join(' | ') === `${PHONE_ERROR} | ${CONSENT_ERROR}`, `Contact waitlist: a short number, and no tick, are refused (${cErrs.join(' | ')})`);
-    await beta.fill('#rb-contact-phone', '+44 7911 123456');
-    check(await beta.inputValue('#rb-contact-phone') === '7911123456', 'the field beside the fixed +91 keeps 10 digits');
-    await beta.fill('#rb-contact-phone', '98111 00001');
-    await beta.locator('label:has(#rb-contact-consent)').click();
+    await contact.fill('#rb-contact-phone', '+44 7911 123456');
+    check(await contact.inputValue('#rb-contact-phone') === '7911123456', 'the field beside the fixed +91 keeps 10 digits');
+    await contact.fill('#rb-contact-phone', '98111 00001');
+    await contact.locator('label:has(#rb-contact-consent)').click();
     await contactForm.getByRole('button', { name: 'Join the Waitlist' }).click();
-    check(!!(await beta.waitForSelector('#rb-contact-code', { timeout: 10000 }).catch(() => null)) && await beta.getByText('Code sent to +91 XXXXX XX001.').count() === 1,
-      'Contact waitlist: a code goes to the number');
-    await enterCode(beta, beta.locator('#rb-contact-code').locator('xpath=ancestor::div[.//h2][1]'), '#rb-contact-code', '+919811100001');
-    check(await beta.waitForSelector(`text=${WAITLIST_JOINED}`, { timeout: 10000 }).then(() => true).catch(() => false), 'Contact waitlist: joined with the code');
+    check(!!(await contact.waitForSelector('#rb-contact-code', { timeout: 10000 }).catch(() => null)) && await contactForm.getByText('Code sent to +91 XXXXX XX001.').count() === 1
+      && await contact.evaluate(() => document.activeElement?.id) === 'rb-contact-code', 'Contact waitlist: a code goes to the number, and the code field takes the focus');
+    await contact.screenshot({ path: path.join(SHOTS, 'contact-code.png'), fullPage: true });
+    await enterCode(contact, contactForm, '#rb-contact-code', '+919811100001');
+    check(await contactForm.getByText(WAITLIST_JOINED).waitFor({ timeout: 10000 }).then(() => true).catch(() => false), 'Contact waitlist: joined with the code');
     const cRow = (await download(dev, 'clients')).at(-1) || [];
     check(cRow[2] === '+919811100001' && cRow[3] === 'Contact page' && cRow[8] === 'Yes' && cRow[9] === 'Yes',
       `Contact waitlist: row saved, with the consent and the verified phone (${[cRow[2], cRow[3], cRow[8], cRow[9]].join(', ')})`);
 
-    const navHref = await beta.locator('header a', { hasText: 'About' }).first().getAttribute('href').catch(() => null);
-    check(navHref === '#about', `nav links carry real URLs (About -> ${navHref})`);
-    await beta.locator('header a', { hasText: 'About' }).first().click();
-    check(beta.url().endsWith('/beta/#about') && !!(await beta.waitForSelector('#about-hero', { timeout: 10000 }).catch(() => null)), `clicking About shows it at ${new URL(beta.url()).pathname}${new URL(beta.url()).hash}`);
-    await beta.goBack();
-    // (Joined already, so the page shows the confirmation rather than the field.)
-    check(beta.url().endsWith('/beta/#contact') && !!(await beta.waitForSelector(`text=${WAITLIST_JOINED}`, { timeout: 10000 }).catch(() => null)), 'Back returns to the Contact page');
-    await beta.goForward();
-    await beta.waitForSelector('#about-hero', { timeout: 10000 }).catch(() => null);
-    const aboutText = await beta.evaluate(() => document.body.innerText);
-    check(!/police/i.test(aboutText) && aboutText.includes('Every Buddy is verified, formally trained, and rated after every trip.') && aboutText.includes('Verification before the first trip.'),
-      'About: Buddies are "verified", not "police-verified"');
-    await beta.goBack();
-    await beta.locator('header a', { hasText: 'Home' }).first().click();
-    check(new URL(beta.url()).hash === '' && !!(await beta.waitForSelector('#home-hero', { timeout: 10000 }).catch(() => null)), 'Home is plain /beta/');
+    // The header's About leads to /about/, a page of its own.
+    const navHref = await contact.locator('header nav a', { hasText: 'About' }).getAttribute('href').catch(() => null);
+    check(navHref === '/about/', `the header's About is /about/ (${navHref})`);
+    await contact.locator('header nav a', { hasText: 'About' }).click();
+    await contact.waitForURL('**/about/', { timeout: 15000 }).catch(() => {});
+    const about = contact; // the same tab, now on /about/
+    check(!!(await about.waitForSelector('.rb-hero h1', { timeout: 15000 }).catch(() => null)), `clicking About opens it (${new URL(about.url()).pathname})`);
+    await about.waitForSelector('header nav', { timeout: 30000 }).catch(() => {});
+    await about.evaluate(() => document.fonts.ready);
+    await about.screenshot({ path: path.join(SHOTS, 'about.png'), fullPage: true });
+    const aboutText = await about.evaluate(() => document.body.innerText);
+    check(['Your own car, driven for you.', 'What RideBuddy is'.toUpperCase(), 'What you can do today.', 'When booking opens.', 'Verified.', 'Trained.', 'Rated.', 'Priced upfront.', 'Questions, answered.',
+      'Plan the trip now. Book it soon.'].every((t) => aboutText.includes(t)) && !/police/i.test(aboutText),
+      'About: the design\'s sections, closing band included; Buddies are "verified", never "police-verified"');
+    const faqOpen = () => about.$$eval('.rb-faq details', (ds) => ds.map((d) => d.open));
+    let faq = await faqOpen();
+    check(faq.length === 8 && faq[0] && faq.slice(1).every((o) => !o), `About FAQ: 8 questions, the first one open (${faq.map(Number).join('')})`);
+    await about.locator('.rb-faq summary', { hasText: 'Is this a cab service?' }).click();
+    faq = await faqOpen();
+    check(!faq[0] && faq[2] && faq.filter(Boolean).length === 1, `…opening another closes it (${faq.map(Number).join('')})`);
+    check(await about.locator('.rb-today a', { hasText: 'Get Estimate' }).getAttribute('href') === '/estimate/'
+      && await about.locator('.rb-closer a', { hasText: 'Get an Estimate' }).getAttribute('href') === '/estimate/', 'About: "Get Estimate" and "Get an Estimate" lead to /estimate/');
+
+    // Its "Join the Waitlist" opens the site's waitlist pop-up, which saves after the code.
+    await about.locator('.rb-today').getByRole('button', { name: 'Join the Waitlist' }).click();
+    const awl = about.getByRole('dialog', { name: 'Join the waitlist' });
+    check(await awl.waitFor({ timeout: 5000 }).then(() => true).catch(() => false), 'About: "Join the Waitlist" opens the pop-up');
+    await about.fill('#rb-wl-phone', '98111 00003');
+    await awl.locator('label:has(#rb-wl-consent)').click();
+    await awl.getByRole('button', { name: 'Join the Waitlist' }).click();
+    check(!!(await about.waitForSelector('#rb-wl-code', { timeout: 10000 }).catch(() => null)) && await awl.getByText('Code sent to +91 XXXXX XX003.').count() === 1
+      && await about.evaluate(() => document.activeElement?.id) === 'rb-wl-code', 'About pop-up: a code goes to the number, and the code field takes the focus');
+    check(await awl.getByText(/^Resend OTP in 0:[23]\d$/).count() === 1, 'About pop-up: "Resend OTP" counts down');
+    await about.screenshot({ path: path.join(SHOTS, 'about-waitlist-code.png') });
+    await enterCode(about, awl, '#rb-wl-code', '+919811100003');
+    check(await awl.getByText(WAITLIST_JOINED).waitFor({ timeout: 10000 }).then(() => true).catch(() => false), 'About pop-up: joined with the code');
+    const abRow = (await download(dev, 'clients')).at(-1) || [];
+    check(abRow[2] === '+919811100003' && abRow[3] === 'About page' && abRow[8] === 'Yes' && abRow[9] === 'Yes',
+      `About pop-up: row saved with the page it was joined from and the verified phone (${[abRow[2], abRow[3], abRow[8], abRow[9]].join(', ')})`);
+    await awl.getByRole('button', { name: 'Done' }).click();
+    check(await about.getByRole('dialog').count() === 0, 'Done closes the pop-up');
+    await about.locator('.rb-closer').getByRole('button', { name: 'Join the Waitlist' }).click();
+    check(await awl.getByText(WAITLIST_JOINED).waitFor({ timeout: 5000 }).then(() => true).catch(() => false), 'the closing band\'s "Join the Waitlist" opens the same pop-up (still joined)');
+    await about.keyboard.press('Escape');
+    check(await about.getByRole('dialog').count() === 0, 'Escape closes it');
+    await about.goBack();
+    await about.waitForURL('**/contact/', { timeout: 15000 }).catch(() => {});
+    check(new URL(about.url()).pathname === '/contact/', 'Back returns to the Contact page');
+    await about.close();
+
+    // /beta is Home: plain /beta/, and old links to its other pages go on to theirs.
+    const beta = await ctx.newPage();
+    beta.on('pageerror', (e) => errors.push('PAGEERROR /beta ' + String(e).slice(0, 200)));
+    beta.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
+    await beta.goto(`${ORIGIN}/beta/#about`, { waitUntil: 'networkidle' });
+    await beta.waitForURL('**/about/', { timeout: 15000 }).catch(() => {});
+    check(new URL(beta.url()).pathname === '/about/', `an old /beta/#about link opens /about/ (${new URL(beta.url()).pathname})`);
+    await beta.goto(`${ORIGIN}/beta/`, { waitUntil: 'networkidle' });
+    check(!!(await beta.waitForSelector('#home-hero', { timeout: 30000 }).catch(() => null)), 'Home is plain /beta/');
+    const betaHrefs = await beta.$$eval('header nav a', (as) => as.map((a) => `${a.textContent.trim()}=${a.getAttribute('href')}`).join(' '));
+    check(betaHrefs === 'Home=/beta/ About=/about/ Contact=/contact/', `/beta's header leads to the pages of their own (${betaHrefs})`);
+    const footHrefs = await beta.$$eval('footer a', (as) => Object.fromEntries(as.map((a) => [a.textContent.trim(), a.getAttribute('href')])));
+    check(footHrefs.About === '/about/' && footHrefs.Contact === '/contact/' && footHrefs['Become a Buddy'] === '/contact/#apply',
+      `…and so does its footer (About ${footHrefs.About}, Contact ${footHrefs.Contact}, Become a Buddy ${footHrefs['Become a Buddy']})`);
     const homeText = await beta.evaluate(() => document.body.innerText);
     check(!/police/i.test(homeText) && homeText.includes('Every Buddy is verified before their first trip.'), 'Home: "Every Buddy is verified before their first trip."');
     const linkTexts = await beta.$$eval('header a, footer a, a', (as) => as.map((a) => a.textContent.trim()));
     check(!linkTexts.some((t) => /how it works|full journey/i.test(t)) && !homeText.includes('Questions, answered.'),
-      'no How It Works page: no link to it in the header, footer or Home, and no FAQ');
+      'no How It Works page: no link to it in the header, footer or Home, and no FAQ on Home');
+    const shipped = await (await fetch(`${dev.base}/beta/`)).text();
+    check(!shipped.includes('Talk to us.') && !shipped.includes('Built on one promise.') && !/police/i.test(shipped),
+      '/beta ships no About or Contact page of its own any more, and no "police" anywhere');
     const howTab = await ctx.newPage();
     await howTab.goto(`${ORIGIN}/beta/#how-it-works`, { waitUntil: 'networkidle' });
     check(!!(await howTab.waitForSelector('#home-hero', { timeout: 30000 }).catch(() => null)) && new URL(howTab.url()).hash === '',
       `an old /beta/#how-it-works link opens Home at a plain URL (${new URL(howTab.url()).pathname}${new URL(howTab.url()).hash})`);
     await howTab.close();
 
-    // The hero's "Join the Waitlist" opens the waitlist pop-up: phone and tick, no code.
+    // The hero's "Join the Waitlist" opens the waitlist pop-up: phone and tick, then the code.
     check((await beta.getByRole('button', { name: /Book a Buddy/ }).count()) === 0, 'no "Book a Buddy" button on the home page');
     check(await beta.getByText('Plan the trip now. Book it soon.').count() === 1, 'the closing band reads "Plan the trip now. Book it soon."');
     await beta.getByRole('button', { name: 'Join the Waitlist' }).first().click(); // the hero's; the closing band has the other
@@ -536,35 +595,42 @@ async function main() {
     await wl.getByRole('button', { name: 'Done' }).click();
     check(await beta.getByRole('dialog').count() === 0, 'Done closes the pop-up');
 
-    // Apply to be a Buddy, from a shared /beta/#apply link.
+    // Every Estimate CTA still leads to /estimate/.
+    await beta.getByRole('button', { name: 'Get an Estimate' }).first().click();
+    await beta.waitForURL('**/estimate/', { timeout: 15000 }).then(() => check(true, '/beta "Get an Estimate" navigates to /estimate/')).catch(() => check(false, '/beta "Get an Estimate" navigates to /estimate/'));
+
+    // Apply to be a Buddy, from an old /beta/#apply link: /contact/#apply opens the form.
     await beta.goto(`${ORIGIN}/beta/#apply`, { waitUntil: 'networkidle' });
-    check(await beta.waitForSelector('#rb-full-name', { timeout: 30000 }).then(() => true).catch(() => false), '/beta/#apply opens the Buddy application');
+    await beta.waitForURL('**/contact/#apply', { timeout: 15000 }).catch(() => {});
+    check(await beta.waitForSelector('#rb-full-name', { timeout: 30000 }).then(() => true).catch(() => false) && new URL(beta.url()).pathname === '/contact/',
+      `an old /beta/#apply link opens the Buddy application on /contact/ (${new URL(beta.url()).pathname}${new URL(beta.url()).hash})`);
     const applyDialog = beta.getByRole('dialog');
     const modalText = await applyDialog.textContent();
-    check(!/email app/i.test(modalText), 'no "email app" wording in the form');
+    check(!/email app/i.test(modalText) && modalText.includes('Apply to be a Buddy.'), 'the Buddy application, with no "email app" wording');
     await beta.getByRole('button', { name: 'Send Application' }).click();
-    check((await applyDialog.locator('.rb-error-msg').count()) === 3 && (await applyDialog.getByText(PHONE_ERROR).count()) === 1, 'an empty application flags all four fields');
+    const empty = await applyDialog.locator('.rb-error-msg').allTextContents();
+    check(empty.join(' | ') === `Enter your full name. | ${PHONE_ERROR} | Enter your licence number. | Enter your city or base.`, `an empty application flags all four fields (${empty.join(' | ')})`);
     await beta.fill('#rb-full-name', 'Voiku Zavadschi');
     await beta.fill('#apply-phone', '987087132');
     await beta.fill('#rb-driving-licence-number', 'VNS8893');
     await beta.fill('#rb-your-city-or-base', 'Mohali');
     await beta.getByRole('button', { name: 'Send Application' }).click();
-    check(await applyDialog.getByText(PHONE_ERROR).count() === 1 && await applyDialog.locator('.rb-error-msg').count() === 0, 'Buddy application: a number a digit short is flagged under the field');
+    check((await applyDialog.locator('.rb-error-msg').allTextContents()).join() === PHONE_ERROR, 'Buddy application: a number a digit short is flagged under the field');
     await beta.fill('#apply-phone', '9870871324');
     await beta.getByRole('button', { name: 'Send Application' }).click();
     check(!!(await beta.waitForSelector('#apply-code', { timeout: 10000 }).catch(() => null)) && await applyDialog.getByText('Code sent to +91 XXXXX XX324.').count() === 1,
       'Buddy application: a code goes to the number');
-    await beta.screenshot({ path: path.join(SHOTS, 'beta-apply-code.png') });
+    await beta.screenshot({ path: path.join(SHOTS, 'contact-apply-code.png') });
     await enterCode(beta, applyDialog, '#apply-code', '+919870871324');
     check(await beta.waitForSelector('text=Application received. We’ll contact you when onboarding opens.', { timeout: 10000 }).then(() => true).catch(() => false), 'Buddy application: received with the code');
-    await beta.screenshot({ path: path.join(SHOTS, 'beta-apply-sent.png') });
+    await beta.screenshot({ path: path.join(SHOTS, 'contact-apply-sent.png') });
     const bRow = (await download(dev, 'buddies')).at(-1) || [];
     check(bRow.slice(2, 7).join('; ') === 'Voiku Zavadschi; +919870871324; VNS8893; Mohali; Yes', `Buddy application: row saved, phone verified (${bRow.slice(2, 7).join('; ')})`);
     await beta.getByRole('button', { name: 'Done' }).click();
-    check(new URL(beta.url()).hash === '', 'closing the form leaves a plain /beta/ URL');
+    check(await beta.getByRole('dialog').count() === 0 && new URL(beta.url()).hash === '', 'closing the form leaves a plain /contact/ URL');
 
-    // A driver agency, through the same form.
-    await beta.goto(`${ORIGIN}/beta/#apply`, { waitUntil: 'networkidle' });
+    // A driver agency, through the page's own "Apply to be a Buddy" button.
+    await beta.locator('.rb-buddyband').getByRole('button', { name: /Apply to be a Buddy/ }).click();
     await beta.getByRole('radio', { name: /Driver agency/ }).click();
     check(await beta.waitForSelector('#rb-agency-name', { timeout: 5000 }).then(() => true).catch(() => false) && !(await beta.$('#rb-driving-licence-number')), 'choosing "Driver agency" swaps in the agency fields');
     await beta.fill('#rb-agency-name', 'Tricity Drivers');
@@ -586,17 +652,19 @@ async function main() {
     const aRow = (await download(dev, 'agencies')).at(-1) || [];
     check(aRow.slice(2, 10).join('; ') === 'Tricity Drivers; Gurpreet Kaur; +919811122233; Panchkula; 6–20; ops@tricitydrivers.in; 03ABCDE1234F1Z5; Yes', `agency application: row saved in agencies.csv, phone verified (${aRow.slice(2, 10).join('; ')})`);
     await beta.getByRole('button', { name: 'Done' }).click();
-
-    // Every Estimate CTA still leads to /estimate/.
-    await beta.getByRole('button', { name: 'Get an Estimate' }).first().click();
-    await beta.waitForURL('**/estimate/', { timeout: 15000 }).then(() => check(true, '/beta "Get an Estimate" navigates to /estimate/')).catch(() => check(false, '/beta "Get an Estimate" navigates to /estimate/'));
+    // The footer's "Become a Buddy" opens the form in place.
+    await beta.locator('footer').getByRole('link', { name: 'Become a Buddy' }).click();
+    check(await beta.getByRole('dialog').waitFor({ timeout: 5000 }).then(() => true).catch(() => false) && new URL(beta.url()).pathname === '/contact/', 'the footer\'s "Become a Buddy" opens the form in place');
+    await beta.keyboard.press('Escape');
     await beta.close();
 
-    // /estimate/ wears the main site's header: same parts in the same places, at
-    // desktop and phone widths, open menu included; only the current page differs.
+    // The standalone pages wear the main site's header: same parts in the same
+    // places as /beta/'s, at desktop and phone widths, open menu included; only
+    // the current page differs.
+    const STANDALONE = ['/estimate/', '/about/', '/contact/'];
     for (const width of [1280, 390]) {
       const pages = {};
-      for (const url of ['/beta/', '/estimate/']) {
+      for (const url of ['/beta/', ...STANDALONE]) {
         const p = await ctx.newPage();
         await p.setViewportSize({ width, height: 900 });
         await p.goto(`${ORIGIN}${url}`, { waitUntil: 'networkidle' });
@@ -604,14 +672,20 @@ async function main() {
         await p.evaluate(() => document.fonts.ready);
         pages[url] = { p, geo: await p.evaluate(headerGeometry) };
       }
-      const [b, e] = [pages['/beta/'].geo, pages['/estimate/'].geo];
-      const diff = Object.keys(b).filter((k) => k !== 'current' && JSON.stringify(b[k]) !== JSON.stringify(e[k]));
-      check(!diff.length, `at ${width}px the /estimate/ header matches /beta/'s${diff.length ? ` — differs in ${diff.map((k) => `${k}: ${JSON.stringify(b[k])} vs ${JSON.stringify(e[k])}`).join('; ')}` : ''}`);
+      const b = pages['/beta/'].geo;
+      for (const url of STANDALONE) {
+        const e = pages[url].geo;
+        const diff = Object.keys(b).filter((k) => k !== 'current' && JSON.stringify(b[k]) !== JSON.stringify(e[k]));
+        check(!diff.length, `at ${width}px the ${url} header matches /beta/'s${diff.length ? ` — differs in ${diff.map((k) => `${k}: ${JSON.stringify(b[k])} vs ${JSON.stringify(e[k])}`).join('; ')}` : ''}`);
+      }
       const est = pages['/estimate/'].p;
       if (width === 1280) {
-        check(b.current === 'Home' && e.current === null, `…Home underlined on /beta/, nothing on /estimate/ (${b.current}, ${e.current})`);
-        const hrefs = await est.$$eval('header nav a', (as) => as.map((a) => `${a.textContent.trim()}=${a.getAttribute('href')}`).join(' '));
-        check(hrefs === 'Home=/beta/ About=/beta/#about Contact=/beta/#contact', `header links lead to the main site, no "Estimate Fare" or How It Works (${hrefs})`);
+        const current = ['/beta/', ...STANDALONE].map((u) => pages[u].geo.current);
+        check(JSON.stringify(current) === JSON.stringify(['Home', null, 'About', 'Contact']), `…the page shown is underlined: Home, nothing on /estimate/, About, Contact (${current.join(', ')})`);
+        for (const url of STANDALONE) {
+          const hrefs = await pages[url].p.$$eval('header nav a', (as) => as.map((a) => `${a.textContent.trim()}=${a.getAttribute('href')}`).join(' '));
+          check(hrefs === 'Home=/beta/ About=/about/ Contact=/contact/', `${url}: header links lead to the main site, no "Estimate Fare" or How It Works (${hrefs})`);
+        }
         await est.screenshot({ path: path.join(SHOTS, 'estimate-header.png'), clip: { x: 0, y: 0, width, height: 90 } });
       } else {
         for (const { p } of Object.values(pages)) {
@@ -619,17 +693,33 @@ async function main() {
           // The menu fades up over 250ms; measure where it settles.
           await p.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'), null, { timeout: 5000 }).catch(() => {});
         }
-        const [bm, em] = [await pages['/beta/'].p.evaluate(menuGeometry), await est.evaluate(menuGeometry)];
-        check(!!em && JSON.stringify(bm) === JSON.stringify(em), `the phone menu matches /beta/'s (${(em || []).map((x) => x.split('@')[0]).join(', ')})`);
+        const bm = await pages['/beta/'].p.evaluate(menuGeometry);
+        for (const url of STANDALONE) {
+          const em = await pages[url].p.evaluate(menuGeometry);
+          check(!!em && JSON.stringify(bm) === JSON.stringify(em), `${url}: the phone menu matches /beta/'s (${(em || []).map((x) => x.split('@')[0]).join(', ')})`);
+        }
         await est.screenshot({ path: path.join(SHOTS, 'estimate-menu.png') });
         await est.keyboard.press('Escape');
         check(!(await est.evaluate(menuGeometry)), 'Escape closes it');
         await est.locator('header').getByRole('button', { name: 'Menu' }).click();
         await est.locator('.rb-menu').getByRole('link', { name: 'About' }).click();
-        await est.waitForURL('**/beta/#about', { timeout: 15000 }).catch(() => {});
-        check(est.url().endsWith('/beta/#about') && !!(await est.waitForSelector('#about-hero', { timeout: 30000 }).catch(() => null)), 'its About link opens /beta/#about');
+        await est.waitForURL('**/about/', { timeout: 15000 }).catch(() => {});
+        check(new URL(est.url()).pathname === '/about/' && !!(await est.waitForSelector('.rb-hero h1', { timeout: 30000 }).catch(() => null)), 'its About link opens /about/');
+        await pages['/about/'].p.screenshot({ path: path.join(SHOTS, 'about-menu.png') });
       }
       for (const { p } of Object.values(pages)) await p.close();
+    }
+
+    // Phone width: the two pages as a visitor on a phone sees them.
+    for (const url of ['/about/', '/contact/']) {
+      const m = await ctx.newPage();
+      await m.setViewportSize({ width: 390, height: 844 });
+      await m.goto(`${ORIGIN}${url}`, { waitUntil: 'networkidle' });
+      await m.evaluate(() => document.fonts.ready);
+      const wide = await m.evaluate(() => document.documentElement.scrollWidth);
+      check(wide <= 390, `${url} fits a 390px phone without sideways scrolling (${wide}px)`);
+      await m.screenshot({ path: path.join(SHOTS, `${url.replaceAll('/', '')}-mobile.png`), fullPage: true });
+      await m.close();
     }
 
     // Analytics: this whole run, as /admin counts it. Pages send beacons as
@@ -644,7 +734,7 @@ async function main() {
       const text = (await a.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ');
       check(/Visitors 1 /.test(text), `the run counts as one visitor (${text.match(/Visitors [^A-Z]*/)?.[0]})`);
       check(new RegExp(`Fares shown ${faresShown} `).test(text), `every fare shown is counted (${faresShown}; ${text.match(/Fares shown [^A-Z]*/)?.[0]})`);
-      check(/Waitlist signups 3 /.test(text) && /Buddy applications 1 /.test(text) && /Agency applications 1 /.test(text), 'signups and applications, counted from the lists (a vote alone is not a signup)');
+      check(/Waitlist signups 4 /.test(text) && /Buddy applications 1 /.test(text) && /Agency applications 1 /.test(text), 'signups and applications, counted from the lists (a vote alone is not a signup)');
       check(/👍 The fare works 0 👎 It doesn’t 1/.test(text), `the fare feedback (${text.match(/👍 The fare works.{0,30}/)?.[0]})`);
       check(/Saw a fare \d+% of the step before 1 Joined the waitlist there \d+% of the step before 1 /.test(text), 'the estimator funnel reaches the waitlist');
       check(/Opened the application 1 Sent it 100% of the step before 1 /.test(text), 'Buddy recruitment: opened from the shared #apply link, then sent');

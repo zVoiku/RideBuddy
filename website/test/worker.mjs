@@ -256,7 +256,7 @@ async function endpoints() {
   const dev = await startDev({ port: 8787, password: PASSWORD, vars: { RB_TEST: '1', OTP_OFF: '1' } });
   const B = dev.base;
   try {
-    for (const [p, want] of [['/', 200], ['/beta/', 200], ['/estimate/', 200], ['/no-such-page', 404]]) {
+    for (const [p, want] of [['/', 200], ['/beta/', 200], ['/estimate/', 200], ['/about/', 200], ['/contact/', 200], ['/sitemap.xml', 200], ['/no-such-page', 404]]) {
       same((await raw(B, { path: p })).status, want, `static site still served: ${p}`);
     }
 
@@ -406,9 +406,9 @@ async function analytics() {
     ], { ip: '49.36.1.1', now: YESTERDAY })).status, 204, 'a beacon is taken, answered with 204');
     // Today: B by a tagged WhatsApp link, mistypes a number on Contact, then joins.
     await beacon([
-      { n: 'pageview', p: '/beta/', f: 1, u: { source: 'whatsapp', medium: 'group', campaign: 'launch' } }, { n: 'pageview', p: '/beta/#contact' },
-      { n: 'phone_invalid', p: '/beta/#contact', d: { form: 'contact' } }, { n: 'waitlist_joined', p: '/beta/#contact', d: { source: 'contact' } },
-      { n: 'click', p: '/beta/#contact', w: 'header', l: '<script>alert(1)</script>' }, { n: 'perf', p: '/beta/', d: { lcp: 1800, net: '4g' } },
+      { n: 'pageview', p: '/beta/', f: 1, u: { source: 'whatsapp', medium: 'group', campaign: 'launch' } }, { n: 'pageview', p: '/contact/' },
+      { n: 'phone_invalid', p: '/contact/', d: { form: 'contact' } }, { n: 'waitlist_joined', p: '/contact/', d: { source: 'contact' } },
+      { n: 'click', p: '/contact/', w: 'header', l: '<script>alert(1)</script>' }, { n: 'perf', p: '/beta/', d: { lcp: 1800, net: '4g' } },
     ], { ip: '49.36.2.2' });
     // C: a browser that sends neither Origin nor Sec-Fetch-Site is still taken.
     same((await raw(B, { method: 'POST', path: '/api/e', body: JSON.stringify({ e: [{ n: 'pageview', p: '/', f: 1 }] }), headers: { 'User-Agent': UA, 'CF-Connecting-IP': '49.36.3.3', 'X-RB-Now': TODAY } })).status, 204, 'a beacon without Origin is taken');
@@ -447,8 +447,8 @@ async function analytics() {
     check(visible((await admin(B, '/admin', { headers: { Cookie: 'rb_exclude=1', 'X-RB-Now': TODAY } })).text).includes('This browser is not counted'), '…and the dashboard says so');
     check(/Max-Age=0/.test((await admin(B, '/admin/exclude?on=0', at(TODAY))).headers['set-cookie']?.[0] || ''), '"Count it again" clears it');
 
-    const made = await admin(B, `/admin?days=7&lm_page=${encodeURIComponent('/beta/#apply')}&lm_source=WhatsApp+Group&lm_medium=status&lm_campaign=Drivers+Oct!`, at(TODAY));
-    const want = `${B}/beta/?utm_source=whatsapp-group&utm_medium=status&utm_campaign=drivers-oct#apply`;
+    const made = await admin(B, `/admin?days=7&lm_page=${encodeURIComponent('/contact/#apply')}&lm_source=WhatsApp+Group&lm_medium=status&lm_campaign=Drivers+Oct!`, at(TODAY));
+    const want = `${B}/contact/?utm_source=whatsapp-group&utm_medium=status&utm_campaign=drivers-oct#apply`;
     check(made.text.includes(`value="${want.replaceAll('&', '&#38;')}"`), `the campaign link maker: ${want}`);
 
     // Totals outlive the detail: a day from 400 days ago is summed, then its beacons go.
