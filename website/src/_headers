@@ -8,6 +8,17 @@
 /estimate/*
   Cache-Control: public, max-age=300
 
+# About and Contact are real pages too, and /shared/ holds what the three share
+# (stylesheet, script, images): the same short cache, so a change lands together.
+/about/*
+  Cache-Control: public, max-age=300
+
+/contact/*
+  Cache-Control: public, max-age=300
+
+/shared/*
+  Cache-Control: public, max-age=300
+
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin

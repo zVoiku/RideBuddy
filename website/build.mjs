@@ -3,6 +3,10 @@
  *
  *   dist/index.html      holding page (from src/)
  *   dist/estimate/       the fare estimator: React page precompiled with esbuild
+ *   dist/about/          About and Contact: static pages (src/about, src/contact),
+ *   dist/contact/          with the closing band and footer filled in from src/shared
+ *   dist/shared/         what those three pages share: site.css, pages.js (the About
+ *                        and Contact pages' header, pop-ups and forms), img/
  *   dist/beta/           the design-canvas artboard from ../Webpage
  *   dist/_ds/            the design system (tokens + component bundle), shared
  *   dist/vendor/         React / ReactDOM, shared
@@ -20,10 +24,11 @@
  *      references rewritten. Most of our traffic is Indian mobile.
  *   4. The artboard's own estimator is superseded by /estimate/. Every CTA that
  *      opened it now navigates there, so there is one estimator, not two.
- *   5. Its pages get real URLs (/beta/#contact, /beta/#apply), and its two
- *      forms — the Contact-page waitlist and "Apply to be a Buddy" — save
- *      through the site's Worker (website/worker) instead of doing nothing and
- *      opening the mail app respectively.
+ *   5. Its About and Contact pages, and its "Apply to be a Buddy" form, are
+ *      superseded by /about/ and /contact/ (/contact/#apply): their links lead
+ *      there, old /beta/#about, #contact and #apply links are sent on, and
+ *      what remains — Home and its "Join the Waitlist" pop-up — saves through
+ *      the site's Worker (website/worker).
  *
  * 4 and 5 are text patches, listed in artboard-patches.mjs.
  *
@@ -31,8 +36,8 @@
  * reads — compiled into /estimate/ and into the artboard's rate-config.js, so
  * a rate changes in one place for every platform.
  *
- * Every page — holding page, estimator, artboard — also gets the site's own
- * analytics, src/site.js, served as /site.js.
+ * Every page — holding page, estimator, About, Contact, artboard — also gets
+ * the site's own analytics, src/site.js, served as /site.js.
  *
  * The Google Maps browser key comes from GOOGLE_MAPS_BROWSER_KEY — a
  * git-ignored website/.env locally, a build variable on Cloudflare.
@@ -51,6 +56,14 @@ const SRC = path.join(HERE, 'src');
 const CANVAS = path.join(HERE, '..', 'Webpage');
 const OUT = path.join(HERE, 'dist');
 const BETA = path.join(OUT, 'beta');
+
+// Where Home lives — the artboard, until it moves to the root. The standalone
+// pages' logo, header and footer link here (__HOME__).
+const HOME = '/beta/';
+// The static pages built from src/<name>/index.html, beside the estimator.
+const PAGES = ['about', 'contact'];
+// Source folders that are not copied as they are: each is built below.
+const BUILT = ['estimate', 'shared', ...PAGES];
 
 // `exports` maps stop these packages resolving deep subpaths directly, so
 // locate each package root via its package.json and join from there.
@@ -82,6 +95,20 @@ function withSiteScript(html, what) {
   const out = html.replace(/<\/head>/i, `${SITE_SCRIPT}\n</head>`);
   if (out === html) throw new Error(`could not add /site.js to ${what}: no </head>`);
   return out;
+}
+
+/**
+ * A standalone page's HTML as served: the design system's folder and Home's
+ * path filled in, each <!-- partial:name --> replaced by src/shared/name.html
+ * (the closing band, the footer), and the analytics added.
+ */
+async function standalone(html, what, dsDir) {
+  let out = html.replaceAll('__DS_DIR__', `/_ds/${dsDir}`);
+  for (const [marker, name] of [...out.matchAll(/<!-- partial:([a-z-]+) -->/g)]) {
+    const part = (await readFile(path.join(SRC, 'shared', `${name}.html`), 'utf8')).trimEnd();
+    out = out.replace(marker, () => part);
+  }
+  return withSiteScript(out.replaceAll('__HOME__', HOME), what);
 }
 
 /** website/.env — KEY=VALUE lines. The process environment wins. */
@@ -131,8 +158,9 @@ async function main() {
   await rm(OUT, { recursive: true, force: true });
   await mkdir(BETA, { recursive: true });
 
-  // 1. Holding page, _headers, robots.txt, site.js.
-  await cp(SRC, OUT, { recursive: true, filter: (s) => !s.includes(`${path.sep}estimate`) });
+  // 1. Holding page, _headers, robots.txt, sitemap.xml, site.js.
+  const built = BUILT.map((d) => path.join(SRC, d));
+  await cp(SRC, OUT, { recursive: true, filter: (s) => !built.some((d) => s === d || s.startsWith(d + path.sep)) });
   const holding = path.join(OUT, 'index.html');
   await writeFile(holding, withSiteScript(await readFile(holding, 'utf8'), 'the holding page'));
   const site = await transform(await readFile(path.join(SRC, 'site.js'), 'utf8'), { minify: true, target: 'es2019', legalComments: 'none' });
@@ -147,20 +175,41 @@ async function main() {
   if (!dsDir) throw new Error('no design system folder in ../Webpage/_ds');
 
   // 3. The estimator: HTML shell + esbuild bundle with the key compiled in.
-  await mkdir(path.join(OUT, 'estimate'), { recursive: true });
-  const shell = withSiteScript(
-    (await readFile(path.join(SRC, 'estimate', 'index.html'), 'utf8')).replaceAll('__DS_DIR__', `/_ds/${dsDir}`),
-    'the estimator',
-  );
-  await writeFile(path.join(OUT, 'estimate', 'index.html'), shell);
-  await esbuild({
-    entryPoints: [path.join(SRC, 'estimate', 'app.jsx')],
-    outfile: path.join(OUT, 'estimate', 'app.js'),
+  const jsx = {
     bundle: true, minify: true, format: 'iife', target: ['es2020'],
     jsx: 'transform', jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment',
-    define: { __GOOGLE_MAPS_BROWSER_KEY__: JSON.stringify(key) },
+    define: { __HOME__: JSON.stringify(HOME) },
     legalComments: 'none', logLevel: 'warning',
+  };
+  await mkdir(path.join(OUT, 'estimate'), { recursive: true });
+  const shell = await standalone(await readFile(path.join(SRC, 'estimate', 'index.html'), 'utf8'), 'the estimator', dsDir);
+  await writeFile(path.join(OUT, 'estimate', 'index.html'), shell);
+  await esbuild({
+    ...jsx,
+    entryPoints: [path.join(SRC, 'estimate', 'app.jsx')],
+    outfile: path.join(OUT, 'estimate', 'app.js'),
+    define: { ...jsx.define, __GOOGLE_MAPS_BROWSER_KEY__: JSON.stringify(key) },
   });
+
+  // 3b. About and Contact: static pages, and the script for their header,
+  //     pop-ups and forms; the stylesheet all three pages share; the About
+  //     hero in two sizes (most of our traffic is Indian mobile).
+  for (const page of PAGES) {
+    await mkdir(path.join(OUT, page), { recursive: true });
+    const html = await standalone(await readFile(path.join(SRC, page, 'index.html'), 'utf8'), `the ${page} page`, dsDir);
+    if (/__[A-Z_]+__|<!-- partial:/.test(html)) throw new Error(`the ${page} page has a placeholder build.mjs does not fill`);
+    await writeFile(path.join(OUT, page, 'index.html'), html);
+  }
+  const SHARED = path.join(OUT, 'shared');
+  await mkdir(path.join(SHARED, 'img'), { recursive: true });
+  await esbuild({ ...jsx, entryPoints: [path.join(SRC, 'shared', 'pages.jsx')], outfile: path.join(SHARED, 'pages.js') });
+  const css = await transform(await readFile(path.join(SRC, 'shared', 'site.css'), 'utf8'), { loader: 'css', minify: true, legalComments: 'none' });
+  await writeFile(path.join(SHARED, 'site.css'), css.code);
+  for (const width of [800, 1360]) {
+    await sharp(path.join(CANVAS, 'assets', 'family-departure.png')).resize({ width, withoutEnlargement: true })
+      .webp({ quality: 80 }).toFile(path.join(SHARED, 'img', `family-departure-${width}.webp`));
+  }
+  await cp(path.join(CANVAS, 'assets', 'ridebuddy-logomark-parchment.svg'), path.join(SHARED, 'img', 'logomark-parchment.svg'));
 
   // 4. Carry the artboard's dependencies across, and give it the shared rates
   //    and engine in place of the canvas's own copy.

@@ -4,7 +4,9 @@
 |---|---|---|
 | `/` | Holding page — "RideBuddy — Coming soon" | `src/index.html` |
 | `/estimate/` | The fare estimator — the customer app's estimate flow, on the web | `src/estimate/` |
-| `/beta/` | The design-canvas artboard, shared by link (`noindex`) | `../Webpage`, assembled by `build.mjs` |
+| `/about/` | About — the Phase 1 design's, as a page of its own | `src/about/`, `src/shared/` |
+| `/contact/` | Contact — write to us, the waitlist card, and Apply to be a Buddy (`/contact/#apply` opens it) | `src/contact/`, `src/shared/` |
+| `/beta/` | The design-canvas artboard — Home until it moves to `/` — shared by link (`noindex`) | `../Webpage`, assembled by `build.mjs` |
 | `/api/waitlist`, `/api/feedback`, `/api/buddy` | Where the site's forms and the fare 👍/👎 save — the phone forms only after a one-time code (2Factor) | `worker/forms.js`, `worker/otp.js` → D1 |
 | `/site.js`, `/api/e` | The site's own analytics: the script on every page, and where it reports | `src/site.js`, `worker/analytics.js` → D1 |
 | `/admin` | The three lists as CSV downloads and the analytics dashboard, behind a password | `worker/admin.js`, `worker/dashboard.js` |
@@ -22,14 +24,14 @@ result in `frontend/app/booking/summary.tsx`.
 
 - **Header** — the main site's header, element for element: logo, Home ·
   About · Contact, "Get an Estimate", and the full-screen menu
-  below 1120px (`SiteHeader` in `src/estimate/app.jsx`, styles in
-  `src/estimate/index.html`, CTA from the same design-system `Button`). There
-  is no "Estimate Fare" link — "Get an Estimate" goes to the same page — so
-  nothing is underlined here; on this page "Get an Estimate" brings back the
-  form, trip kept, instead of reloading. The links point at `/beta/` through
-  one constant, `SITE` — change it when the site moves to the root.
-  `verify.mjs` measures this header and `/beta/`'s (and both phone menus) and
-  fails if they drift apart.
+  below 1120px (`SiteHeader` in `src/shared/header.jsx`, shared with About and
+  Contact; styles in `src/shared/site.css`, CTA from the same design-system
+  `Button`). There is no "Estimate Fare" link — "Get an Estimate" goes to the
+  same page — so nothing is underlined here; on this page "Get an Estimate"
+  brings back the form, trip kept, instead of reloading. Home is `/beta/`
+  through one constant, `HOME` in `build.mjs` — change it when Home moves to
+  the root. `verify.mjs` measures this header and `/beta/`'s (and both phone
+  menus) and fails if they drift apart.
 - **Form** — trip type (Round Trip / One Way), pickup and destination from
   Google Places, pickup date and time, return date and the stay question for
   round trips. No Hourly on the website (the app still offers it); an old
@@ -117,6 +119,44 @@ API is optional on the key.
 bundle, with plain fallbacks so a bundle hiccup degrades to unstyled inputs
 rather than a blank page.
 
+## About and Contact
+
+`/about/` and `/contact/` are the Phase 1 design's pages, each a page of its
+own like the estimator. The content is plain HTML (`src/about/index.html`,
+`src/contact/index.html`), so it shows before any script runs and search
+engines read it; `build.mjs` fills in the closing band and the footer, which
+both pages share (`src/shared/closer.html`, `src/shared/footer.html`), and
+adds `/site.js`. One small script, `src/shared/pages.jsx` (built to
+`/shared/pages.js`), adds what needs one: the site header, the forms and the
+pop-ups. The stylesheet the three pages share is `src/shared/site.css`.
+
+- **About** — "Your own car, driven for you." over the family photo (WebP at
+  800 and 1360 px wide, so a phone loads the small one); what RideBuddy is;
+  "What you can do today." — **Get Estimate** goes to `/estimate/`, **Join the
+  Waitlist** opens the site's waitlist pop-up; "When booking opens." with the
+  four standards (Verified, Trained, Rated, Priced upfront); and "Questions,
+  answered.", eight questions with one answer open at a time (`<details>`
+  sharing a name, so it works without a script).
+- **Contact** — "Write to us." and the email; the waitlist card as it was on
+  `/beta/#contact`, taking the number right there (fixed `+91`, the consent
+  tick, then the one-time code); "Become a Buddy" with **Apply to be a
+  Buddy**, which opens the Buddy application pop-up. `/contact/#apply` opens
+  that pop-up straight away — the link to share with drivers — and closing it
+  leaves a plain `/contact/`.
+- **Both** end with the closing band ("Plan the trip now. Book it soon." —
+  Get an Estimate, Join the Waitlist) and the footer, whose "Become a Buddy"
+  opens the application in place. Any `data-rb-waitlist` or `data-rb-apply`
+  element opens the pop-up it names. Terms and Privacy are named in the
+  footer, as in the design, but aren't links: there are no such pages yet.
+- **Old links** — `/beta/#about`, `/beta/#contact` and `/beta/#apply` go on
+  to `/about/`, `/contact/` and `/contact/#apply` before anything else loads.
+
+The forms are the ones the site already had, now shared React components:
+the pop-up and the Contact card in `src/shared/waitlist.jsx`, the Buddy
+application in `src/shared/apply.jsx`, and the phone-form parts and the code
+step every phone form goes through in `src/shared/ui.jsx` (the estimator's
+waitlist uses them too).
+
 ## Forms, the lists and `/admin`
 
 The site's forms email nothing: they post JSON to the Worker
@@ -127,11 +167,11 @@ that carries a phone number confirms it with a one-time code first (below).
 
 | Form | Where | Endpoint | D1 table |
 |---|---|---|---|
-| Join the Waitlist pop-up | `/beta/`'s hero and the closing band on every page | `POST /api/waitlist` (`source: home \| about \| contact`, the page it was opened on; `how` from pages cached before How It Works went) | `waitlist` |
-| Join the waitlist | `/beta/#contact` | `POST /api/waitlist` (`source: contact`) | `waitlist` |
+| Join the Waitlist pop-up | `/beta/`'s hero, About's "What you can do today.", and the closing band on every page | `POST /api/waitlist` (`source: home \| about \| contact`, the page it was opened on; `how` from pages cached before How It Works went) | `waitlist` |
+| Join the waitlist | the `/contact/` card | `POST /api/waitlist` (`source: contact`) | `waitlist` |
 | Join the waitlist | under an `/estimate/` result | `POST /api/waitlist` (`source: estimate`, the trip and its `estimate_id`) | `waitlist` |
 | 👍/👎 on a fare, and a 👎's comment | an `/estimate/` result | `POST /api/feedback` (`estimate_id`, `vote: up \| down`, optional `comment`, the trip) | `waitlist` |
-| Apply to be a Buddy — Individual Buddy | `/beta/#contact`, the footer's "Become a Buddy", or `/beta/#apply` | `POST /api/buddy` (`type: individual`) | `buddies` |
+| Apply to be a Buddy — Individual Buddy | `/contact/`'s "Apply to be a Buddy", the footer's "Become a Buddy", or a `/contact/#apply` link | `POST /api/buddy` (`type: individual`) | `buddies` |
 | Apply to be a Buddy — Driver agency | the same form, "Driver agency" chosen | `POST /api/buddy` (`type: agency`) | `agencies` |
 
 - **Phone numbers** (`normalizePhone` in `worker/lib.js`): Indian mobiles only.
@@ -264,7 +304,7 @@ posts them to `POST /api/e`, and `/admin` shows the numbers.
 
 | Event | When | Details kept |
 |---|---|---|
-| `pageview` | every page, and each `/beta/#…` page | the page; on arrival, the referring site and any `utm_*` |
+| `pageview` | every page (the path, with a `#hash` such as `/contact/#apply`) | the page; on arrival, the referring site and any `utm_*` |
 | `click` | any link or button | its own label, the page, the part of the page (header, footer, the artboard's section, the estimate form…), a link's target page |
 | named events | the pages' existing `dataLayer` pushes | e.g. `estimate_completed` with trip type, pickup area and city, destination city, distance, fare, days ahead, weekday, hour |
 | `perf` | when a page is left | largest-paint time, load time, connection type |
@@ -280,7 +320,7 @@ its text), `waitlist_opened` (the pop-up, and the page it was opened on),
 `otp_verified`, `otp_failed` (`form`, and `kind`: wrong, expired, too_many,
 send_failed, resend_wait, number_limit, network_limit, daily_cap — shown under
 Problems; never the code),
-`buddy_application_opened` (including from a `/beta/#apply` link),
+`buddy_application_opened` (`via: link` when a `/contact/#apply` link opened it),
 `buddy_application_submitted` (`type: individual | agency`).
 
 **Never recorded:** anything typed into a form — phone numbers, names,
@@ -369,38 +409,32 @@ canvas into `Webpage/` and rebuild.
 5. **Every "Estimate" CTA navigates to `/estimate/`** — nav link, hero button,
    the Round/One-way cards, the closing band. The artboard's own estimator is
    superseded; there is one estimator, not two.
-6. **Real URLs.** Its pages switch in place, so they get hashes: `#about`,
-   `#contact` (Home is plain `/beta/`), with Back and Forward working and real
-   `href`s on the links. `/beta/#apply` opens the Buddy application — one link
-   to share with drivers.
-7. **The forms save, as in the Phase 1 design.** The Contact-page waitlist
-   (a fixed `+91` field and the consent tick) posts to `/api/waitlist`. Apply
-   to be a Buddy is the Phase 1 pop-up — "Individual Buddy" or "Driver agency"
-   and their fields — without its consent tick: "Send Application" posts to
-   `/api/buddy` and confirms "Application received. We’ll contact you when
-   onboarding opens." Each of the three /beta phone forms then shows the
-   design's code step (`codeStep()` in the patches) and saves only after the
-   code.
-8. **Booking isn't open yet.** The home hero's "Book a Buddy · Coming soon"
+6. **About, Contact and the Buddy form are pages of their own** (`/about/`,
+   `/contact/`, `/contact/#apply` — see "About and Contact"). The header and
+   footer link there; old `/beta/#about`, `#contact` and `#apply` links go on
+   there from a line at the top of the page, before anything loads; and the
+   artboard's own About and Contact pages and its Buddy pop-up are cut, so
+   there is one of each. Home is plain `/beta/`.
+7. **Booking isn't open yet.** The home hero's "Book a Buddy · Coming soon"
    becomes the design's "Join the Waitlist", which opens a pop-up: the `+91`
-   field and the tick, then the code ("You're on the
-   waitlist. We'll message you once."). Every page ends with the design's
-   closing band, "Plan the trip now. Book it soon." — "Get an Estimate" and
-   "Join the Waitlist". The header and phone menu have no "Estimate Fare"
-   link, since "Get an Estimate" goes to the same page (the footer keeps its
-   links). Escape closes the pop-ups.
-9. **No How It Works page.** The page goes, with its FAQ, Home's "See the full
+   field and the tick, then the design's code step (`codeStep()` in the
+   patches), saving to `/api/waitlist` only after the code ("You're on the
+   waitlist. We'll message you once."). Home ends with the design's closing
+   band, "Plan the trip now. Book it soon." — "Get an Estimate" and "Join the
+   Waitlist". The header and phone menu have no "Estimate Fare" link, since
+   "Get an Estimate" goes to the same page (the footer keeps its links).
+   Escape closes the pop-up.
+8. **No How It Works page.** The page goes, with its FAQ, Home's "See the full
    journey" link and its links in the header, phone menu and footer; an old
    `/beta/#how-it-works` link opens Home. Home keeps its short three-step
    section ("How it works · Your car. Our Buddy. That's it.").
-10. **Buddies are "verified".** "Police-verified" becomes "verified" on Home
-   and About, and About's standards list says "Verification before the first
-   trip."
-11. **Analytics.** The forms report mistyped numbers, failed saves and codes
-   that didn't go through, and a Buddy form opened from a `/beta/#apply` link
-   counts as opened. `/site.js` is added to the page like every other.
+9. **Buddies are "verified".** "Police-verified" becomes "verified" on Home,
+   and the old About standards list the script still carries says
+   "Verification before the first trip."
+10. **Analytics.** The pop-up reports mistyped numbers, failed saves and codes
+   that didn't go through. `/site.js` is added to the page like every other.
 
-5–11 are text patches listed in `artboard-patches.mjs` (a `cut` patch removes
+5–10 are text patches listed in `artboard-patches.mjs` (a `cut` patch removes
 everything between two markers). Each must match the
 artboard an exact number of times (once, unless it says otherwise). A canvas
 re-export that changes one of those spots fails the build here, loudly,
@@ -457,17 +491,24 @@ Estimate disabled and its hint until the trip is complete, the trip-time and
 distance tiles, "Inclusive of all taxes", the §2.4 lines, and the
 disclaimers. Then the forms: a 👎 with a comment,
 then joining the waitlist under the same estimate (one row with the vote), the
-`/beta` Contact waitlist, the hero's Join the Waitlist pop-up, an individual
-Buddy application and a driver agency's from `/beta/#apply`, each refused once
-(a short number, no tick, a short GSTIN), then confirmed with the one-time
-code the stand-in 2Factor received (a wrong code refused, "Change number",
-the resend countdown, focus on the code field) and read back from the admin
-download, Phone verified; plus `/beta`'s URLs, Back, no How It Works (an old
-link opens Home), "verified" not "police-verified", the closing band and the
-CTA redirect. Last of all, a server without the 2Factor key: the pop-up says
-the code couldn't be sent, confirms nothing, and nothing is saved. The two headers are measured side by side at 1280px
-and 390px — every part's box, font and colour, and the open phone menu — and
-must match except for the current page. Last, `/admin` must count the run
+`/contact/` waitlist card, About's Join the Waitlist pop-up, the `/beta` hero's,
+an individual Buddy application from an old `/beta/#apply` link and a driver
+agency's from Contact's own button, each refused once (a short number, no
+tick, a short GSTIN), then confirmed with the one-time code the stand-in
+2Factor received (a wrong code refused, "Change number", the resend
+countdown, focus on the code field) and read back from the admin download,
+Phone verified, with the page each signup came from. About's sections, its
+FAQ (the first answer open, one at a time) and its links to `/estimate/`;
+Contact's email; old `/beta/#about`, `#contact` and `#apply` links landing
+on the new pages; `/beta`'s header and footer pointing there and its HTML
+carrying no About or Contact of its own; no How It Works (an old link opens
+Home), "verified" not "police-verified" anywhere, the closing band, the
+footer's "Become a Buddy", the CTA redirect, and both new pages fitting a
+390px phone. Last of all, a server without the 2Factor key: the pop-up says
+the code couldn't be sent, confirms nothing, and nothing is saved. The
+headers of `/estimate/`, `/about/` and `/contact/` are each measured against
+`/beta/`'s at 1280px and 390px — every part's box, font and colour, and the
+open phone menu — and must match except for the page underlined. Last, `/admin` must count the run
 exactly (one visitor, every fare shown, signups and both kinds of
 application, the 👎, the funnels, destinations, mistyped numbers per form,
 clicks, the wrong code under Problems), its chart must show a day on hover,
@@ -511,16 +552,22 @@ database, so test submissions from a preview land in the real lists.
 
 Validate config changes locally with `npx wrangler deploy --dry-run`.
 
+**Search engines.** `/`, `/estimate/`, `/about/` and `/contact/` are listed in
+`src/sitemap.xml`, which `src/robots.txt` points to; `/beta/` stays out
+(`noindex`, and disallowed in `robots.txt`).
+
 ### The two addresses
 
 The site's address is `ridebuddy.co.in`; `www.ridebuddy.co.in` sends visitors
 there. Both are set in Cloudflare's dashboard, not in `wrangler.jsonc` (which
 has no `routes`, so a deploy leaves them alone):
 
-1. **Custom domains** — Workers & Pages → ridebuddy → Settings → Domains &
-   Routes: `ridebuddy.co.in` and `www.ridebuddy.co.in`. Adding one creates its
+1. **Custom domains** — Workers & Pages → ridebuddy → Domains → **Add
+   Domain**: `ridebuddy.co.in` and `www.ridebuddy.co.in`. Adding one creates its
    DNS record and certificate; it fails if the name already has a DNS record,
-   so delete that record (DNS → Records) first.
+   so delete that record (DNS → Records) first. Use Add Domain, not Add Route:
+   a route (like the `*.ridebuddy.co.in/*` one there) only runs the Worker
+   for a name that already has a DNS record, and creates none.
 2. **The redirect** — the `ridebuddy.co.in` zone → Rules → Redirect Rules,
    template "Redirect from WWW to root": `http.host eq "www.ridebuddy.co.in"`
    → `concat("https://ridebuddy.co.in", http.request.uri.path)`, 301, query

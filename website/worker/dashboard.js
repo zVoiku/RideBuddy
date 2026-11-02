@@ -130,8 +130,11 @@ const card = (title, sub, body, { id = '', wide = false } = {}) => `
   </section>`;
 
 const pageName = (p) => ({
-  '/': 'Holding page (/)', '/beta/': 'Home (/beta/)', '/beta/#how-it-works': 'How It Works', '/beta/#about': 'About',
-  '/beta/#contact': 'Contact', '/beta/#apply': 'Apply to be a Buddy (link)', '/estimate/': 'Estimate',
+  '/': 'Holding page (/)', '/beta/': 'Home (/beta/)', '/estimate/': 'Estimate', '/about/': 'About', '/contact/': 'Contact',
+  '/contact/#apply': 'Apply to be a Buddy (link)',
+  // Before About, Contact and the Buddy form had pages of their own.
+  '/beta/#how-it-works': 'How It Works', '/beta/#about': 'About (on /beta/)', '/beta/#contact': 'Contact (on /beta/)',
+  '/beta/#apply': 'Apply to be a Buddy (/beta/ link)',
 }[p] || p);
 
 // ----- The page ---------------------------------------------------------------------------
@@ -142,7 +145,7 @@ const FARES = ['Under ₹1,000', '₹1,000–1,999', '₹2,000–4,999', '₹5,0
 const HOURS = ['Before 6 am', 'Morning, 6–12', 'Afternoon, 12–5 pm', 'Evening, 5–10 pm', 'Night, after 10 pm'];
 const WEEK = [...WEEKDAYS.slice(1), WEEKDAYS[0]];
 export const LINK_PAGES = [
-  ['/beta/', 'Home'], ['/estimate/', 'Estimate'], ['/beta/#apply', 'Apply to be a Buddy'], ['/beta/#contact', 'Contact'], ['/', 'Holding page'],
+  ['/beta/', 'Home'], ['/estimate/', 'Estimate'], ['/contact/#apply', 'Apply to be a Buddy'], ['/about/', 'About'], ['/contact/', 'Contact'], ['/', 'Holding page'],
 ];
 
 /**

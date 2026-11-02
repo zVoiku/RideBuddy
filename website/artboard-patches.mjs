@@ -13,15 +13,13 @@
 
 const ESTIMATE = [
   {
-    why: 'nav links: "Estimate Fare" leaves for /estimate/, the other pages get real URLs (/beta/#contact)',
+    why: 'nav links: the estimator, About and Contact are pages of their own (PAGE_URL); Home stays',
     from: String.raw`    return (e) => {
       if (e) e.preventDefault();
       this.setState({ page, menuOpen: false });`,
     to: String.raw`    return (e) => {
       if (e) e.preventDefault();
-      if (page === 'estimate') { window.location.href = '/estimate/'; return; }
-      const hash = PAGE_HASH[page] || '';
-      if (window.location.hash !== hash) history.pushState(null, '', hash || window.location.pathname + window.location.search);
+      if (PAGE_URL[page]) { window.location.href = PAGE_URL[page]; return; }
       this.setState({ page, menuOpen: false });`,
   },
   {
@@ -41,70 +39,53 @@ const ESTIMATE = [
   },
 ];
 
-// ----- Real URLs: /beta/, /beta/#about, #contact, #apply ----------------------------
+// ----- URLs: /beta/ is Home; the other pages have their own -------------------------
+
+/** Old links to the artboard's About, Contact and Buddy form, and where they live now. */
+const MOVED = "{ '#about': '/about/', '#contact': '/contact/', '#apply': '/contact/#apply' }";
 
 const URLS = [
   {
-    why: 'page <-> URL hash mapping',
+    why: 'old /beta/#about, #contact and #apply links go to /about/, /contact/ and /contact/#apply, before anything loads',
+    from: '<script src="./support.js"></script>',
+    to: `<script>(function () { var to = ${MOVED}[location.hash]; if (to) location.replace(to); })();</script>
+<script src="./support.js"></script>`,
+  },
+  {
+    why: 'the pages with URLs of their own',
     from: 'class Component extends DCLogic {',
-    to: String.raw`// Real, shareable URLs for the artboard's pages (website/artboard-patches.mjs).
-const PAGE_HASH = { home: '', about: '#about', contact: '#contact' };
-const pageFromHash = () => Object.keys(PAGE_HASH).find((p) => PAGE_HASH[p] && PAGE_HASH[p] === window.location.hash) || 'home';
+    to: String.raw`// The pages with URLs of their own (website/artboard-patches.mjs): the
+// estimator, About and Contact. Home is /beta/ itself.
+const PAGE_URL = { estimate: '/estimate/', about: '/about/', contact: '/contact/' };
 // The How It Works page is gone: an old link to it opens Home, at a plain URL.
 if (window.location.hash === '#how-it-works') history.replaceState(null, '', window.location.pathname + window.location.search);
 
 class Component extends DCLogic {`,
   },
   {
-    why: 'open on the page the URL names',
-    from: "      page: 'home',",
-    to: '      page: pageFromHash(),',
-  },
-  {
-    why: '/beta/#apply opens the Buddy application',
-    from: '      applyOpen: false,',
-    to: "      applyOpen: window.location.hash === '#apply',",
-  },
-  {
-    why: 'closing a form opened by /beta/#apply leaves a plain URL',
-    from: '  closeApply = () => this.setState({ applyOpen: false, applyErrors: {} });',
-    to: String.raw`  closeApply = () => {
-    if (window.location.hash === '#apply') history.replaceState(null, '', window.location.pathname + window.location.search);
-    this.setState({ applyOpen: false, applyErrors: {} });
-  };`,
-  },
-  {
-    why: 'Back / Forward move between pages',
+    why: 'an old link typed into the address bar goes on too; Escape closes the pop-up; the code step counts down',
     from: String.raw`  componentDidMount() {
     import('./rate-config.js').then((m) => this.setState({ cfg: m }));
   }`,
     to: String.raw`  componentDidMount() {
     import('./rate-config.js').then((m) => this.setState({ cfg: m }));
-    // Back, Forward and edited URLs move between pages as well.
-    window.addEventListener('popstate', () => {
-      if (window.location.hash === '#apply') { this.setState({ wlOpen: false }); this.openApply(); return; }
-      this.setState({ page: pageFromHash(), menuOpen: false, applyOpen: false, wlOpen: false });
-      window.scrollTo({ top: 0, behavior: 'auto' });
+    window.addEventListener('hashchange', () => {
+      const to = ${MOVED}[window.location.hash];
+      if (to) window.location.replace(to);
     });
-    // Escape closes either pop-up.
     window.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape') return;
-      if (this.state.applyOpen) this.closeApply();
-      if (this.state.wlOpen) this.closeWaitlist();
+      if (e.key === 'Escape' && this.state.wlOpen) this.closeWaitlist();
     });
-    // Opened straight from a shared /beta/#apply link: counts as opening the form.
-    if (this.state.applyOpen) this.track('buddy_application_opened', { via: 'link' });
-    // The code steps count down to "Resend OTP".
+    // The code step counts down to "Resend OTP".
     setInterval(() => {
-      const s = this.state;
-      if (s.wlStep === 'code' || s.contactStep === 'code' || s.applyStep === 'code') this.setState({ otpNow: Date.now() });
+      if (this.state.wlStep === 'code') this.setState({ otpNow: Date.now() });
     }, 1000);
   }`,
   },
   {
     why: 'nav links carry their URL',
     from: "      underline: page === id ? 'var(--color-green-500)' : 'transparent', go: this.nav(id),",
-    to: "      underline: page === id ? 'var(--color-green-500)' : 'transparent', go: this.nav(id),\n      href: id === 'estimate' ? '/estimate/' : PAGE_HASH[id] || window.location.pathname,",
+    to: "      underline: page === id ? 'var(--color-green-500)' : 'transparent', go: this.nav(id),\n      href: PAGE_URL[id] || window.location.pathname,",
   },
   {
     why: 'the logo carries its URL',
@@ -122,7 +103,7 @@ class Component extends DCLogic {`,
     to: "your Buddy brings you back.', go: this.presetTrip('one'), href: '/estimate/?type=one' },",
   },
   {
-    why: 'footer links carry their URLs (Terms and Privacy stay as they are); no How It Works',
+    why: 'footer links carry their URLs (Terms and Privacy stay as they are); no How It Works; "Become a Buddy" is /contact/#apply',
     from: String.raw`      footerCols: [
         { title: 'Pages', items: [
           { label: 'Home', go: this.nav('home') }, { label: 'Estimate Fare', go: this.nav('estimate') }, { label: 'How It Works', go: this.nav('how') },
@@ -142,7 +123,7 @@ class Component extends DCLogic {`,
     to: String.raw`      footerCols: [
         { title: 'Pages', items: [
           { label: 'Home', go: this.nav('home'), href: window.location.pathname }, { label: 'Estimate Fare', go: this.nav('estimate'), href: '/estimate/' },
-          { label: 'About', go: this.nav('about'), href: PAGE_HASH.about }, { label: 'Contact', go: this.nav('contact'), href: PAGE_HASH.contact },
+          { label: 'About', go: this.nav('about'), href: '/about/' }, { label: 'Contact', go: this.nav('contact'), href: '/contact/' },
         ] },
         { title: 'Services', items: [
           { label: 'Round trips', go: this.presetTrip('round'), href: '/estimate/?type=round' },
@@ -150,7 +131,7 @@ class Component extends DCLogic {`,
           { label: phase2 ? 'Get the app' : 'Estimate your trip', go: this.scrollToEstimator, href: '/estimate/' },
         ] },
         { title: 'More', items: [
-          { label: 'Become a Buddy', go: this.openApply, href: '#apply' },
+          { label: 'Become a Buddy', href: '/contact/#apply' },
           { label: 'Terms', go: (e) => { if (e) e.preventDefault(); }, href: '#' },
           { label: 'Privacy', go: (e) => { if (e) e.preventDefault(); }, href: '#' },
         ] },
@@ -159,7 +140,6 @@ class Component extends DCLogic {`,
   { why: 'logo link', from: '<a href="#" onClick="{{ goHome }}"', to: '<a href="{{ homeHref }}" onClick="{{ goHome }}"' },
   { why: 'header and mobile-menu links', from: '<a href="#" onClick="{{ l.go }}"', to: '<a href="{{ l.href }}" onClick="{{ l.go }}"', count: 2 },
   { why: '"Estimate this trip" links', from: '<a href="#" onClick="{{ s.go }}"', to: '<a href="{{ s.href }}" onClick="{{ s.go }}"' },
-  { why: 'About page "Get an Estimate" link', from: '<a href="#" onClick="{{ goEstimatorFromPage }}"', to: '<a href="/estimate/" onClick="{{ goEstimatorFromPage }}"' },
   { why: 'footer links', from: '<a href="#" onClick="{{ it.go }}"', to: '<a href="{{ it.href }}" onClick="{{ it.go }}"' },
 ];
 
@@ -181,7 +161,7 @@ const BOOKING = [
   },
 ];
 
-// ----- The forms save through the Worker (website/worker) ---------------------------
+// ----- The waitlist pop-up saves through the Worker (website/worker) ----------------
 
 // A field people never see and bots fill in; the Worker drops what arrives with it.
 const honeypot = (id) => `<input type="text" name="website" id="${id}" tabIndex="-1" autoComplete="off" aria-hidden="true" style="position:absolute;left:-10000px;width:1px;height:1px;opacity:0">`;
@@ -189,9 +169,9 @@ const honeypot = (id) => `<input type="text" name="website" id="${id}" tabIndex=
 /**
  * A phone form's code step (website/worker/otp.js), as in the Phase 1 design:
  * where the code went and "Change number", the 6-digit code, Verify Number,
- * and "Resend OTP" after a countdown. `p` is the form's state prefix (wl,
- * contact, apply), whose values codeValues() provides; `id` the code field's.
- * One field rather than six boxes, so a pasted or auto-filled code lands whole.
+ * and "Resend OTP" after a countdown. `p` is the form's state prefix (wl, the
+ * pop-up), whose values codeValues() provides; `id` the code field's. One
+ * field rather than six boxes, so a pasted or auto-filled code lands whole.
  */
 const codeStep = (p, id) => `<div style="display:flex;flex-direction:column;gap:16px">
               <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 12px">
@@ -244,7 +224,7 @@ const FORMS = [
     return el ? el.value : '';
   }
 
-  /** A one-time code went out: the form (state prefix p: wl, contact, apply) moves to its code step. */
+  /** A one-time code went out: the form (state prefix p: wl) moves to its code step. */
   codeSent(p, r, form, fieldId) {
     this.setState({ [p + 'Step']: 'code', [p + 'Code']: '', [p + 'CodeError']: '', [p + 'SentTo']: r.sentTo, [p + 'ResendAt']: Date.now() + r.resendIn * 1000, otpNow: Date.now() });
     this.track('otp_sent', { form });
@@ -283,371 +263,21 @@ const FORMS = [
   track(event, payload) {`,
   },
   {
-    why: 'Buddy application: POST /api/buddy instead of opening the mail app',
-    from: String.raw`  /**
-   * No backend in the prototype — the application is handed to the user's mail client,
-   * pre-addressed with the subject and body the ops team expects.
-   */
-  submitApply = () => {
-    const { applyName, applyPhone, applyLicence } = this.state;
-    const errors = {};
-    if (applyName.trim().length < 3) errors.name = 'Enter your full name.';
-    if (applyPhone.replace(/\D/g, '').length < 10) errors.phone = 'Enter a 10-digit mobile number.';
-    if (applyLicence.trim().length < 6) errors.licence = 'Enter your licence number.';
-    if (Object.keys(errors).length) { this.setState({ applyErrors: errors }); return; }
-
-    const body = [
-      'Name: ' + applyName.trim(),
-      'Phone Number: ' + applyPhone.trim(),
-      'Driving License Number: ' + applyLicence.trim(),
-    ].join('\r\n');
-    const href = 'mailto:support@ridebuddy.co.in'
-      + '?subject=' + encodeURIComponent('Buddy Application')
-      + '&body=' + encodeURIComponent(body);
-    window.location.href = href;
-    this.setState({ applyErrors: {}, applySent: true });
-    this.track('buddy_application_submitted');
-  };`,
-    to: String.raw`  /**
-   * Saved by the site's Worker (POST /api/buddy -> D1): an individual Buddy or a
-   * driver agency. The Worker normalises the number and has the final word on
-   * every field. With one-time codes on, its first answer is a code sent to the
-   * number, and the form asks for it before the application saves.
-   */
-  submitApply = async () => {
-    const s = this.state;
-    if (s.applySending) return;
-    const agency = s.applyType === 'agency';
-    const errors = {};
-    if (agency && !s.applyAgency.trim()) errors.agency = 'Enter the agency name.';
-    if (!s.applyName.trim()) errors.name = agency ? 'Enter the contact person’s name.' : 'Enter your full name.';
-    if (!/^[6-9]\d{9}$/.test(s.applyPhone)) errors.phone = 'Enter a 10-digit mobile number.';
-    if (!agency && !s.applyLicence.trim()) errors.licence = 'Enter your licence number.';
-    if (!s.applyCity.trim()) errors.city = 'Enter your city or base.';
-    if (Object.keys(errors).length) {
-      // A number typed but short is a mistyped number; anything else, a form sent incomplete.
-      this.track(errors.phone && s.applyPhone ? 'phone_invalid' : 'form_invalid', { form: agency ? 'agency' : 'buddy' });
-      this.setState({ applyErrors: errors });
-      return;
-    }
-    this.sendApply('');
-  };
-
-  verifyApply = () => this.sendApply(this.state.applyCode);
-  resendApply = () => this.sendApply('');
-
-  sendApply = async (code) => {
-    const s = this.state;
-    if (s.applySending) return;
-    const agency = s.applyType === 'agency';
-    const form = agency ? 'agency' : 'buddy';
-    const atCode = s.applyStep === 'code';
-    this.setState({ applySending: true, applyErrors: {}, applyCodeError: '' });
-    const fields = agency
-      ? { type: 'agency', agency: s.applyAgency, contact: s.applyName, phone: s.applyPhone, city: s.applyCity, drivers: s.applyFleet || null, email: s.applyEmail, gstin: s.applyGstin }
-      : { type: 'individual', name: s.applyName, phone: s.applyPhone, licence: s.applyLicence, city: s.applyCity };
-    const r = await this.postForm('/api/buddy', Object.assign(fields, { website: this.honeypot('rb-hp-apply') }, code ? { code } : {}));
-    this.setState({ applySending: false });
-    if (r.otp === 'sent') { this.codeSent('apply', r, form, 'apply-code'); return; }
-    if (!r.ok) {
-      // For the site's analytics: a code that didn't go through, a mistyped number, another field, or a save that failed.
-      if (r.reason) this.track('otp_failed', { form, kind: r.reason });
-      else this.track(r.errors.phone ? 'phone_invalid' : Object.keys(r.errors).length ? 'form_invalid' : 'save_failed', { form });
-      if (atCode) { this.setState({ applyCodeError: r.errors.code || r.error }); return; }
-      // The Worker calls the agency's contact person "contact"; the form shows it in the name field.
-      const errs = Object.keys(r.errors).length ? Object.assign({}, r.errors, { name: r.errors.name || r.errors.contact }) : { form: r.error };
-      this.setState({ applyErrors: errs });
-      return;
-    }
-    if (code) this.track('otp_verified', { form });
-    this.setState({ applySent: true, applyStep: 'form', applyCode: '' });
-    this.track('buddy_application_submitted', { type: agency ? 'agency' : 'individual' });
-  };`,
-  },
-  {
-    why: 'Contact page waitlist: POST /api/waitlist',
-    from: String.raw`  submitContact = () => {
-    if (!/\d{10}/.test(this.state.contactPhone.replace(/\D/g, ''))) {
-      this.setState({ contactError: 'Enter a 10-digit mobile number.' });
-      return;
-    }
-    // TODO(open item #3): POST to the same launch-alert endpoint as the estimator waitlist.
-    this.setState({ contactError: '', contactDone: true });
-    this.track('waitlist_joined', { source: 'contact' });
-  };`,
-    to: String.raw`  submitContact = async () => {
-    const { contactPhone, contactConsent, contactSending } = this.state;
-    if (contactSending) return;
-    const errs = {};
-    if (!/^[6-9]\d{9}$/.test(contactPhone)) errs.contactError = 'Enter a 10-digit mobile number.';
-    if (!contactConsent) errs.contactConsentError = 'Tick the box to join the waitlist.';
-    if (Object.keys(errs).length) {
-      if (errs.contactError) this.track('phone_invalid', { form: 'contact' });
-      this.setState(Object.assign({ contactError: '', contactConsentError: '' }, errs));
-      return;
-    }
-    this.sendContact('');
-  };
-
-  verifyContact = () => this.sendContact(this.state.contactCode);
-  resendContact = () => this.sendContact('');
-
-  // Saved by the Worker (POST /api/waitlist); with one-time codes on, after the code.
-  sendContact = async (code) => {
-    const s = this.state;
-    if (s.contactSending) return;
-    const atCode = s.contactStep === 'code';
-    this.setState({ contactSending: true, contactError: '', contactConsentError: '', contactCodeError: '' });
-    const r = await this.postForm('/api/waitlist', Object.assign({ phone: s.contactPhone, consent: true, source: 'contact', website: this.honeypot('rb-hp-contact') }, code ? { code } : {}));
-    this.setState({ contactSending: false });
-    if (r.otp === 'sent') { this.codeSent('contact', r, 'contact', 'rb-contact-code'); return; }
-    if (!r.ok) {
-      if (r.reason) this.track('otp_failed', { form: 'contact', kind: r.reason });
-      else this.track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'contact' });
-      if (atCode) { this.setState({ contactCodeError: r.errors.code || r.error }); return; }
-      this.setState({ contactError: r.errors.phone || (r.errors.consent ? '' : r.error), contactConsentError: r.errors.consent || '' });
-      return;
-    }
-    if (code) this.track('otp_verified', { form: 'contact' });
-    this.setState({ contactDone: true, contactStep: 'form', contactCode: '' });
-    this.track('waitlist_joined', { source: 'contact' });
-  };`,
-  },
-  {
-    why: 'Buddy form state for the template',
-    from: "      applyLicenceError: s.applyErrors.licence || '',",
-    to: String.raw`      applyLicenceError: s.applyErrors.licence || '',
-      applyFormError: s.applyErrors.form || '',
-      applySending: !!s.applySending, applyCta: s.applySending ? 'Sending…' : 'Send Application',
-      // The new design's form: an individual Buddy or a driver agency.
-      applyIsIndividual: s.applyType !== 'agency', applyIsAgency: s.applyType === 'agency',
-      applyCardIndividual: s.applyType !== 'agency' ? { border: 'var(--color-green-500)', bg: 'var(--color-green-50)' } : { border: 'rgba(100,100,100,.22)', bg: 'var(--color-white)' },
-      applyCardAgency: s.applyType === 'agency' ? { border: 'var(--color-green-500)', bg: 'var(--color-green-50)' } : { border: 'rgba(100,100,100,.22)', bg: 'var(--color-white)' },
-      setApplyIndividual: () => this.setState({ applyType: 'individual', applyErrors: {} }),
-      setApplyAgency: () => this.setState({ applyType: 'agency', applyErrors: {} }),
-      applyTitle: s.applyType === 'agency' ? 'Apply as a driver agency.' : 'Apply to be a Buddy.',
-      applySub: s.applyType === 'agency' ? 'A few details to start. RideBuddy will call to take it from there.' : 'Four details to start. RideBuddy will take it from there.',
-      applySentText: 'Application received. We’ll contact you when onboarding opens.',
-      applyCityLabel: s.applyType === 'agency' ? 'City or base' : 'Your city or base',
-      applyCity: s.applyCity, applyAgency: s.applyAgency, applyEmail: s.applyEmail, applyGstin: s.applyGstin,
-      applyCityError: s.applyErrors.city || '', applyAgencyError: s.applyErrors.agency || '',
-      applyEmailError: s.applyErrors.email || '', applyGstinError: s.applyErrors.gstin || '',
-      onApplyCity: (e) => this.setState({ applyCity: e.target.value, applyErrors: Object.assign({}, s.applyErrors, { city: '' }) }),
-      onApplyAgency: (e) => this.setState({ applyAgency: e.target.value, applyErrors: Object.assign({}, s.applyErrors, { agency: '' }) }),
-      onApplyEmail: (e) => this.setState({ applyEmail: e.target.value, applyErrors: Object.assign({}, s.applyErrors, { email: '' }) }),
-      onApplyGstin: (e) => this.setState({ applyGstin: e.target.value.toUpperCase().replace(/[^0-9A-Z]/g, '').slice(0, 15), applyErrors: Object.assign({}, s.applyErrors, { gstin: '' }) }),
-      applyFleetChips: ['1–5', '6–20', '21–50', '50+'].map((label) => ({ label, selected: s.applyFleet === label, pick: () => this.setState({ applyFleet: this.state.applyFleet === label ? '' : label }) })),
-      applyPhoneBorder: s.applyErrors.phone ? '#C62828' : 'rgba(100,100,100,.18)',
-      applyPhoneInvalid: s.applyErrors.phone ? 'true' : 'false',
-      applyHasPhoneError: !!s.applyErrors.phone,`,
-  },
-  {
-    why: 'Contact form state for the template',
-    from: '      contactDone: s.contactDone, contactPending: !s.contactDone,',
-    to: String.raw`      contactDone: s.contactDone, contactPending: !s.contactDone && s.contactStep !== 'code', contactAtCode: !s.contactDone && s.contactStep === 'code',
-      contactSending: !!s.contactSending, contactCta: s.contactSending ? 'Joining…' : 'Join the Waitlist',
-      contactConsent: !!s.contactConsent, contactConsentError: s.contactConsentError || '',
-      onContactConsent: (e) => this.setState({ contactConsent: e.target.checked, contactConsentError: '' }),
-      contactPhoneBorder: s.contactError ? '#C62828' : 'rgba(100,100,100,.18)', contactPhoneInvalid: s.contactError ? 'true' : 'false',`,
-  },
-  {
-    why: 'Contact form: honeypot, and a button that shows it is working',
-    from: '<x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Button" onClick="{{ submitContact }}" hint-size="100%,48px">Join the Waitlist</x-import>',
-    to: `${honeypot('rb-hp-contact')}
-              <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Button" onClick="{{ submitContact }}" disabled="{{ contactSending }}" hint-size="100%,48px">{{ contactCta }}</x-import>`,
-  },
-  {
-    why: 'Buddy pop-up: the new design\'s form, individual Buddy or driver agency, without the consent tick; then the one-time code step',
-    from: String.raw`  <sc-if value="{{ applyOpen }}">
-    <div style="position:fixed;inset:0;z-index:70;background:rgba(30,30,26,.5);display:flex;align-items:center;justify-content:center;padding:24px;overflow-y:auto">
-      <div style="width:100%;max-width:460px;background:var(--color-white);border-radius:var(--radius-lg);box-shadow:var(--shadow-xl);padding:32px;animation:rb-fade-up 300ms cubic-bezier(.25,.46,.45,.94)">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
-          <div style="display:flex;flex-direction:column;gap:6px">
-            <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.015em;margin:0;color:var(--color-charcoal)">Apply to be a Buddy.</h2>
-            <p style="font-family:var(--font-body),sans-serif;font-size:14px;line-height:1.55;color:var(--color-grey-500);margin:0">Three details to start. We'll take it from there.</p>
-          </div>
-          <button type="button" onClick="{{ closeApply }}" aria-label="Close" style="flex:0 0 auto;width:40px;height:40px;border:none;background:transparent;cursor:pointer;color:var(--color-grey-500)" style-hover="color:var(--color-charcoal)">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
-          </button>
-        </div>
-        <sc-if value="{{ applySent }}">
-          <div style="display:flex;flex-direction:column;gap:16px;margin-top:24px">
-            <div style="display:flex;gap:10px;align-items:flex-start;background:var(--badge-confirmed-bg);border-radius:var(--radius-lg);padding:16px">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1B5E20" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;margin-top:2px"><path d="m20 6-11 11-5-5"></path></svg>
-              <span style="font-family:var(--font-body),sans-serif;font-size:15px;line-height:1.5;font-weight:500;color:#1B5E20">Your email app is open with the application ready. Send it and we'll be in touch.</span>
-            </div>
-            <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Button" onClick="{{ closeApply }}" hint-size="100%,48px">Done</x-import>
-          </div>
-        </sc-if>
-        <sc-if value="{{ applyForm }}" hint-placeholder-val="{{ true }}">
-          <div style="display:flex;flex-direction:column;gap:18px;margin-top:24px">
-            <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="Full name" placeholder="As printed on your licence" value="{{ applyName }}" onChange="{{ onApplyName }}" error="{{ applyNameError }}" hint-size="100%,72px"></x-import>
-            <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="Phone number" type="tel" placeholder="+91 ●●●●● ●●●●●" value="{{ applyPhone }}" onChange="{{ onApplyPhone }}" error="{{ applyPhoneError }}" hint-size="100%,72px"></x-import>
-            <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="Driving licence number" placeholder="PB01 20110012345" value="{{ applyLicence }}" onChange="{{ onApplyLicence }}" error="{{ applyLicenceError }}" hint-size="100%,72px"></x-import>
-            <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Button" size="lg" onClick="{{ submitApply }}" hint-size="100%,52px">Send Application</x-import>
-            <span style="font-family:var(--font-body),sans-serif;font-size:12px;line-height:1.5;color:var(--color-grey-500)">Opens your email app with the application addressed to support@ridebuddy.co.in.</span>
-          </div>
-        </sc-if>
-      </div>
-    </div>
-  </sc-if>`,
-    to: `  <sc-if value="{{ applyOpen }}">
-    <div style="position:fixed;inset:0;z-index:70;background:rgba(30,30,26,.5);display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto">
-      <div role="dialog" aria-modal="true" aria-label="{{ applyTitle }}" style="width:100%;max-width:460px;margin:auto 0;background:var(--color-white);border-radius:var(--radius-lg);box-shadow:var(--shadow-xl);padding:32px;animation:rb-fade-up 300ms cubic-bezier(.25,.46,.45,.94)">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
-          <div style="display:flex;flex-direction:column;gap:6px">
-            <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.015em;margin:0;color:var(--color-charcoal)">{{ applyTitle }}</h2>
-            <p style="font-family:var(--font-body),sans-serif;font-size:14px;line-height:1.55;color:var(--color-grey-500);margin:0">{{ applySub }}</p>
-          </div>
-          <button type="button" onClick="{{ closeApply }}" aria-label="Close" style="flex:0 0 auto;width:40px;height:40px;border:none;background:transparent;cursor:pointer;color:var(--color-grey-500)" style-hover="color:var(--color-charcoal)">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
-          </button>
-        </div>
-        <sc-if value="{{ applySent }}">
-          <div style="display:flex;flex-direction:column;gap:16px;margin-top:24px">
-            <div style="display:flex;gap:10px;align-items:flex-start;background:var(--badge-confirmed-bg);border-radius:var(--radius-lg);padding:16px">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1B5E20" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;margin-top:2px"><path d="m20 6-11 11-5-5"></path></svg>
-              <span style="font-family:var(--font-body),sans-serif;font-size:15px;line-height:1.5;font-weight:500;color:#1B5E20">{{ applySentText }}</span>
-            </div>
-            <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Button" onClick="{{ closeApply }}" hint-size="100%,48px">Done</x-import>
-          </div>
-        </sc-if>
-        <sc-if value="{{ applyForm }}" hint-placeholder-val="{{ true }}">
-          <div style="display:flex;flex-direction:column;gap:18px;margin-top:24px">
-            <div role="radiogroup" aria-label="Applying as" style="display:flex;flex-direction:column;gap:8px">
-              <span style="font-family:var(--font-body),sans-serif;font-size:13px;font-weight:500;color:#888">Applying as</span>
-              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">
-              <button type="button" role="radio" aria-checked="{{ applyIsIndividual }}" onClick="{{ setApplyIndividual }}" style="display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-height:72px;padding:14px 16px;cursor:pointer;text-align:left;border-radius:var(--radius-lg);border:1.5px solid {{ applyCardIndividual.border }};background:{{ applyCardIndividual.bg }};transition:background 150ms,border-color 150ms" style-hover="border-color:var(--color-green-500)" style-focus="box-shadow:0 0 0 3px rgba(74,92,47,.18);outline:none">
-                <span style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:700;font-size:16px;color:var(--color-charcoal)">Individual Buddy</span>
-                <span style="font-family:var(--font-body),sans-serif;font-size:13px;line-height:1.4;color:var(--color-grey-700, #5F5E58)">I drive myself.</span>
-              </button>
-              <button type="button" role="radio" aria-checked="{{ applyIsAgency }}" onClick="{{ setApplyAgency }}" style="display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-height:72px;padding:14px 16px;cursor:pointer;text-align:left;border-radius:var(--radius-lg);border:1.5px solid {{ applyCardAgency.border }};background:{{ applyCardAgency.bg }};transition:background 150ms,border-color 150ms" style-hover="border-color:var(--color-green-500)" style-focus="box-shadow:0 0 0 3px rgba(74,92,47,.18);outline:none">
-                <span style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:700;font-size:16px;color:var(--color-charcoal)">Driver agency</span>
-                <span style="font-family:var(--font-body),sans-serif;font-size:13px;line-height:1.4;color:var(--color-grey-700, #5F5E58)">I supply verified drivers.</span>
-              </button>
-              </div>
-            </div>
-            <sc-if value="{{ applyIsIndividual }}" hint-placeholder-val="{{ true }}">
-              <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="Full name" placeholder="As printed on your licence" value="{{ applyName }}" onChange="{{ onApplyName }}" error="{{ applyNameError }}" hint-size="100%,72px"></x-import>
-            </sc-if>
-            <sc-if value="{{ applyIsAgency }}">
-              <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="Agency name" placeholder="As registered" value="{{ applyAgency }}" onChange="{{ onApplyAgency }}" error="{{ applyAgencyError }}" hint-size="100%,72px"></x-import>
-              <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="Contact person" placeholder="Full name" value="{{ applyName }}" onChange="{{ onApplyName }}" error="{{ applyNameError }}" hint-size="100%,72px"></x-import>
-            </sc-if>
-            <div style="display:flex;flex-direction:column;gap:6px">
-              <label for="apply-phone" style="font-family:var(--font-body),sans-serif;font-size:13px;font-weight:500;color:#888">Mobile number</label>
-              <div style="display:flex;align-items:stretch;min-height:48px;border-radius:var(--radius-lg);border:1.5px solid {{ applyPhoneBorder }};background:var(--color-parchment);overflow:hidden">
-                <span aria-hidden="true" style="display:flex;align-items:center;padding:0 12px 0 14px;border-right:1px solid rgba(100,100,100,.14);font-family:var(--font-body),DM Sans,sans-serif;font-size:15px;font-weight:500;color:var(--color-charcoal)">+91</span>
-                <input id="apply-phone" type="tel" inputMode="numeric" autoComplete="tel-national" maxLength="10" aria-invalid="{{ applyPhoneInvalid }}" value="{{ applyPhone }}" onChange="{{ onApplyPhone }}" placeholder="10-digit mobile" style="flex:1;min-width:0;border:none;outline:none;background:transparent;padding:0 14px;font-family:var(--font-body),DM Sans,sans-serif;font-size:15px;letter-spacing:0.02em;color:var(--color-charcoal)">
-              </div>
-              <sc-if value="{{ applyHasPhoneError }}">
-                <span role="alert" style="font-family:var(--font-body),sans-serif;font-size:13px;color:#C62828">{{ applyPhoneError }}</span>
-              </sc-if>
-            </div>
-            <sc-if value="{{ applyIsIndividual }}" hint-placeholder-val="{{ true }}">
-              <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="Driving licence number" placeholder="PB01 20110012345" value="{{ applyLicence }}" onChange="{{ onApplyLicence }}" error="{{ applyLicenceError }}" hint-size="100%,72px"></x-import>
-            </sc-if>
-            <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="{{ applyCityLabel }}" placeholder="Mohali" autoComplete="address-level2" value="{{ applyCity }}" onChange="{{ onApplyCity }}" error="{{ applyCityError }}" hint-size="100%,72px"></x-import>
-            <sc-if value="{{ applyIsAgency }}">
-              <div role="radiogroup" aria-label="Drivers you can supply" style="display:flex;flex-direction:column;gap:8px">
-                <span style="font-family:var(--font-body),sans-serif;font-size:13px;font-weight:500;color:#888">Drivers you can supply (optional)</span>
-                <div style="display:flex;flex-wrap:wrap;gap:8px">
-                  <sc-for list="{{ applyFleetChips }}" as="c" hint-placeholder-count="4">
-                    <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Chip" selected="{{ c.selected }}" onClick="{{ c.pick }}" hint-size="64px,34px">{{ c.label }}</x-import>
-                  </sc-for>
-                </div>
-              </div>
-              <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="Work email (optional)" type="email" placeholder="name@agency.in" autoComplete="email" value="{{ applyEmail }}" onChange="{{ onApplyEmail }}" error="{{ applyEmailError }}" hint-size="100%,72px"></x-import>
-              <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="GSTIN (optional)" placeholder="03ABCDE1234F1Z5" maxLength="15" value="{{ applyGstin }}" onChange="{{ onApplyGstin }}" error="{{ applyGstinError }}" hint-size="100%,72px"></x-import>
-            </sc-if>
-            ${honeypot('rb-hp-apply')}
-            <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Button" size="lg" onClick="{{ submitApply }}" disabled="{{ applySending }}" hint-size="100%,52px">{{ applyCta }}</x-import>
-            <sc-if value="{{ applyFormError }}">
-              <span role="alert" style="font-family:var(--font-body),sans-serif;font-size:13px;line-height:1.5;color:var(--color-error)">{{ applyFormError }}</span>
-            </sc-if>
-          </div>
-        </sc-if>
-        <sc-if value="{{ applyAtCode }}">
-          <div style="margin-top:24px">
-            ${codeStep('apply', 'apply-code')}
-          </div>
-        </sc-if>
-      </div>
-    </div>
-  </sc-if>`,
-  },
-  {
-    why: 'Contact page waitlist: mobile number with a fixed +91, and the consent tick',
-    from: '<x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Input" label="Phone or WhatsApp number" icon="{{ chatIcon }}" type="tel" placeholder="+91 ●●●●● ●●●●●" value="{{ contactPhone }}" onChange="{{ onContactPhone }}" error="{{ contactError }}" hint-size="100%,72px"></x-import>',
-    to: `<div style="display:flex;flex-direction:column;gap:6px">
-                <label for="rb-contact-phone" style="font-family:var(--font-body),sans-serif;font-size:13px;font-weight:500;color:#888">Mobile number</label>
-                <div style="display:flex;align-items:stretch;min-height:48px;border-radius:var(--radius-lg);border:1.5px solid {{ contactPhoneBorder }};background:var(--color-parchment);overflow:hidden">
-                  <span aria-hidden="true" style="display:flex;align-items:center;padding:0 12px 0 14px;border-right:1px solid rgba(100,100,100,.14);font-family:var(--font-body),DM Sans,sans-serif;font-size:15px;font-weight:500;color:var(--color-charcoal)">+91</span>
-                  <input id="rb-contact-phone" type="tel" inputMode="numeric" autoComplete="tel-national" aria-invalid="{{ contactPhoneInvalid }}" value="{{ contactPhone }}" onChange="{{ onContactPhone }}" placeholder="10-digit mobile" style="flex:1;min-width:0;border:none;outline:none;background:transparent;padding:0 14px;font-family:var(--font-body),DM Sans,sans-serif;font-size:15px;letter-spacing:0.02em;color:var(--color-charcoal)">
-                </div>
-                <sc-if value="{{ contactError }}">
-                  <span role="alert" style="font-family:var(--font-body),sans-serif;font-size:13px;color:#C62828">{{ contactError }}</span>
-                </sc-if>
-              </div>
-              <div style="display:flex;flex-direction:column">
-                <label style="display:flex;gap:12px;align-items:flex-start;min-height:44px;cursor:pointer">
-                <input id="rb-contact-consent" type="checkbox" checked="{{ contactConsent }}" onChange="{{ onContactConsent }}" style="flex:0 0 auto;width:20px;height:20px;margin:1px 0 0;accent-color:#4A5C2F;cursor:pointer">
-                <span style="font-family:var(--font-body),sans-serif;font-size:13px;line-height:1.55;color:var(--color-charcoal)">Send me an SMS or WhatsApp when booking opens. I agree to the Privacy Policy and Terms of Use.</span>
-                </label>
-                <sc-if value="{{ contactConsentError }}">
-                  <span role="alert" style="font-family:var(--font-body),sans-serif;font-size:13px;color:#C62828;margin-top:-12px">{{ contactConsentError }}</span>
-                </sc-if>
-              </div>`,
-  },
-  {
-    why: 'phone fields keep digits only, at most ten (a pasted +91 number keeps its last ten)',
-    from: "      onContactPhone: (e) => this.setState({ contactPhone: e.target.value, contactError: '' }),",
-    to: "      onContactPhone: (e) => this.setState({ contactPhone: tenDigits(e.target.value), contactError: '' }),",
-  },
-  {
-    why: 'Buddy form phone: digits only, at most ten',
-    from: "      onApplyPhone: (e) => this.setState({ applyPhone: e.target.value, applyErrors: Object.assign({}, s.applyErrors, { phone: '' }) }),",
-    to: "      onApplyPhone: (e) => this.setState({ applyPhone: tenDigits(e.target.value), applyErrors: Object.assign({}, s.applyErrors, { phone: '' }) }),",
-  },
-  {
-    why: 'state for the new form fields, the Contact consent tick and the waitlist pop-up',
+    why: 'state for the waitlist pop-up',
     from: '      applyErrors: {},\n    };',
     to: String.raw`      applyErrors: {},
-      applyType: 'individual', applyCity: '', applyAgency: '', applyEmail: '', applyGstin: '', applyFleet: '',
-      contactConsent: false, contactConsentError: '',
       wlOpen: false, wlPhone: '', wlConsent: false, wlErrors: {}, wlSending: false, wlDone: false,
-      // One-time code steps: 'form' or 'code', the code typed, where it went, when a new one may be asked for.
+      // Its one-time code step: 'form' or 'code', the code typed, where it went, when a new one may be asked for.
       wlStep: 'form', wlCode: '', wlCodeError: '', wlSentTo: '', wlResendAt: 0,
-      contactStep: 'form', contactCode: '', contactCodeError: '', contactSentTo: '', contactResendAt: 0,
-      applyStep: 'form', applyCode: '', applyCodeError: '', applySentTo: '', applyResendAt: 0,
       otpNow: 0,
     };`,
-  },
-  {
-    why: 'Buddy pop-up: the form, or its one-time code step',
-    from: '      applyForm: !s.applySent,',
-    to: "      applyForm: !s.applySent && s.applyStep !== 'code', applyAtCode: !s.applySent && s.applyStep === 'code',",
-  },
-  {
-    why: 'Contact page waitlist: its one-time code step, after the number',
-    from: '              <span style="font-family:var(--font-body),sans-serif;font-size:12px;color:var(--color-grey-500)">One message when the app is live. Nothing else.</span>\n            </div>\n          </sc-if>\n',
-    to: `              <span style="font-family:var(--font-body),sans-serif;font-size:12px;color:var(--color-grey-500)">One message when the app is live. Nothing else.</span>
-            </div>
-          </sc-if>
-          <sc-if value="{{ contactAtCode }}">
-            <div style="display:flex;flex-direction:column;gap:16px">
-              <h2 style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:24px;letter-spacing:-0.015em;margin:0;color:var(--color-charcoal)">Join the waitlist.</h2>
-              ${codeStep('contact', 'rb-contact-code')}
-            </div>
-          </sc-if>
-`,
   },
 ];
 
 // ----- "Join the Waitlist": hero, closing band, and the pop-up they open -------------
 
-/** Where a pop-up signup was made: the page the visitor was on (forms.js SOURCES). */
-const WAITLIST_SOURCE = "{ home: 'home', about: 'about', contact: 'contact' }[this.state.page] || 'home'";
+/** Where a pop-up signup was made (forms.js SOURCES): Home, the artboard's one page now. */
+const WAITLIST_SOURCE = "'home'";
 
 const WAITLIST = [
   {
@@ -714,10 +344,8 @@ class Component extends DCLogic {`,
     to: String.raw`      bookBuddy: this.bookBuddy,
       openWaitlist: this.openWaitlist, closeWaitlist: this.closeWaitlist, submitWaitlist: this.submitWaitlist,
       wlOpen: s.wlOpen, wlDone: s.wlDone, wlPending: !s.wlDone && s.wlStep !== 'code', wlAtCode: !s.wlDone && s.wlStep === 'code',
-      // The one-time code steps of the three phone forms (codeStep()).
+      // The pop-up's one-time code step (codeStep()).
       ...this.codeValues('wl', this.verifyWaitlist, this.resendWaitlist),
-      ...this.codeValues('contact', this.verifyContact, this.resendContact),
-      ...this.codeValues('apply', this.verifyApply, this.resendApply),
       wlPhone: s.wlPhone, onWlPhone: (e) => this.setState({ wlPhone: tenDigits(e.target.value), wlErrors: Object.assign({}, s.wlErrors, { phone: '' }) }),
       wlPhoneError: s.wlErrors.phone || '', wlPhoneBorder: s.wlErrors.phone ? '#C62828' : 'rgba(100,100,100,.18)', wlPhoneInvalid: s.wlErrors.phone ? 'true' : 'false',
       wlConsent: s.wlConsent, onWlConsent: (e) => this.setState({ wlConsent: e.target.checked, wlErrors: Object.assign({}, s.wlErrors, { consent: '' }) }),
@@ -839,6 +467,17 @@ const HOW = [
   },
 ];
 
+// ----- About, Contact and the Buddy application are pages of their own ----------------
+// /about/, /contact/ and /contact/#apply (src/about, src/contact). Links lead there
+// (URLS), and the artboard's own copies go, so there is one of each.
+
+const MOVED_OUT = [
+  {
+    why: 'the About and Contact pages, and the Buddy application pop-up',
+    cut: ['  <!-- ══════════════════ ABOUT ══════════════════ -->', '  <!-- Join the Waitlist pop-up: hero and closing band (website/artboard-patches.mjs) -->'],
+  },
+];
+
 // ----- Buddies are "verified", not "police-verified" ---------------------------------
 
 const VERIFIED = [
@@ -848,15 +487,11 @@ const VERIFIED = [
     to: "body: 'Every Buddy is verified before their first trip.' }",
   },
   {
-    why: 'About: verified, not police-verified',
-    from: 'Every Buddy is police-verified, formally trained, and rated after every trip.',
-    to: 'Every Buddy is verified, formally trained, and rated after every trip.',
-  },
-  {
+    // The list only showed on the artboard's About page, which is cut (MOVED_OUT), but it ships in the script.
     why: 'About, the standards list: verification, not police verification',
     from: "{ text: 'Police verification before the first trip.' },",
     to: "{ text: 'Verification before the first trip.' },",
   },
 ];
 
-export const ARTBOARD_PATCHES = [...ESTIMATE, ...URLS, ...BOOKING, ...FORMS, ...WAITLIST, ...HOW, ...VERIFIED];
+export const ARTBOARD_PATCHES = [...ESTIMATE, ...URLS, ...BOOKING, ...FORMS, ...WAITLIST, ...HOW, ...MOVED_OUT, ...VERIFIED];

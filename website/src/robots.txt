@@ -2,4 +2,4 @@ User-agent: *
 Disallow: /beta/
 Allow: /
 
-Sitemap: https://www.ridebuddy.co.in/sitemap.xml
+Sitemap: https://ridebuddy.co.in/sitemap.xml
