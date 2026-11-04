@@ -147,6 +147,16 @@ function menuGeometry() {
   return [...menu.querySelectorAll('a, button')].map((el) => `${el.textContent.trim() || el.getAttribute('aria-label')}@${box(el)}|${getComputedStyle(el).fontSize}`);
 }
 
+/** The pickup time, through its two dropdowns: the hour, then the minutes. */
+async function setTime(page, hhmm) {
+  const [h, m] = hhmm.split(':').map(Number);
+  await page.selectOption('#rb-pickup-hour', String(h));
+  await page.selectOption('#rb-pickup-minute', String(m));
+}
+
+/** "Estimated fare · Round Trip · 3 days": the label beside the fare, as shown (not upper-cased). */
+const fareLabel = (page) => page.locator('.rb-fare__label').evaluate((el) => el.textContent.replace(/\s+/g, ' ').trim());
+
 async function estimateAndCompare(page, name) {
   await page.getByRole('button', { name: 'Get Estimate' }).click();
   const outcome = await Promise.race([
@@ -230,8 +240,11 @@ async function main() {
     check(!!(await page.$('#rb-pickup')), 'form rendered (design-system Input present)');
     const taps = await page.$$eval('button.rb-chip, .rb-place__map', (els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
     check(taps.length >= 4 && taps.every((h) => h >= 44), `chips and map buttons are at least 44px tall (${taps.join(', ')})`);
-    const timeField = await page.$eval('#rb-pickup-time', (el) => [el.value, el.step]);
-    check(timeField.join() === '07:00,900', `pickup time: 07:00 by default, in 15-minute steps (${timeField.join(', ')})`);
+    const hours = await page.$$eval('#rb-pickup-hour option', (os) => os.map((o) => o.textContent));
+    const minutes = await page.$$eval('#rb-pickup-minute option', (os) => os.map((o) => o.textContent));
+    const shown = [await page.inputValue('#rb-pickup-hour'), await page.inputValue('#rb-pickup-minute')];
+    check(hours.length === 24 && hours[0] === '12 AM' && hours[7] === '7 AM' && hours[23] === '11 PM' && minutes.join() === '00,15,30,45' && shown.join(':') === '7:0',
+      `pickup time: an hour dropdown (12 AM … 11 PM) and minutes in 15s (${minutes.join(', ')}), 7:00 AM by default`);
     const in180 = new Date(Date.now() + (330 + 180 * 1440) * 60000).toISOString().slice(0, 10);
     const maxes = await page.$$eval('input[type="date"]', (els) => els.map((el) => el.max));
     check(maxes.length === 2 && maxes.every((m) => m === in180), `no date past today + 180 (max ${maxes.join(', ')})`);
@@ -255,7 +268,7 @@ async function main() {
     g = await gate();
     check(!g.off && !(await page.locator('.rb-hint').count()), 'enabled, with no hint, once the trip is complete');
     console.log(`  chose pickup "${pick}", destination "${dest}"`);
-    await page.fill('#rb-pickup-time', '09:00');
+    await setTime(page, '09:00');
     // Past 180 days ahead, Get Estimate waits for a nearer date.
     const pickupDate = await page.inputValue('#rb-pickup-date');
     await page.fill('#rb-pickup-date', new Date(Date.parse(in180) + 864e5).toISOString().slice(0, 10));
@@ -296,6 +309,7 @@ async function main() {
     const result = (await page.locator('.rb-result').innerText()).replace(/\s+/g, ' ');
     check(result.includes('Inclusive of all taxes') && !/Extra distance/.test(result) && result.includes('Final fare is calculated when your trip ends.'),
       'the fare says it includes all taxes; no "Extra distance" line; the final-fare line stays');
+    check(await fareLabel(page) === 'Estimated fare · One Way · 1 day', `beside the fare, the trip it is for ("${await fareLabel(page)}")`);
     const oneConds = await conds(page);
     check(JSON.stringify(oneConds) === JSON.stringify(["Includes 12 hours of your Buddy's time from pickup.", "Includes your Buddy's food.", TOLLS, EXTRA_TIME]),
       `one way, 9 AM: the §2.4 lines (${oneConds.join(' | ')})`);
@@ -340,7 +354,7 @@ async function main() {
 
     // Late departure: 16:00 on the Shimla run should not cross midnight; check consistency only.
     await page.getByRole('button', { name: 'Edit trip details' }).click();
-    await page.fill('#rb-pickup-time', '20:30');
+    await setTime(page, '20:30');
     const late = await estimateAndCompare(page, 'one-way 20:30 departure');
     check(late.result.night_charge_applied === true && (await conds(page)).includes(NIGHT), 'a 20:30 departure on a 3h+ drive triggers the night charge, and says so');
 
@@ -357,13 +371,14 @@ async function main() {
     g = await gate();
     check(g.off && g.hint === 'The return date is before the departure date.', `a return before the departure disables Get Estimate ("${g.hint}")`);
     await page.fill('#rb-return-date', ret);
-    await page.fill('#rb-pickup-time', '09:00');
+    await setTime(page, '09:00');
     const round = await estimateAndCompare(page, 'round trip 3 days');
     check(round.result.trip_days === 3 && round.result.stay_included === true, 'round trip bills 3 days with the stay included');
     const roundTiles = await page.locator('.rb-tile').evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()));
     const each = Math.round(round.inputs.distanceKm); // the route one way
     check(new RegExp(`^EST\\. DISTANCE ${2 * each} km ${each} km each way$`, 'i').test(roundTiles[1] || '') && /each way$/.test(roundTiles[0] || ''),
       `round trip: the tiles give the total and each way (${roundTiles.join(' | ')})`);
+    check(await fareLabel(page) === 'Estimated fare · Round Trip · 3 days', `round trip: "${await fareLabel(page)}"`);
     const roundConds = await conds(page);
     check(roundConds[0] === "Includes 12 hours of your Buddy's time from pickup." && roundConds.includes("Includes your Buddy's stay for 2 nights."),
       `round trip: 12 hours from pickup (no "on each of the N days"), and the stay for 2 nights (${roundConds.slice(0, 3).join(' | ')})`);
@@ -376,11 +391,12 @@ async function main() {
     await page.fill('#rb-return-date', await page.inputValue('#rb-departure-date'));
     check(!(await page.$('.rb-stay')), 'a same-day round trip has no stay question');
     await pickPlace(page, '#rb-destination', 'Jaipur');
-    await page.fill('#rb-pickup-time', '09:00');
+    await setTime(page, '09:00');
     const jaipur = await estimateAndCompare(page, 'Jaipur and back, same day');
     const warn = (await page.locator('.rb-long__warn').textContent().catch(() => '')).replace(/\s+/g, ' ').trim();
     check(jaipur.result.long_drive && !jaipur.result.drive_through && jaipur.result.trip_days === 2
       && warn === REST_STOP, `long drive: PRD 6.5's rest-stop line, a second Trip Day ("${warn}")`);
+    check(await fareLabel(page) === 'Estimated fare · Round Trip · 2 days', `a same-day round trip with its rest stop is priced as 2 days, and says so ("${await fareLabel(page)}")`);
     const switchLabel = (await page.locator('.rb-switch__label').textContent()).trim();
     check(switchLabel === 'Drive through without a rest stop' && !(await conds(page)).some((c) => /long drive|rest stop/i.test(c)),
       `long drive: the switch reads "${switchLabel}", and the list of lines doesn't repeat the plan`);
@@ -490,7 +506,7 @@ async function main() {
 
     // A map-picked pickup prices exactly like a searched one.
     await pickPlace(page, '#rb-destination', 'Kasauli');
-    await page.fill('#rb-pickup-time', '09:00');
+    await setTime(page, '09:00');
     await estimateAndCompare(page, 'map-picked pickup');
 
     // Mobile viewport render.

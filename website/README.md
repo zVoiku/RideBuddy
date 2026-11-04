@@ -62,8 +62,9 @@ result in `frontend/app/booking/summary.tsx`.
 - **Get Estimate** stays disabled until the trip is complete, with one line
   under it saying what is still missing (a pickup chosen from the suggestions
   or the map, a destination, a date that hasn't passed and is at most 180 days
-  ahead, a return on or after the departure, a time). Pickup time starts at
-  7:00 AM, in 15-minute steps.
+  ahead, a return on or after the departure, a time). Pickup time is two
+  dropdowns, the hour (12 AM … 11 PM) and the minutes (00, 15, 30, 45),
+  7:00 AM to start.
 - **A route lookup that fails** (the connection, say) shows its own screen —
   "The estimate didn’t load. Check your connection and try again." — with
   **Try again** and **Edit trip details**; "no driving route between those
@@ -79,7 +80,9 @@ result in `frontend/app/booking/summary.tsx`.
   — and the switch, "Drive through without a rest stop — only if you and your
   Buddy both agree", that re-prices the same route on the drive-through plan
   as a new estimate. Then one number, "Inclusive of
-  all taxes", and 👍/👎 beside it ("Does this fare work for you?"): a 👎 opens
+  all taxes", with the trip it is for beside its label ("Estimated fare ·
+  Round Trip · 2 days" — the days the fare covers, a rest stop's included),
+  and 👍/👎 beside it ("Does this fare work for you?"): a 👎 opens
   an optional comment (280 characters, Send, then "Thank you. Noted."). The
   PRD 6.5 lines follow — "Includes 12 hours of your Buddy's time from pickup."
   (no "on each of the N days"), food, the stay, and the night charge when it

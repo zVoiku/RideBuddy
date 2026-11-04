@@ -56,6 +56,12 @@ function newEstimateId() {
   return `est_${[...bytes].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 20)}`;
 }
 
+/** "Round Trip · 2 days": the trip a fare is for, as the result says it beside the fare and under the route. */
+function tripDetail(result) {
+  const d = result.trip_days;
+  return `${result.labels.round ? 'Round Trip' : 'One Way'} · ${d} day${d === 1 ? '' : 's'}`;
+}
+
 /** What the Worker words into the Trip column, plus the fare, which has its own. */
 function tripOf(result) {
   const l = result.labels;
@@ -123,7 +129,7 @@ function LongDrive({ driveThrough, onChange }) {
  * at once (POST /api/feedback); the latest vote counts and a comment stays when
  * the vote changes. Keyed by the estimate, so a new fare starts unvoted.
  */
-function FarePanel({ fare, estimateId, trip }) {
+function FarePanel({ fare, detail, estimateId, trip }) {
   const [vote, setVote] = useState(null);
   const [open, setOpen] = useState(false);
   const [comment, setComment] = useState('');
@@ -176,7 +182,7 @@ function FarePanel({ fare, estimateId, trip }) {
     <div className="rb-farepanel">
       <div className="rb-farepanel__row">
         <div>
-          <div className="rb-fare__label">Estimated fare</div>
+          <div className="rb-fare__label">Estimated fare<span className="rb-fare__trip"> · {detail}</span></div>
           <div className="rb-fare__value" data-testid="fare-estimate">{formatINR(fare)}</div>
           <div className="rb-fare__tax">Inclusive of all taxes</div>
         </div>
@@ -206,6 +212,30 @@ const TRIP_TYPES = [
   { id: 'round', label: 'Round Trip' },
   { id: 'one', label: 'One Way' },
 ];
+
+// ----- Pickup time: an hour, and the minutes in 15-minute steps ----------------------
+
+const HOURS = Array.from({ length: 24 }, (_, h) => h);
+const MINUTES = [0, 15, 30, 45];
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/** Two dropdowns for "HH:MM": the hour as "7 AM", "7 PM", and :00, :15, :30 or :45. */
+function TimeField({ label, value, onChange }) {
+  const [h, m] = value.split(':').map(Number);
+  return (
+    <div className="rb-field" role="group" aria-labelledby="rb-pickup-time-label">
+      <span className="rb-label" id="rb-pickup-time-label">{label}</span>
+      <div className="rb-time">
+        <select id="rb-pickup-hour" className="rb-select" aria-label="Hour" value={h} onChange={(e) => onChange(`${pad2(e.target.value)}:${pad2(m)}`)}>
+          {HOURS.map((x) => <option key={x} value={x}>{`${x % 12 || 12} ${x < 12 ? 'AM' : 'PM'}`}</option>)}
+        </select>
+        <select id="rb-pickup-minute" className="rb-select" aria-label="Minutes" value={m} onChange={(e) => onChange(`${pad2(h)}:${pad2(e.target.value)}`)}>
+          {MINUTES.map((x) => <option key={x} value={x}>{pad2(x)}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+}
 
 // ----- Place field: the web twin of CityPicker.tsx --------------------------------
 
@@ -740,7 +770,7 @@ function App() {
   })() : [];
 
   const routeLine = result
-    ? `${result.labels.pickup} → ${result.labels.destination} · ${result.labels.round ? 'Round Trip' : 'One Way'} · ${result.trip_days} day${result.trip_days === 1 ? '' : 's'}`
+    ? `${result.labels.pickup} → ${result.labels.destination} · ${tripDetail(result)}`
     : '';
   const disclaimer = 'Indicative fare for the route, date and time you entered, using the route’s standard drive time without traffic. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
 
@@ -788,7 +818,7 @@ function App() {
                     <Input label="Return date" type="date" value={returnDate} min={departDate} max={istDate(MAX_DAYS_AHEAD)} error={errors.date || undefined}
                       onChange={(e) => { setReturnDate(e.target.value); err('date', ''); }} />
                   )}
-                  <Input label="Pickup time" type="time" step={900} value={pickupTime} onChange={(e) => setPickupTime(e.target.value)} />
+                  <TimeField label="Pickup time" value={pickupTime} onChange={setPickupTime} />
                 </div>
 
                 {multiDay && (
@@ -834,7 +864,7 @@ function App() {
               <TripTiles route={route} round={result.labels.round} />
 
               {result.long_drive && <LongDrive driveThrough={result.drive_through} onChange={setDriveThrough} />}
-              <FarePanel key={estimateId} fare={result.total_fare} estimateId={estimateId} trip={tripOf(result)} />
+              <FarePanel key={estimateId} fare={result.total_fare} detail={tripDetail(result)} estimateId={estimateId} trip={tripOf(result)} />
               <ul className="rb-conds">
                 {conditions.map((c, i) => (
                   <li key={i} className={c.excluded ? 'rb-excluded' : ''}>
