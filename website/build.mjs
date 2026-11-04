@@ -39,9 +39,16 @@
  * Every page — holding page, estimator, About, Contact, artboard — also gets
  * the site's own analytics, src/site.js, served as /site.js.
  *
+ * The scripts and stylesheet built here (VERSIONED) are asked for by their
+ * content, "/site.js?v=<hash>": pages are checked with Cloudflare on every
+ * visit and those files are kept a year (src/_headers), so a page always
+ * arrives with the files built with it — never a cached page with a newer
+ * script, or the other way round.
+ *
  * The Google Maps browser key comes from GOOGLE_MAPS_BROWSER_KEY — a
  * git-ignored website/.env locally, a build variable on Cloudflare.
  */
+import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -95,6 +102,44 @@ function withSiteScript(html, what) {
   const out = html.replace(/<\/head>/i, `${SITE_SCRIPT}\n</head>`);
   if (out === html) throw new Error(`could not add /site.js to ${what}: no </head>`);
   return out;
+}
+
+// What the pages load that this build makes, by its path in dist/.
+const VERSIONED = ['estimate/app.js', 'shared/pages.js', 'shared/site.css', 'site.js'];
+
+/**
+ * Every page in dist/ asks for VERSIONED by content: src="/site.js" becomes
+ * src="/site.js?v=<hash of the file>". _headers keeps those files a year, so a
+ * page that would still ask for one by its bare name fails the build.
+ */
+async function versionAssets() {
+  const hashes = new Map();
+  for (const file of VERSIONED) {
+    hashes.set(`/${file}`, createHash('sha256').update(await readFile(path.join(OUT, file))).digest('hex').slice(0, 12));
+  }
+  for (const page of await htmlFiles(OUT)) {
+    const file = path.join(OUT, page);
+    const html = await readFile(file, 'utf8');
+    const out = html.replace(/(src|href)="([^"?#]+)([^"]*)"/g, (all, attr, url, rest) => {
+      if (!hashes.has(url)) return all;
+      if (rest) throw new Error(`${page} asks for ${url}${rest}: build.mjs versions ${url} itself (versionAssets)`);
+      return `${attr}="${url}?v=${hashes.get(url)}"`;
+    });
+    const bare = [...hashes.keys()].find((url) => out.includes(`${url}"`) || out.includes(`${url}'`));
+    if (bare) throw new Error(`${page} asks for ${bare} where build.mjs can't version it (versionAssets)`);
+    if (out !== html) await writeFile(file, out);
+  }
+}
+
+/** Every .html file under `dir`, as paths relative to it. */
+async function htmlFiles(dir, rel = '') {
+  const found = [];
+  for (const entry of await readdir(path.join(dir, rel), { withFileTypes: true })) {
+    const name = path.join(rel, entry.name);
+    if (entry.isDirectory()) found.push(...(await htmlFiles(dir, name)));
+    else if (name.endsWith('.html')) found.push(name);
+  }
+  return found;
 }
 
 /**
@@ -277,6 +322,9 @@ async function main() {
     if (!html.includes(NOINDEX)) throw new Error('could not inject noindex: no <head> in the artboard');
   }
   await writeFile(path.join(BETA, 'index.html'), withSiteScript(html, 'the artboard'));
+
+  // 8. Every page asks for the scripts and stylesheet built with it, by content.
+  await versionAssets();
 
   console.log(`\nBuilt dist/ from ${canvasFile} + src/estimate (Maps key ${key ? 'present' : 'MISSING'})`);
 }

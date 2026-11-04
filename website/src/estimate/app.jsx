@@ -181,9 +181,12 @@ function FarePanel({ fare, detail, estimateId, trip }) {
   return (
     <div className="rb-farepanel">
       <div className="rb-farepanel__row">
-        <div>
-          <div className="rb-fare__label">Estimated fare<span className="rb-fare__trip"> · {detail}</span></div>
-          <div className="rb-fare__value" data-testid="fare-estimate">{formatINR(fare)}</div>
+        <div className="rb-fare">
+          <div className="rb-fare__label">Estimated fare</div>
+          <div className="rb-fare__amount">
+            <span className="rb-fare__value" data-testid="fare-estimate">{formatINR(fare)}</span>
+            <span className="rb-fare__trip">{detail}</span>
+          </div>
           <div className="rb-fare__tax">Inclusive of all taxes</div>
         </div>
         <div className="rb-thumbs" role="group" aria-label="Does this fare work for you?">
@@ -219,17 +222,21 @@ const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const MINUTES = [0, 15, 30, 45];
 const pad2 = (n) => String(n).padStart(2, '0');
 
-/** Two dropdowns for "HH:MM": the hour as "7 AM", "7 PM", and :00, :15, :30 or :45. */
+/**
+ * Two dropdowns for "HH:MM", the hour as "7 AM", "7 PM" and the minutes as 00,
+ * 15, 30 or 45, in one field drawn like the date fields beside it.
+ */
 function TimeField({ label, value, onChange }) {
   const [h, m] = value.split(':').map(Number);
   return (
     <div className="rb-field" role="group" aria-labelledby="rb-pickup-time-label">
       <span className="rb-label" id="rb-pickup-time-label">{label}</span>
       <div className="rb-time">
-        <select id="rb-pickup-hour" className="rb-select" aria-label="Hour" value={h} onChange={(e) => onChange(`${pad2(e.target.value)}:${pad2(m)}`)}>
+        <select id="rb-pickup-hour" className="rb-time__hour" aria-label="Hour" value={h} onChange={(e) => onChange(`${pad2(e.target.value)}:${pad2(m)}`)}>
           {HOURS.map((x) => <option key={x} value={x}>{`${x % 12 || 12} ${x < 12 ? 'AM' : 'PM'}`}</option>)}
         </select>
-        <select id="rb-pickup-minute" className="rb-select" aria-label="Minutes" value={m} onChange={(e) => onChange(`${pad2(h)}:${pad2(e.target.value)}`)}>
+        <span className="rb-time__sep" aria-hidden="true" />
+        <select id="rb-pickup-minute" className="rb-time__min" aria-label="Minutes" value={m} onChange={(e) => onChange(`${pad2(h)}:${pad2(e.target.value)}`)}>
           {MINUTES.map((x) => <option key={x} value={x}>{pad2(x)}</option>)}
         </select>
       </div>
