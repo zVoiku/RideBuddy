@@ -80,9 +80,11 @@ result in `frontend/app/booking/summary.tsx`.
   — and the switch, "Drive through without a rest stop — only if you and your
   Buddy both agree", that re-prices the same route on the drive-through plan
   as a new estimate. Then one number, "Inclusive of
-  all taxes", with the trip it is for to its right in the fare's typeface
-  ("₹3,497 Round Trip · 2 days" — the days the fare covers, a rest stop's
-  included), and 👍/👎 beside it ("Does this fare work for you?"): a 👎 opens
+  all taxes", with the trip it is for to its right in the fare's typeface, in
+  two rows centred on each other ("Round Trip" over "2 days" — the days the
+  fare covers, a rest stop's included; narrower than a 375px phone both scale
+  with the panel, so a fare of up to five digits keeps it beside), and 👍/👎
+  beside it ("Does this fare work for you?"): a 👎 opens
   an optional comment (280 characters, Send, then "Thank you. Noted."). The
   PRD 6.5 lines follow — "Includes 12 hours of your Buddy's time from pickup."
   (no "on each of the N days"), food, the stay, and the night charge when it
@@ -541,8 +543,8 @@ picker (open, drag, re-caption, tap a place, confirm, then price the pinned
 point), fullscreen map, mobile viewport — and re-prices every estimate with
 the backend's `fare_breakdown` on the exact inputs the page used — with Get
 Estimate disabled and its hint until the trip is complete, the pickup time
-drawn like the date fields, the trip to the right of the fare in its
-typeface, the trip-time and distance tiles, "Inclusive of all taxes", the
+drawn like the date fields, the trip in two rows to the right of the fare
+in its typeface (on a 360px phone too), the trip-time and distance tiles, "Inclusive of all taxes", the
 §2.4 lines, and the disclaimers. Then the forms: a 👎 with a comment,
 then joining the waitlist under the same estimate (one row with the vote), the
 `/contact/` waitlist card, About's Join the Waitlist pop-up, the `/beta` hero's,
