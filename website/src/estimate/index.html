@@ -43,6 +43,15 @@
   .rb-group { display: flex; flex-direction: column; gap: 10px; }
   .rb-group__label { font-size: 13px; font-weight: 500; color: #888; }
   .rb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+  /* Pickup time: the hour and the minutes, side by side, as the design system's filled inputs. */
+  .rb-time { display: grid; grid-template-columns: 3fr 2fr; gap: 8px; }
+  .rb-select {
+    width: 100%; min-height: 44px; padding: 0 36px 0 14px; border: none; border-radius: var(--radius-lg); cursor: pointer;
+    background: var(--surface-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center;
+    font-family: var(--font-body); font-size: var(--text-body); color: var(--text-primary);
+    -webkit-appearance: none; appearance: none;
+  }
+  .rb-select:focus { outline: none; box-shadow: var(--ring-focus); }
   .rb-stay { display: flex; flex-direction: column; gap: 10px; padding: 18px; background: var(--color-green-50); border-radius: var(--radius-lg); }
   .rb-stay__q { font-size: 14px; font-weight: 500; }
   .rb-stay__hint { font-size: 12px; color: var(--color-grey-500); }
@@ -181,6 +190,8 @@
   .rb-farepanel { margin-top: 22px; background: var(--color-green-50); border-radius: var(--radius-lg); overflow: hidden; }
   .rb-farepanel__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding: 24px; }
   .rb-fare__label { font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-green-700); margin-bottom: 6px; }
+  /* The trip the fare is for, beside the label: "· Round Trip · 2 days". */
+  .rb-fare__trip { text-transform: none; letter-spacing: 0; font-weight: 500; }
   .rb-fare__value {
     font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800;
     font-size: clamp(44px, 7vw, 60px); line-height: 1; letter-spacing: -0.03em; color: var(--color-green-500);
