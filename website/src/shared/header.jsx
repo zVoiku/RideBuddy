@@ -36,7 +36,8 @@ export function SiteHeader({ current = null, onGetEstimate = null }) {
   const toEstimate = () => {
     setOpen(false);
     if (onGetEstimate) onGetEstimate();
-    else window.location.href = '/estimate/';
+    // With any campaign parameters the page arrived with (src/site.js rbCarry).
+    else window.location.href = (window.rbCarry || String)('/estimate/');
   };
   const link = (l) => (
     <a key={l.id} href={l.href} aria-current={l.id === current ? 'page' : undefined} onClick={() => setOpen(false)}>{l.label}</a>

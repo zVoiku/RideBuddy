@@ -108,6 +108,8 @@ a.rb-btn--secondary, a.rb-btn--secondary:hover { color: var(--brand-primary); }
 .rb-error-msg { font-family: var(--font-body); font-size: var(--text-caption); color: var(--color-error); }
 .rb-form-error { font-size: 14px; color: var(--color-error); margin: 0; }
 .rb-chips { display: flex; gap: 10px; flex-wrap: wrap; }
+/* Every tap target at least 44px tall (QA audit P04); the design system's chips are 34px. */
+button.rb-chip { min-height: 44px; }
 .rb-hp { position: absolute; left: -10000px; width: 1px; height: 1px; opacity: 0; }
 
 /* Mobile number with a fixed +91, and the consent tick: the same on every form. */
@@ -124,14 +126,14 @@ a.rb-btn--secondary, a.rb-btn--secondary:hover { color: var(--brand-primary); }
 }
 /* The one-time code step (website/worker/otp.js). */
 .rb-sent { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; font-size: 14px; line-height: 1.5; }
-.rb-linkbtn { border: none; background: transparent; padding: 10px 0; cursor: pointer; font: inherit; font-size: 14px; font-weight: 500; color: var(--color-green-500); }
+.rb-linkbtn { min-height: 44px; border: none; background: transparent; padding: 10px 0; cursor: pointer; font: inherit; font-size: 14px; font-weight: 500; color: var(--color-green-500); }
 .rb-linkbtn:hover { color: var(--color-green-700); }
 .rb-linkbtn:disabled { color: var(--color-grey-400); cursor: default; }
 .rb-code { width: 100%; box-sizing: border-box; min-height: 52px; border-radius: var(--radius-lg); border: 1.5px solid rgba(100,100,100,.18); background: var(--color-parchment);
   padding: 0 16px; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 22px; font-weight: 600; letter-spacing: 0.4em; text-align: center; color: var(--color-charcoal); }
 .rb-code:focus { outline: none; border-color: var(--color-green-500); box-shadow: 0 0 0 3px rgba(74,92,47,.18); }
 .rb-code--error { border-color: #C62828; }
-.rb-resend { display: flex; justify-content: center; align-items: center; min-height: 40px; font-size: 14px; color: var(--color-grey-500); }
+.rb-resend { display: flex; justify-content: center; align-items: center; min-height: 44px; font-size: 14px; color: var(--color-grey-500); }
 .rb-consent { display: flex; flex-direction: column; }
 /* The label keeps a 44px tap area; the error sits under its text, not under that. */
 .rb-consent .rb-error-msg { margin-top: -12px; }
@@ -159,7 +161,7 @@ a.rb-btn--secondary, a.rb-btn--secondary:hover { color: var(--brand-primary); }
 }
 .rb-dialog__head p { font-size: 14px; line-height: 1.55; color: var(--color-grey-500); margin: 0; }
 .rb-dialog__close {
-  flex: 0 0 auto; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 44px; height: 44px; margin: -2px -2px 0 0; display: flex; align-items: center; justify-content: center;
   border: none; background: transparent; cursor: pointer; color: var(--color-grey-500);
 }
 .rb-dialog__close:hover { color: var(--color-charcoal); }

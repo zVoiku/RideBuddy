@@ -3,7 +3,7 @@
  * bindings and no I/O, so test/worker.mjs runs them unchanged under Node.
  */
 
-export const PHONE_ERROR = 'Enter a 10-digit mobile number.';
+export const PHONE_ERROR = 'Enter a valid mobile number.';
 export const NAME_ERROR = 'Enter your full name.';
 export const LICENCE_ERROR = 'Enter your licence number.';
 export const CITY_ERROR = 'Enter your city or base.';
@@ -204,3 +204,39 @@ export function toCsv(header, rows) {
 
 /** HTML text escaping for the admin page. */
 export const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+// ----- Attribution (src/site.js sets the cookies; forms and beacons carry them) ------
+
+/** First-touch fields, as stored with every beacon and every list row. */
+export const TOUCH_FIELDS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'referrer', 'landing_page'];
+
+/** One cookie's value from a Cookie header, or ''. */
+export function cookieValue(header, name) {
+  for (const part of String(header || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
+  }
+  return '';
+}
+
+/**
+ * Who sent a request, from the cookies src/site.js sets: the visitor_id (12
+ * months), the first touch (all five utm_* values, the referring site and the
+ * landing page, from the visit's first page view) and whether ?internal=1
+ * marked this browser as the team's own. Every value is cleaned and capped;
+ * anything malformed reads as absent.
+ * @returns {{visitor_id: string|null, internal: 1|null, utm_source: string|null, …}}
+ */
+export function attribution(request) {
+  const cookie = request.headers.get('cookie') || '';
+  const vid = cookieValue(cookie, 'visitor_id');
+  const out = { visitor_id: /^[a-z0-9]{12,40}$/.test(vid) ? vid : null, internal: cookieValue(cookie, 'rb_internal') === '1' ? 1 : null };
+  let ft = {};
+  try {
+    const parsed = JSON.parse(decodeURIComponent(cookieValue(cookie, 'rb_ft') || '{}'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ft = parsed;
+  } catch { /* unreadable: no first touch */ }
+  for (const k of TOUCH_FIELDS) out[k] = cleanText(ft[k], k === 'landing_page' ? 200 : 100) || null;
+  return out;
+}
+

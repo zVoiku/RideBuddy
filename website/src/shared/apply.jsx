@@ -108,7 +108,8 @@ export function ApplyPopup({ open, onClose }) {
             ) : (
               <Input label="Full name" placeholder="As printed on your licence" value={name} onChange={field(setName, 'name')} error={errors.name || undefined} />
             )}
-            <PhoneField id="apply-phone" value={phone} error={errors.phone} onChange={(v) => { setPhone(v); setErrors((x) => ({ ...x, phone: '' })); }} />
+            <PhoneField id="apply-phone" value={phone} error={errors.phone} onChange={(v) => { setPhone(v); setErrors((x) => ({ ...x, phone: '' })); }}
+              onError={(msg) => setErrors((x) => ({ ...x, phone: msg }))} />
             {!agency && (
               <Input label="Driving licence number" placeholder="PB01 20110012345" value={licence} onChange={field(setLicence, 'licence')} error={errors.licence || undefined} />
             )}

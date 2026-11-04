@@ -2,9 +2,11 @@
  * The site's own analytics, server side. POST /api/e takes the beacons that
  * src/site.js sends; /admin reads the totals back (statsFor).
  *
- * Privacy: visitors get no cookies and no IP address is stored. A visitor is a
- * hash of the day's random salt, their network and their browser: it changes
- * every day, and once the day's salt is deleted it can't be recomputed.
+ * Privacy: no IP address is stored. Visitors are counted as a hash of the
+ * day's random salt, their network and their browser: it changes every day,
+ * and once the day's salt is deleted it can't be recomputed. Each beacon also
+ * keeps the visitor_id and first touch that src/site.js keeps in first-party
+ * cookies (lib.js attribution()), so a lead can be traced to how it arrived.
  *
  * Storage: one D1 row per beacon (a batch of a page's events), kept 13 months.
  * Finished days are summed into daily_totals — kept for good — the first time
@@ -13,7 +15,7 @@
  */
 import { ready, sha256Hex } from './db.js';
 import { sameOrigin } from './http.js';
-import { cleanText, istDay, networkOf, shiftDay } from './lib.js';
+import { attribution, cleanText, istDay, networkOf, shiftDay, TOUCH_FIELDS } from './lib.js';
 import { DAY_SQL, cleanEvents, deviceOf, isBot, summarize } from './stats.js';
 
 const KEEP_DAYS = 396; // detailed beacons, ~13 months; daily totals stay for good
@@ -63,8 +65,10 @@ export async function ingest(request, env, ctx) {
   if (Number(request.headers.get('content-length')) > 16384) return EMPTY(413);
 
   const ua = request.headers.get('user-agent') || '';
-  // Crawlers, and browsers the admin marked "don't count" (a cookie only /admin sets).
-  if (isBot(ua) || /(^|;\s*)rb_exclude=1(;|$)/.test(request.headers.get('cookie') || '')) return EMPTY(204);
+  // Crawlers, browsers the admin marked "don't count" (a cookie only /admin sets),
+  // and the team's own, marked by visiting any page with ?internal=1 (src/site.js).
+  const who = attribution(request);
+  if (isBot(ua) || who.internal || /(^|;\s*)rb_exclude=1(;|$)/.test(request.headers.get('cookie') || '')) return EMPTY(204);
   const now = clock(request, env);
   const net = networkOf(request.headers.get('cf-connecting-ip'));
   if (!allowed(net, now)) return EMPTY(204);
@@ -75,9 +79,11 @@ export async function ingest(request, env, ctx) {
   try { events = cleanEvents(JSON.parse(raw)); } catch { return EMPTY(400); }
   if (!events.length) return EMPTY(204);
 
+  const touch = Object.fromEntries(TOUCH_FIELDS.filter((f) => who[f]).map((f) => [f, who[f]]));
   const beacon = {
     day: istDay(now), at: Math.floor(now / 1000), net, ua, device: deviceOf(ua),
     city: cleanText(request.cf?.city, 60), country: cleanText(request.cf?.country, 2), events,
+    visitorId: who.visitor_id, touch: Object.keys(touch).length ? JSON.stringify(touch) : null,
   };
   const saving = store(env.DB, beacon).catch((e) => console.error('analytics: not stored', e?.message || e));
   // Answer at once and write after; tests wait for the write so they can read it back.
@@ -90,8 +96,8 @@ async function store(db, b) {
   if (!(await underCap(db, b.day))) return;
   const salt = await daySalt(db, b.day);
   const vid = (await sha256Hex(`${salt}|${b.net}|${b.ua}`)).slice(0, 16);
-  await db.prepare('INSERT INTO beacons (day, at, vid, device, city, country, events) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .bind(b.day, b.at, vid, b.device, b.city, b.country, JSON.stringify(b.events)).run();
+  await db.prepare('INSERT INTO beacons (day, at, vid, device, city, country, events, visitor_id, touch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(b.day, b.at, vid, b.device, b.city, b.country, JSON.stringify(b.events), b.visitorId, b.touch).run();
 }
 
 let salted = { day: '', salt: '' };

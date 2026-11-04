@@ -26,7 +26,7 @@ export const Icon = ({ d, size = 18, stroke = 'currentColor' }) => (
 export const CLOSE = 'M18 6 6 18M6 6l12 12';
 export const TICK = 'm20 6-11 11-5-5';
 
-export const PHONE_ERROR = 'Enter a 10-digit mobile number.';
+export const PHONE_ERROR = 'Enter a valid mobile number.';
 export const CONSENT_ERROR = 'Tick the box to join the waitlist.';
 export const CONSENT = 'Send me an SMS or WhatsApp when booking opens. I agree to the Privacy Policy and Terms of Use.';
 export const WAITLIST_JOINED = "You're on the waitlist. We'll message you once.";
@@ -68,8 +68,11 @@ export function focusWhenReady(id, tries = 20) {
   else if (tries > 0) setTimeout(() => focusWhenReady(id, tries - 1), 50);
 }
 
-/** Mobile number with a fixed +91, as on every form of the site. */
-export function PhoneField({ id, value, onChange, error }) {
+/**
+ * Mobile number with a fixed +91, as on every form of the site. Leaving the
+ * field with a number that can't be right says so at once (`onError`).
+ */
+export function PhoneField({ id, value, onChange, error, onError }) {
   return (
     <div className="rb-field">
       <label className="rb-label" htmlFor={id}>Mobile number</label>
@@ -77,6 +80,7 @@ export function PhoneField({ id, value, onChange, error }) {
         <span className="rb-phone__cc" aria-hidden="true">+91</span>
         <input id={id} type="tel" inputMode="numeric" autoComplete="tel-national" placeholder="10-digit mobile"
           value={value} onChange={(e) => onChange(tenDigits(e.target.value))}
+          onBlur={() => { if (onError && value && !MOBILE.test(value)) onError(PHONE_ERROR); }}
           aria-invalid={error ? 'true' : undefined} aria-describedby={error ? `${id}-err` : undefined} />
       </div>
       {error && <span className="rb-error-msg" id={`${id}-err`} role="alert">{error}</span>}
