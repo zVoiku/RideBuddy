@@ -33,7 +33,7 @@ const PORT = Number(process.env.VERIFY_PORT || 80);
 const ORIGIN = `http://${HOST}${PORT === 80 ? '' : `:${PORT}`}`;
 const PY = path.join(ROOT, 'backend', '.venv', 'bin', 'python');
 const ADMIN_PASSWORD = 'verify-only';
-const PHONE_ERROR = 'Enter a 10-digit mobile number.';
+const PHONE_ERROR = 'Enter a valid mobile number.';
 const CONSENT_ERROR = 'Tick the box to join the waitlist.';
 const WAITLIST_JOINED = "You're on the waitlist. We'll message you once.";
 const DISCLAIMER = 'Indicative fare for the route, date and time you entered, using the route’s standard drive time without traffic. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
@@ -42,8 +42,10 @@ const COMMENT = 'Too high for one way, we usually pay 1,200 a day.';
 /** The result's condition lines (Rate Table v1.10 §2.4), as shown. */
 const conds = (page) => page.locator('.rb-conds li').allTextContents().then((l) => l.map((t) => t.trim()));
 const TOLLS = 'Tolls are extra, paid by you on the road.';
-const EXTRA_TIME = 'Extra time is charged by the minute in the final fare.';
-const NIGHT = 'Includes a night charge: more than 15 minutes of the trip fall between 10 PM and 6 AM.';
+const EXTRA_TIME = 'Extra time is ₹1.99 a minute, added to the final fare.';
+const NIGHT = 'Includes a night charge. Your trip runs between 10 PM and 6 AM.';
+const REST_STOP = 'This trip needs more than 12 hours of driving. Your Buddy needs rest for a safe trip. The fare includes a rest stop.';
+const DRIVE_THROUGH = 'Driving through without a rest stop. You and your Buddy both agree before the trip.';
 
 function backendTotal(inputs) {
   const script = `
@@ -64,6 +66,20 @@ print(json.dumps({"total": b["total"], "trip_days": b["trip_days"], "night": b["
 let failures = 0;
 const check = (ok, msg) => { console.log(`${ok ? '  ok ' : '  FAIL'} ${msg}`); if (!ok) failures += 1; };
 let faresShown = 0; // estimates this run produced, to match against /admin
+
+/** The visitor_ids the beacons were stored with (W10), read from the local D1's files. */
+function beaconVisitorIds(dir) {
+  const py = `
+import glob, sqlite3, sys
+out = set()
+for p in glob.glob(sys.argv[1] + '/**/*.sqlite', recursive=True):
+    try:
+        out |= {r[0] or '' for r in sqlite3.connect('file:' + p + '?mode=ro', uri=True).execute('SELECT visitor_id FROM beacons')}
+    except sqlite3.Error:
+        pass
+print('\\n'.join(sorted(out)))`;
+  return (spawnSync('python3', ['-c', py, dir], { encoding: 'utf8' }).stdout || '').split('\n').filter((x) => x !== '');
+}
 
 /** Everything the analytics stored (the beacons' events), read from the local D1's files. */
 function storedBeacons(dir) {
@@ -183,6 +199,8 @@ async function main() {
   await probe.close();
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 1000 }, userAgent });
   await ctx.addInitScript(() => { window.__rbCountAutomation = true; });
+  // The cookie notice would sit over buttons near the bottom: this browser has said OK already (the notice has its own check, last).
+  await ctx.addCookies([{ name: 'rb_cookie_ok', value: '1', domain: HOST, path: '/' }]);
   // In the Claude Code sandbox, outbound HTTPS only works through the agent
   // proxy, and Chromium's tunnels through it die while Node's succeed. So the
   // browser talks to localhost directly and every other request is replayed
@@ -210,6 +228,13 @@ async function main() {
 
     await page.goto(`${ORIGIN}/estimate/`, { waitUntil: 'networkidle' });
     check(!!(await page.$('#rb-pickup')), 'form rendered (design-system Input present)');
+    const taps = await page.$$eval('button.rb-chip, .rb-place__map', (els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
+    check(taps.length >= 4 && taps.every((h) => h >= 44), `chips and map buttons are at least 44px tall (${taps.join(', ')})`);
+    const timeField = await page.$eval('#rb-pickup-time', (el) => [el.value, el.step]);
+    check(timeField.join() === '07:00,900', `pickup time: 07:00 by default, in 15-minute steps (${timeField.join(', ')})`);
+    const in180 = new Date(Date.now() + (330 + 180 * 1440) * 60000).toISOString().slice(0, 10);
+    const maxes = await page.$$eval('input[type="date"]', (els) => els.map((el) => el.max));
+    check(maxes.length === 2 && maxes.every((m) => m === in180), `no date past today + 180 (max ${maxes.join(', ')})`);
     check(await page.getByRole('button', { name: 'Hourly' }).count() === 0 && !(await page.$('#rb-hours')), 'no Hourly on the website: Round Trip and One Way only');
     const hourlyLink = await ctx.newPage();
     await hourlyLink.goto(`${ORIGIN}/estimate/?type=hourly`, { waitUntil: 'networkidle' });
@@ -231,6 +256,23 @@ async function main() {
     check(!g.off && !(await page.locator('.rb-hint').count()), 'enabled, with no hint, once the trip is complete');
     console.log(`  chose pickup "${pick}", destination "${dest}"`);
     await page.fill('#rb-pickup-time', '09:00');
+    // Past 180 days ahead, Get Estimate waits for a nearer date.
+    const pickupDate = await page.inputValue('#rb-pickup-date');
+    await page.fill('#rb-pickup-date', new Date(Date.parse(in180) + 864e5).toISOString().slice(0, 10));
+    g = await gate();
+    check(g.off && g.hint === 'Pick a pickup date within the next 180 days.', `a date past today + 180 is refused ("${g.hint}")`);
+    await page.fill('#rb-pickup-date', pickupDate);
+    // The route lookup failing (the connection, say): its own screen, then Try again or Edit trip details.
+    await page.route('**/maps/api/js/DirectionsService.Route*', (r) => r.abort('connectionfailed'));
+    await page.getByRole('button', { name: 'Get Estimate' }).click();
+    const failed = await page.waitForSelector('.rb-failed', { timeout: 30000 }).then((el) => el.innerText()).catch(() => '');
+    check(failed.replace(/\s+/g, ' ').trim() === 'The estimate didn’t load. Check your connection and try again. Try again Edit trip details', `a failed lookup shows the error screen ("${failed.replace(/\s+/g, ' ').trim()}")`);
+    await page.screenshot({ path: path.join(SHOTS, 'estimate-error.png') });
+    await page.getByRole('button', { name: 'Try again' }).click();
+    check(await page.waitForSelector('.rb-failed', { timeout: 30000 }).then(() => true).catch(() => false), '…Try again looks the route up again (still failing here)');
+    await page.unroute('**/maps/api/js/DirectionsService.Route*');
+    await page.getByRole('button', { name: 'Edit trip details' }).click();
+    check(await page.inputValue('#rb-destination') !== '' && !(await page.$('.rb-failed')), '…Edit trip details goes back to the form, the trip still filled in');
     const one = await estimateAndCompare(page, 'one-way');
     await page.waitForSelector('.rb-map__canvas .gm-style', { timeout: 30000 }).then(() => check(true, 'Google map rendered on the result')).catch(() => check(false, 'Google map rendered on the result'));
     const drawn = await page.evaluate(() => !!document.querySelector('.rb-map__canvas path[stroke="#4A5C2F"], .rb-map__canvas path[stroke="#4a5c2f"]'));
@@ -292,6 +334,9 @@ async function main() {
     check(clientsNow.length === 1 && waRow[2] === '+919870871324' && waRow[3] === 'Estimate page' && waRow[4]?.startsWith(wantTrip) && waRow[4]?.endsWith('09:00')
       && waRow[5] === shownFare && waRow[6] === '👎' && waRow[7] === COMMENT && waRow[8] === 'Yes' && waRow[9] === 'Yes',
       `estimate waitlist: one row with the trip, fare, vote, comment, consent and the verified phone (${waRow.slice(2, 10).join('; ')})`);
+    const visitorId = (await ctx.cookies()).find((c) => c.name === 'visitor_id')?.value || '';
+    check(/^[a-z0-9]{12,40}$/.test(visitorId) && waRow[11] === visitorId && waRow[18] === '/estimate/' && waRow[19] === '',
+      `…with the visitor_id cookie and the landing page of the first touch (${waRow.slice(11, 20).join('; ')})`);
 
     // Late departure: 16:00 on the Shimla run should not cross midnight; check consistency only.
     await page.getByRole('button', { name: 'Edit trip details' }).click();
@@ -320,8 +365,8 @@ async function main() {
     check(new RegExp(`^EST\\. DISTANCE ${2 * each} km ${each} km each way$`, 'i').test(roundTiles[1] || '') && /each way$/.test(roundTiles[0] || ''),
       `round trip: the tiles give the total and each way (${roundTiles.join(' | ')})`);
     const roundConds = await conds(page);
-    check(roundConds[0] === "Includes 12 hours of your Buddy's time from pickup, on each of the 3 days." && roundConds.includes("Includes your Buddy's stay for 2 nights."),
-      `round trip: 12 hours on each of the 3 days, and the stay for 2 nights (${roundConds.slice(0, 3).join(' | ')})`);
+    check(roundConds[0] === "Includes 12 hours of your Buddy's time from pickup." && roundConds.includes("Includes your Buddy's stay for 2 nights."),
+      `round trip: 12 hours from pickup (no "on each of the N days"), and the stay for 2 nights (${roundConds.slice(0, 3).join(' | ')})`);
 
     // A long drive (§1C): Jaipur and back the same day is about 18 hours of
     // driving. The safety warning, a rest stop by default, and the switch to
@@ -335,9 +380,10 @@ async function main() {
     const jaipur = await estimateAndCompare(page, 'Jaipur and back, same day');
     const warn = (await page.locator('.rb-long__warn').textContent().catch(() => '')).replace(/\s+/g, ' ').trim();
     check(jaipur.result.long_drive && !jaipur.result.drive_through && jaipur.result.trip_days === 2
-      && warn === 'This trip needs more than 12 hours of driving. Your Buddy needs rest for a safe trip. The fare includes a rest stop.',
-      `long drive: the safety warning, rest stop included, a second Trip Day ("${warn}")`);
-    check((await conds(page)).includes('Long drive: a rest stop is included.'), 'long drive: the rest-stop line');
+      && warn === REST_STOP, `long drive: PRD 6.5's rest-stop line, a second Trip Day ("${warn}")`);
+    const switchLabel = (await page.locator('.rb-switch__label').textContent()).trim();
+    check(switchLabel === 'Drive through without a rest stop' && !(await conds(page)).some((c) => /long drive|rest stop/i.test(c)),
+      `long drive: the switch reads "${switchLabel}", and the list of lines doesn't repeat the plan`);
     await page.screenshot({ path: path.join(SHOTS, 'estimate-long-drive.png'), fullPage: true });
     const restFare = jaipur.result.total_fare;
     await page.locator('label[for="rb-drive-through"]').click();
@@ -347,8 +393,8 @@ async function main() {
     const shownThrough = (await page.locator('[data-testid="fare-estimate"]').textContent()).replace(/\D/g, '');
     check(!!through && through.result.total_fare === pyThrough.total && String(through.result.total_fare) === shownThrough && through.result.total_fare > restFare,
       `drive-through: ₹${through?.result.total_fare} shown, backend ₹${pyThrough?.total}, more than the rest stop's ₹${restFare}`);
-    check((await conds(page)).includes('Long drive: drive-through selected.') && (await page.locator('.rb-long__warn').textContent()).includes('without the rest stop'),
-      'drive-through: the line and the warning say so');
+    const warnThrough = (await page.locator('.rb-long__warn').textContent()).replace(/\s+/g, ' ').trim();
+    check(warnThrough === DRIVE_THROUGH, `drive-through: PRD 6.5's line ("${warnThrough}")`);
     await page.locator('label[for="rb-drive-through"]').click();
     check(await page.waitForFunction((was) => window.__rbLastEstimate?.result?.total_fare === was, restFare, { timeout: 5000 }).then(() => true).catch(() => false),
       'switching back restores the rest-stop fare');
@@ -469,6 +515,8 @@ async function main() {
     await contact.screenshot({ path: path.join(SHOTS, 'contact.png'), fullPage: true });
     const contactForm = contact.locator('#rb-contact-waitlist');
     await contact.fill('#rb-contact-phone', '12345');
+    await contact.locator('#rb-contact-phone').blur();
+    check((await contactForm.locator('[role="alert"]').allTextContents()).join() === PHONE_ERROR, `Contact waitlist: leaving the field with a short number says "${PHONE_ERROR}" at once`);
     await contactForm.getByRole('button', { name: 'Join the Waitlist' }).click();
     const cErrs = await contactForm.locator('[role="alert"]').allTextContents();
     check(cErrs.join(' | ') === `${PHONE_ERROR} | ${CONSENT_ERROR}`, `Contact waitlist: a short number, and no tick, are refused (${cErrs.join(' | ')})`);
@@ -552,10 +600,14 @@ async function main() {
       `…and so does its footer (About ${footHrefs.About}, Contact ${footHrefs.Contact}, Become a Buddy ${footHrefs['Become a Buddy']})`);
     const homeText = await beta.evaluate(() => document.body.innerText);
     check(!/police/i.test(homeText) && homeText.includes('Every Buddy is verified before their first trip.'), 'Home: "Every Buddy is verified before their first trip."');
+    check(homeText.includes('Verified, trained Buddies for outstation trips from the Chandigarh Tricity, in your own car.'), 'Home: the hero line (L01)');
     const linkTexts = await beta.$$eval('header a, footer a, a', (as) => as.map((a) => a.textContent.trim()));
     check(!linkTexts.some((t) => /how it works|full journey/i.test(t)) && !homeText.includes('Questions, answered.'),
       'no How It Works page: no link to it in the header, footer or Home, and no FAQ on Home');
     const shipped = await (await fetch(`${dev.base}/beta/`)).text();
+    check(shipped.includes('<html lang="en-IN">') && /<title>RideBuddy — [^<]+<\/title>/.test(shipped) && shipped.includes('og:image')
+      && !shipped.includes('<image-slot') && !shipped.includes('image-slot.js') && !/submitWhatsapp|WhatsApp number|RB-40218|deposit|bookBuddy|journey:|faqs:/.test(shipped),
+      '/beta: lang, title, sharing card; plain images, no image slots; no WhatsApp or Book a Buddy handler, journey, mock trip card, deposit copy or FAQ map');
     check(!shipped.includes('Talk to us.') && !shipped.includes('Built on one promise.') && !/police/i.test(shipped),
       '/beta ships no About or Contact page of its own any more, and no "police" anywhere');
     const howTab = await ctx.newPage();
@@ -613,6 +665,7 @@ async function main() {
     await beta.fill('#rb-full-name', 'Voiku Zavadschi');
     await beta.fill('#apply-phone', '987087132');
     await beta.fill('#rb-driving-licence-number', 'VNS8893');
+    check((await applyDialog.locator('.rb-error-msg').allTextContents()).includes(PHONE_ERROR), 'Buddy application: moving on from a short number flags it at once');
     await beta.fill('#rb-your-city-or-base', 'Mohali');
     await beta.getByRole('button', { name: 'Send Application' }).click();
     check((await applyDialog.locator('.rb-error-msg').allTextContents()).join() === PHONE_ERROR, 'Buddy application: a number a digit short is flagged under the field');
@@ -753,6 +806,8 @@ async function main() {
     }
     // Privacy: the analytics hold no phone numbers, names, licences or addresses.
     const stored = storedBeacons(dev.dir);
+    const vids = beaconVisitorIds(dev.dir);
+    check(vids.length === 1 && /^[a-z0-9]{12,40}$/.test(vids[0]), `every beacon of the run carries the one visitor_id (${vids.join(', ')})`);
     const codes = stub.messages.map((m) => m.code).filter(Boolean);
     const leaks = ['98708', '71324', '7911', '98111', '81112', 'Voiku', 'VNS8893', 'Gurpreet', 'Tricity Drivers', 'tricitydrivers', '03ABCDE', 'usually pay', pinned, pinned.split(',').slice(0, 2).join(','), ...codes].filter((x) => x && stored.includes(x));
     check(stored.includes('estimate_completed') && codes.length >= 6 && !leaks.length,
@@ -772,10 +827,56 @@ async function main() {
     const rpcs = errors.filter(googleRpc).length;
     if (rpcs) console.log(`  note: ${rpcs} internal Google Maps RPC(s) answered 5xx via the sandbox proxy (ignored)`);
     // The forms' 400s are the refusals this run provokes on purpose (the GSTIN a character short).
-    const provoked = (e) => /^HTTP 400 \S+\/api\/(waitlist|buddy)$/.test(e);
+    // …and the route lookup cut off on purpose (the error screen), which Google's script logs.
+    const provoked = (e) => /^HTTP 400 \S+\/api\/(waitlist|buddy)$/.test(e) || /DIRECTIONS_ROUTE: UNKNOWN_ERROR/.test(e);
     const real = errors.filter((e) => !tileSorry(e) && !googleRpc(e) && !provoked(e) && !/deprecat|google\.maps\.Marker|image-slots\.state\.json|Marker is deprecated|gstatic\.com|fonts\.googleapis|ERR_CONNECTION|Failed to load resource/i.test(e));
     check(real.length === 0, `no console/page/HTTP errors (${real.length})`);
     real.forEach((e) => console.log('     ', e));
+
+    // Every page: Indian English, its own title and description, a canonical address on the bare domain, the sharing image.
+    const heads = [];
+    for (const url of ['/', '/estimate/', '/about/', '/contact/']) {
+      const html = await (await fetch(`${dev.base}${url}`)).text();
+      const title = html.match(/<title>([^<]+)<\/title>/)?.[1];
+      const desc = html.match(/<meta name="description" content="([^"]+)"/)?.[1];
+      check(html.includes('<html lang="en-IN">') && !!title && !!desc && html.includes(`<link rel="canonical" href="https://ridebuddy.co.in${url}">`)
+        && html.includes('content="https://ridebuddy.co.in/shared/img/og.jpg"') && html.includes('apple-touch-icon'),
+        `${url}: lang en-IN, "${title}", a description, canonical https://ridebuddy.co.in${url}, sharing image and icons`);
+      heads.push(title, desc);
+    }
+    check(new Set(heads).size === heads.length, 'titles and descriptions differ page to page');
+    for (const img of ['/shared/img/og.jpg', '/shared/img/favicon-32.png', '/shared/img/apple-touch-icon.png', '/sitemap.xml']) {
+      check((await fetch(`${dev.base}${img}`)).status === 200, `${img} is served`);
+    }
+
+    // A first visit, from a campaign link: the cookie notice, the attribution cookies, the parameters carried to the next page.
+    const fresh = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    try {
+      const f = await fresh.newPage();
+      await f.goto(`${ORIGIN}/about/?utm_source=whatsapp&utm_medium=group&utm_campaign=launch&utm_term=drivers&utm_content=v2`, { waitUntil: 'load' });
+      const notice = f.locator('#rb-cookie');
+      check(await notice.waitFor({ timeout: 10000 }).then(() => true).catch(() => false) && /cookies/i.test(await notice.textContent()), 'a first visit sees the cookie notice');
+      await f.screenshot({ path: path.join(SHOTS, 'cookie-notice.png') });
+      const jar = async () => Object.fromEntries((await fresh.cookies()).map((c) => [c.name, decodeURIComponent(c.value)]));
+      let c = await jar();
+      const ft = JSON.parse(c.rb_ft || '{}');
+      check(/^[a-z0-9]{12,40}$/.test(c.visitor_id || '') && ft.utm_source === 'whatsapp' && ft.utm_medium === 'group' && ft.utm_campaign === 'launch'
+        && ft.utm_term === 'drivers' && ft.utm_content === 'v2' && ft.landing_page === '/about/' && (await fresh.cookies()).find((k) => k.name === 'visitor_id')?.expires > Date.now() / 1000 + 360 * 86400,
+        `the visitor_id cookie (12 months) and the first touch: all five utm values and the landing page (${c.rb_ft})`);
+      await notice.getByRole('button', { name: 'OK' }).click();
+      check(await f.locator('#rb-cookie').count() === 0, 'OK puts the notice away');
+      await f.locator('footer').getByRole('link', { name: 'Contact' }).click();
+      await f.waitForURL('**/contact/**', { timeout: 15000 }).catch(() => {});
+      const next = new URL(f.url());
+      check(next.pathname === '/contact/' && next.searchParams.get('utm_source') === 'whatsapp' && next.searchParams.get('utm_content') === 'v2',
+        `campaign parameters ride along on an internal link (${next.pathname}${next.search})`);
+      check(await f.locator('#rb-cookie').count() === 0, '…and the notice stays away once said OK to');
+      await f.goto(`${ORIGIN}/estimate/?internal=1&utm_source=other`, { waitUntil: 'load' });
+      c = await jar();
+      check(c.rb_internal === '1' && JSON.parse(c.rb_ft || '{}').utm_source === 'whatsapp', '?internal=1 marks the browser as the team\'s own; the first touch stays the first');
+    } finally {
+      await fresh.close();
+    }
 
     // No 2Factor key on the server: no code can be sent, so the form says so and nothing saves.
     await dev.stop();

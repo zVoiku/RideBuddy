@@ -14,7 +14,7 @@ import { LINK_PAGES, renderDashboard, shell } from './dashboard.js';
 import { addHit, countHits, networkHash, ready, sha256Hex } from './db.js';
 import { SOURCES } from './forms.js';
 import { ADMIN_HEADERS, plain } from './http.js';
-import { istDay, istStamp, shiftDay, splitStoredTrip, toCsv } from './lib.js';
+import { TOUCH_FIELDS, istDay, istStamp, shiftDay, splitStoredTrip, toCsv } from './lib.js';
 import { otpReady } from './otp.js';
 
 const ADMIN_FAILURE_CAP = 10;
@@ -167,39 +167,44 @@ function exclude(url) {
 const REPEAT = (table) => `(t.phone <> '' AND EXISTS (SELECT 1 FROM ${table} p WHERE p.phone = t.phone AND p.id < t.id))`;
 const VOTE = { up: '👍', down: '👎' };
 
+/** Where a row came from (forms.js, lib.js attribution()), after each list's own columns. */
+const ATTR_SQL = `visitor_id, ${TOUCH_FIELDS.join(', ')}, internal`;
+const ATTR_HEAD = ['Visitor ID', 'UTM source', 'UTM medium', 'UTM campaign', 'UTM term', 'UTM content', 'Referrer', 'Landing page', 'Internal'];
+const attrCells = (r) => [r.visitor_id || '', ...TOUCH_FIELDS.map((f) => r[f] || ''), r.internal ? 'Yes' : ''];
+
 /** Signups, and the 👍/👎 on fares: phone blank where the voter didn't join. */
 async function clientsCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, phone, source, trip, fare, vote, comment, consent, verified, ${REPEAT('waitlist')} AS is_repeat FROM waitlist t ORDER BY id`,
+    `SELECT id, created_at, phone, source, trip, fare, vote, comment, consent, verified, ${ATTR_SQL}, ${REPEAT('waitlist')} AS is_repeat FROM waitlist t ORDER BY id`,
   ).all();
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Phone', 'Source', 'Trip', 'Fare (₹)', '👍/👎', 'Comment', 'Consent', 'Phone verified', 'Repeat'],
+    ['ID', 'Submitted (IST)', 'Phone', 'Source', 'Trip', 'Fare (₹)', '👍/👎', 'Comment', 'Consent', 'Phone verified', 'Repeat', ...ATTR_HEAD],
     results.map((r) => {
       const { trip, fare } = splitStoredTrip(r.trip, r.fare);
       return [r.id, istStamp(r.created_at), r.phone, SOURCES[r.source] || r.source, trip, fare ?? '', VOTE[r.vote] || '',
-        r.comment || '', r.consent ? 'Yes' : '', r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : ''];
+        r.comment || '', r.consent ? 'Yes' : '', r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : '', ...attrCells(r)];
     }),
   );
 }
 
 async function buddiesCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, name, phone, licence, city, verified, ${REPEAT('buddies')} AS is_repeat FROM buddies t ORDER BY id`,
+    `SELECT id, created_at, name, phone, licence, city, verified, ${ATTR_SQL}, ${REPEAT('buddies')} AS is_repeat FROM buddies t ORDER BY id`,
   ).all();
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Name', 'Phone', 'Licence', 'City or base', 'Phone verified', 'Repeat'],
-    results.map((r) => [r.id, istStamp(r.created_at), r.name, r.phone, r.licence, r.city || '', r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : '']),
+    ['ID', 'Submitted (IST)', 'Name', 'Phone', 'Licence', 'City or base', 'Phone verified', 'Repeat', ...ATTR_HEAD],
+    results.map((r) => [r.id, istStamp(r.created_at), r.name, r.phone, r.licence, r.city || '', r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : '', ...attrCells(r)]),
   );
 }
 
 async function agenciesCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, agency, contact, phone, city, drivers, email, gstin, verified, ${REPEAT('agencies')} AS is_repeat FROM agencies t ORDER BY id`,
+    `SELECT id, created_at, agency, contact, phone, city, drivers, email, gstin, verified, ${ATTR_SQL}, ${REPEAT('agencies')} AS is_repeat FROM agencies t ORDER BY id`,
   ).all();
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Agency name', 'Contact person', 'Phone', 'City or base', 'Drivers', 'Work email', 'GSTIN', 'Phone verified', 'Repeat'],
+    ['ID', 'Submitted (IST)', 'Agency name', 'Contact person', 'Phone', 'City or base', 'Drivers', 'Work email', 'GSTIN', 'Phone verified', 'Repeat', ...ATTR_HEAD],
     results.map((r) => [r.id, istStamp(r.created_at), r.agency, r.contact, r.phone, r.city, r.drivers || '', r.email || '', r.gstin || '',
-      r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : '']),
+      r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : '', ...attrCells(r)]),
   );
 }
 

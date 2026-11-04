@@ -3,12 +3,108 @@
  *
  * Page views, clicks and the pages' named moments (the `dataLayer` events the
  * pages already push) go to /api/e on this same site, where the Worker counts
- * them into D1 for /admin. No cookies and no third party. Nothing anyone types
- * is sent: a click is recorded by the button's or link's own label, never a
- * form's contents, and places only by their area. The Worker keeps no IP
- * address. See website/README.md, "Analytics".
+ * them into D1 for /admin. No third party. Nothing anyone types is sent: a
+ * click is recorded by the button's or link's own label, never a form's
+ * contents, and places only by their area. The Worker keeps no IP address.
+ *
+ * Attribution: first-party cookies the Worker reads with every beacon and
+ * every form (worker/lib.js attribution()) — `visitor_id` (12 months), the
+ * first touch `rb_ft` (all five utm_* values, the referring site, the landing
+ * page) and `rb_internal`, set by ?internal=1 so the team's own visits stay
+ * out of the counts. Campaign parameters ride along on internal links, and a
+ * notice says the site uses cookies. See website/README.md, "Analytics".
  */
 (() => {
+  const YEAR = 365 * 86400;
+  const UTM = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content'];
+  const params = new URLSearchParams(location.search);
+  const clean = (s, max) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const own = (h) => h.replace(/^www\./, '');
+  /** The page a visitor is on. A #hash names a part of it (/contact/#apply). */
+  const page = () => location.pathname + (/^#[a-z0-9-]{1,32}$/i.test(location.hash) ? location.hash : '');
+
+  const getCookie = (k) => { const m = document.cookie.match(new RegExp(`(?:^|;\\s*)${k}=([^;]*)`)); return m ? m[1] : ''; };
+  const setCookie = (k, v, maxAge = YEAR) => {
+    document.cookie = `${k}=${v}; Path=/; Max-Age=${maxAge}; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+  };
+
+  // ----- Attribution cookies ------------------------------------------------------------
+
+  try {
+    if (!/^[a-z0-9]{12,40}$/.test(getCookie('visitor_id'))) {
+      setCookie('visitor_id', [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 24));
+    }
+    // The first touch is kept as it was: later visits don't overwrite it.
+    if (!getCookie('rb_ft')) {
+      const ft = {};
+      for (const k of UTM) { const v = clean(params.get(k), 100); if (v) ft[k] = v; }
+      try {
+        const from = document.referrer && new URL(document.referrer).host;
+        if (from && own(from) !== own(location.host)) ft.referrer = from;
+      } catch (e) { /* unparseable referrer: none */ }
+      ft.landing_page = clean(page(), 200);
+      setCookie('rb_ft', encodeURIComponent(JSON.stringify(ft)));
+    }
+    if (params.get('internal') === '1') setCookie('rb_internal', '1');
+    if (params.get('internal') === '0') setCookie('rb_internal', '', 0);
+  } catch (e) { /* cookies blocked: the forms still save, unattributed */ }
+
+  // Campaign parameters (and ?internal) ride along to the site's other pages:
+  // on every same-site link as it is clicked, and through rbCarry() for the
+  // pages' scripted navigation (the header's "Get an Estimate", /beta's links).
+  const CARRY = [...UTM, 'internal'];
+  function carry(url) {
+    try {
+      const u = new URL(url, location.href);
+      if (u.origin !== location.origin) return url;
+      let changed = false;
+      for (const k of CARRY) {
+        const v = params.get(k);
+        if (v && !u.searchParams.has(k)) { u.searchParams.set(k, v); changed = true; }
+      }
+      return changed ? u.pathname + u.search + u.hash : url;
+    } catch (e) {
+      return url;
+    }
+  }
+  window.rbCarry = carry;
+  addEventListener('click', (e) => {
+    const a = e.target instanceof Element && e.target.closest('a[href]');
+    if (!a || (a.target && a.target !== '_self')) return;
+    const href = a.getAttribute('href');
+    if (!href || href.startsWith('#') || /^[a-z]+:/i.test(href) && !/^https?:/i.test(href)) return;
+    const next = carry(href);
+    if (next !== href) a.setAttribute('href', next);
+  }, true);
+
+  // ----- Cookie notice --------------------------------------------------------------------
+
+  // Placeholder wording until Product supplies CL-01.
+  const NOTICE = 'RideBuddy uses cookies to remember how you found us and to count visits. Nothing is shared with advertisers.';
+  if (!getCookie('rb_cookie_ok')) {
+    const bar = document.createElement('div');
+    bar.id = 'rb-cookie';
+    bar.setAttribute('role', 'region');
+    bar.setAttribute('aria-label', 'Cookie notice');
+    bar.style.cssText = 'position:fixed;left:16px;right:16px;bottom:16px;z-index:65;max-width:560px;margin:0 auto;display:flex;gap:16px;align-items:center;'
+      + 'padding:12px 12px 12px 18px;border-radius:12px;background:#1E1E1A;color:#F5F0E8;box-shadow:0 8px 24px rgba(30,30,26,.22);'
+      + 'font:14px/1.5 "DM Sans",system-ui,-apple-system,sans-serif';
+    const text = document.createElement('p');
+    text.style.cssText = 'margin:0;flex:1 1 auto';
+    text.textContent = NOTICE;
+    const ok = document.createElement('button');
+    ok.type = 'button';
+    ok.textContent = 'OK';
+    ok.style.cssText = 'flex:0 0 auto;min-width:64px;min-height:44px;padding:0 18px;border:none;border-radius:12px;cursor:pointer;'
+      + 'background:#F5F0E8;color:#1E1E1A;font:500 15px "DM Sans",system-ui,-apple-system,sans-serif';
+    ok.addEventListener('click', () => { setCookie('rb_cookie_ok', '1'); bar.remove(); });
+    bar.append(text, ok);
+    const show = () => document.body.appendChild(bar);
+    if (document.body) show(); else addEventListener('DOMContentLoaded', show);
+  }
+
+  // ----- Analytics --------------------------------------------------------------------------
+
   // Automated browsers say so; they are not visitors. (test/verify.mjs opts in.)
   if (navigator.webdriver && !window.__rbCountAutomation) return;
 
@@ -18,10 +114,7 @@
   let sent = 0;
   let timer = 0;
 
-  /** The page a visitor is on. /beta/'s pages differ only by their #hash. */
-  const page = () => location.pathname + (/^#[a-z0-9-]{1,32}$/i.test(location.hash) ? location.hash : '');
   const firstPage = page();
-  const clean = (s, max) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, max);
 
   function flush(leaving) {
     clearTimeout(timer);
@@ -62,14 +155,12 @@
       try {
         if (document.referrer) {
           const from = new URL(document.referrer).host;
-          const own = (h) => h.replace(/^www\./, '');
           ev.r = own(from) === own(location.host) ? '(internal)' : from;
         }
       } catch (e) { /* unparseable referrer: treat as direct */ }
-      const q = new URLSearchParams(location.search);
       const u = {};
       for (const k of ['source', 'medium', 'campaign']) {
-        const v = clean(q.get(`utm_${k}`), 60);
+        const v = clean(params.get(`utm_${k}`), 60);
         if (v) u[k] = v;
       }
       if (Object.keys(u).length) ev.u = u;

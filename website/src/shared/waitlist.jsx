@@ -49,7 +49,10 @@ function useWaitlist({ source, form, codeId, toErrors }) {
   return {
     f, done, errors, submit, honeypot,
     verify: () => send(f.code), resend: () => send(''),
-    phoneProps: { value: phone, error: errors.phone, onChange: (v) => { setPhone(v); setErrors((e) => ({ ...e, phone: '' })); } },
+    phoneProps: {
+      value: phone, error: errors.phone, onChange: (v) => { setPhone(v); setErrors((e) => ({ ...e, phone: '' })); },
+      onError: (msg) => setErrors((e) => ({ ...e, phone: msg })),
+    },
     consentProps: { checked: consent, error: errors.consent, onChange: (v) => { setConsent(v); setErrors((e) => ({ ...e, consent: '' })); } },
   };
 }

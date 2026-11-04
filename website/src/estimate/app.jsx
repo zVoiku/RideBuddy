@@ -91,8 +91,9 @@ function TripTiles({ route, round }) {
 }
 
 /**
- * More than 12 hours of driving (§1C): the safety warning, and the switch that
- * shows the drive-through price instead of the default rest stop.
+ * More than 12 hours of driving (§1C): the plan the fare is for, in PRD 6.5's
+ * words, and the switch that shows the drive-through price instead of the
+ * default rest stop. The result's list of lines doesn't repeat it.
  */
 function LongDrive({ driveThrough, onChange }) {
   return (
@@ -100,14 +101,15 @@ function LongDrive({ driveThrough, onChange }) {
       <Icon d={ALERT} size={20} stroke="#8A5A00" />
       <div className="rb-long__body">
         <p className="rb-long__warn">
-          This trip needs more than {FARE.long_drive_threshold_h} hours of driving. Your Buddy needs rest for a safe trip.
-          {driveThrough ? ' This fare is for driving through without the rest stop.' : ' The fare includes a rest stop.'}
+          {driveThrough
+            ? 'Driving through without a rest stop. You and your Buddy both agree before the trip.'
+            : `This trip needs more than ${FARE.long_drive_threshold_h} hours of driving. Your Buddy needs rest for a safe trip. The fare includes a rest stop.`}
         </p>
         <label className="rb-switch" htmlFor="rb-drive-through">
           <input id="rb-drive-through" type="checkbox" role="switch" checked={driveThrough} onChange={(e) => onChange(e.target.checked)} />
           <span className="rb-switch__track" aria-hidden="true"><span className="rb-switch__thumb" /></span>
           <span>
-            <span className="rb-switch__label">Drive through without the rest stop</span>
+            <span className="rb-switch__label">Drive through without a rest stop</span>
             <span className="rb-switch__sub">Only if you and your Buddy both agree.</span>
           </span>
         </label>
@@ -539,6 +541,8 @@ function RouteMap({ route, pickup, joined }) {
 // ----- The page ------------------------------------------------------------------
 
 const PRESET = new URLSearchParams(window.location.search).get('type');
+// The furthest ahead a trip can be priced: today + 180 days.
+const MAX_DAYS_AHEAD = 180;
 
 function App() {
   const [tripType, setTripType] = useState(['round', 'one'].includes(PRESET) ? PRESET : 'round');
@@ -546,7 +550,7 @@ function App() {
   const [destination, setDestination] = useState({ text: '', place: null });
   const [departDate, setDepartDate] = useState(istDate(1));
   const [returnDate, setReturnDate] = useState(istDate(2));
-  const [pickupTime, setPickupTime] = useState('09:00');
+  const [pickupTime, setPickupTime] = useState('07:00');
   const [stayArranged, setStayArranged] = useState(false);
   const [errors, setErrors] = useState({});
   const [view, setView] = useState('form');
@@ -608,7 +612,9 @@ function App() {
     if (!destination.place) return 'Choose your destination from the suggestions or on the map.';
     if (!departDate) return `Pick the ${when} date.`;
     if (departDate < istDate(0)) return `The ${when} date has already passed.`;
+    if (departDate > istDate(MAX_DAYS_AHEAD)) return `Pick a ${when} date within the next ${MAX_DAYS_AHEAD} days.`;
     if (isRound && !returnDate) return 'Pick the return date.';
+    if (isRound && returnDate > istDate(MAX_DAYS_AHEAD)) return `Pick a return date within the next ${MAX_DAYS_AHEAD} days.`;
     if (isRound && !(roundTripDays(departDate, returnDate) >= 1)) return 'The return date is before the departure date.';
     if (!pickupTime) return 'Pick the pickup time.';
     return '';
@@ -659,11 +665,15 @@ function App() {
         night: !!est.night_charge_applied,
       });
     } catch (e) {
-      setView('form');
-      track(e.message === 'no-route' ? 'route_not_found' : 'route_failed');
-      err('destination', e.message === 'no-route'
-        ? 'We couldn’t find a driving route between those places.'
-        : 'We couldn’t calculate that route. Please try again.');
+      // Google answers "no route" either with no legs or by refusing with ZERO_RESULTS / NOT_FOUND.
+      if (e.message === 'no-route' || /ZERO_RESULTS|NOT_FOUND/.test(String(e?.code || e?.message || ''))) {
+        setView('form');
+        track('route_not_found');
+        err('destination', 'We couldn’t find a driving route between those places.');
+        return;
+      }
+      setView('error');
+      track('route_failed');
     }
   };
 
@@ -716,17 +726,16 @@ function App() {
     track('waitlist_joined', { source: 'estimate' });
   };
 
-  // The conditions, as Rate Table v1.10 §2.4 words them (and as the app's
-  // summary.tsx shows them).
+  // The conditions, as PRD 6.5 words them (QA audit v2.3, R01–R03). A long
+  // drive's plan is said once, beside its switch (LongDrive).
   const conditions = result ? (() => {
     const out = [];
-    out.push({ text: `Includes ${result.duty_hours_per_day} hours of your Buddy's time from pickup${result.trip_days > 1 ? `, on each of the ${result.trip_days} days` : ''}.` });
+    out.push({ text: `Includes ${result.duty_hours_per_day} hours of your Buddy's time from pickup.` });
     out.push({ text: "Includes your Buddy's food." });
     if (result.stay_included) out.push({ text: `Includes your Buddy's stay for ${result.stay_nights} ${result.stay_nights === 1 ? 'night' : 'nights'}.` });
-    if (result.night_charge_applied) out.push({ text: `Includes a night charge: more than ${FARE.grace_min} minutes of the trip fall between ${fmtClock(FARE.night_start)} and ${fmtClock(FARE.night_end)}.` });
-    if (result.long_drive) out.push({ text: result.drive_through ? 'Long drive: drive-through selected.' : 'Long drive: a rest stop is included.' });
+    if (result.night_charge_applied) out.push({ text: `Includes a night charge. Your trip runs between ${fmtClock(FARE.night_start)} and ${fmtClock(FARE.night_end)}.` });
     out.push({ text: 'Tolls are extra, paid by you on the road.', excluded: true });
-    out.push({ text: 'Extra time is charged by the minute in the final fare.', excluded: true });
+    out.push({ text: `Extra time is ${formatINR(FARE.extra_time_per_min)} a minute, added to the final fare.`, excluded: true });
     return out;
   })() : [];
 
@@ -773,13 +782,13 @@ function App() {
                   onSelect={(place, msg) => { setDestination(place ? { text: place.description, place } : { text: destination.text, place: null }); err('destination', msg || ''); }} />
 
                 <div className="rb-grid">
-                  <Input label={isRound ? 'Departure date' : 'Pickup date'} type="date" value={departDate} min={istDate(0)}
+                  <Input label={isRound ? 'Departure date' : 'Pickup date'} type="date" value={departDate} min={istDate(0)} max={istDate(MAX_DAYS_AHEAD)}
                     onChange={(e) => { setDepartDate(e.target.value); err('date', ''); }} />
                   {isRound && (
-                    <Input label="Return date" type="date" value={returnDate} min={departDate} error={errors.date || undefined}
+                    <Input label="Return date" type="date" value={returnDate} min={departDate} max={istDate(MAX_DAYS_AHEAD)} error={errors.date || undefined}
                       onChange={(e) => { setReturnDate(e.target.value); err('date', ''); }} />
                   )}
-                  <Input label="Pickup time" type="time" value={pickupTime} onChange={(e) => setPickupTime(e.target.value)} />
+                  <Input label="Pickup time" type="time" step={900} value={pickupTime} onChange={(e) => setPickupTime(e.target.value)} />
                 </div>
 
                 {multiDay && (
@@ -805,6 +814,15 @@ function App() {
             <div className="rb-loading">
               <p>Calculating your fare.</p>
               <div className="rb-loading__bar" />
+            </div>
+          )}
+
+          {view === 'error' && (
+            <div className="rb-failed" role="alert" data-rb-region="estimate error">
+              <p className="rb-failed__title">The estimate didn’t load.</p>
+              <p className="rb-failed__sub">Check your connection and try again.</p>
+              <Button onClick={getEstimate}>Try again</Button>
+              <button type="button" className="rb-edit" onClick={editTrip}>Edit trip details</button>
             </div>
           )}
 
@@ -848,7 +866,8 @@ function App() {
                     ) : (
                       <>
                         <PhoneField id="rb-waitlist-phone" value={waPhone} error={waErrors.phone}
-                          onChange={(v) => { setWaPhone(v); setWaErrors((e) => ({ ...e, phone: '' })); }} />
+                          onChange={(v) => { setWaPhone(v); setWaErrors((e) => ({ ...e, phone: '' })); }}
+                          onError={(msg) => setWaErrors((e) => ({ ...e, phone: msg }))} />
                         <ConsentTick id="rb-waitlist-consent" checked={waConsent} error={waErrors.consent}
                           onChange={(v) => { setWaConsent(v); setWaErrors((e) => ({ ...e, consent: '' })); }} />
                         <Honeypot ref={honeypot} />

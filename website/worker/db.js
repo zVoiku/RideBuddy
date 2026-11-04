@@ -3,7 +3,7 @@
  * step), the salt for hashing network addresses, and the per-network hit
  * counter behind the forms' flood cap and the admin lockout.
  */
-import { networkOf } from './lib.js';
+import { TOUCH_FIELDS, networkOf } from './lib.js';
 
 const SCHEMA = [
   // The lists. The client waitlist also holds the thumbs on fares shown at
@@ -89,18 +89,24 @@ const SCHEMA = [
 ];
 
 /**
- * Columns added after launch, for databases created before them (CREATE TABLE
+ * Columns added after launch, for databases created before them, and for a
+ * fresh one too, whose CREATE TABLEs predate them (CREATE TABLE
  * IF NOT EXISTS leaves an existing table as it is). ALTER TABLE has no "if not
  * exists": a column that is already there fails as a duplicate, which is fine.
  * SCHEMA_VERSION in meta records that this has run.
  */
-const SCHEMA_VERSION = '3';
+const SCHEMA_VERSION = '4';
+/** 4: where each row and beacon came from (lib.js attribution(); src/site.js sets the cookies). */
+const ATTRIBUTION = ['visitor_id TEXT', ...TOUCH_FIELDS.map((f) => `${f} TEXT`), 'internal INTEGER'];
 const ADDED_COLUMNS = [
   // 2: votes, consent and cities
   ['waitlist', 'fare INTEGER'], ['waitlist', 'vote TEXT'], ['waitlist', 'comment TEXT'], ['waitlist', 'consent INTEGER'],
   ['waitlist', 'estimate_id TEXT'], ['waitlist', 'updated_at TEXT'], ['buddies', 'city TEXT'],
   // 3: one-time codes
   ['waitlist', 'verified INTEGER'], ['buddies', 'verified INTEGER'], ['agencies', 'verified INTEGER'],
+  // 4: attribution, on every list and on each beacon (its first touch as JSON)
+  ...['waitlist', 'buddies', 'agencies'].flatMap((t) => ATTRIBUTION.map((c) => [t, c])),
+  ['beacons', 'visitor_id TEXT'], ['beacons', 'touch TEXT'],
 ];
 const AFTER_COLUMNS = ['CREATE INDEX IF NOT EXISTS waitlist_estimate ON waitlist (estimate_id)'];
 

@@ -84,7 +84,7 @@ const VENDOR = {
  * Copied verbatim into beta/. Everything else in ../Webpage is authoring-only;
  * its rate-config.js is rebuilt from rates.json instead (step 4).
  */
-const CARRY = ['_ds', 'assets', 'image-slot.js'];
+const CARRY = ['_ds', 'assets'];
 
 const kb = (n) => `${Math.round(n / 1024)} KB`;
 
@@ -103,12 +103,17 @@ function withSiteScript(html, what) {
  * (the closing band, the footer), and the analytics added.
  */
 async function standalone(html, what, dsDir) {
-  let out = html.replaceAll('__DS_DIR__', `/_ds/${dsDir}`);
+  return withSiteScript((await fillPartials(html.replaceAll('__DS_DIR__', `/_ds/${dsDir}`))).replaceAll('__HOME__', HOME), what);
+}
+
+/** Each <!-- partial:name --> replaced by src/shared/name.html: the head's icons and sharing card, the closing band, the footer. */
+async function fillPartials(html) {
+  let out = html;
   for (const [marker, name] of [...out.matchAll(/<!-- partial:([a-z-]+) -->/g)]) {
     const part = (await readFile(path.join(SRC, 'shared', `${name}.html`), 'utf8')).trimEnd();
     out = out.replace(marker, () => part);
   }
-  return withSiteScript(out.replaceAll('__HOME__', HOME), what);
+  return out;
 }
 
 /** website/.env — KEY=VALUE lines. The process environment wins. */
@@ -162,7 +167,7 @@ async function main() {
   const built = BUILT.map((d) => path.join(SRC, d));
   await cp(SRC, OUT, { recursive: true, filter: (s) => !built.some((d) => s === d || s.startsWith(d + path.sep)) });
   const holding = path.join(OUT, 'index.html');
-  await writeFile(holding, withSiteScript(await readFile(holding, 'utf8'), 'the holding page'));
+  await writeFile(holding, withSiteScript(await fillPartials(await readFile(holding, 'utf8')), 'the holding page'));
   const site = await transform(await readFile(path.join(SRC, 'site.js'), 'utf8'), { minify: true, target: 'es2019', legalComments: 'none' });
   await writeFile(path.join(OUT, 'site.js'), site.code);
 
@@ -210,6 +215,14 @@ async function main() {
       .webp({ quality: 80 }).toFile(path.join(SHARED, 'img', `family-departure-${width}.webp`));
   }
   await cp(path.join(CANVAS, 'assets', 'ridebuddy-logomark-parchment.svg'), path.join(SHARED, 'img', 'logomark-parchment.svg'));
+  // Every page's icons and sharing card (src/shared/head.html): the logomark as
+  // PNGs for browsers that take no SVG icon, and the Home hero cropped to 1200×630.
+  const mark = path.join(SRC, 'logomark.svg');
+  await sharp(mark, { density: 300 }).resize(32, 32).png().toFile(path.join(SHARED, 'img', 'favicon-32.png'));
+  await sharp(mark, { density: 300 }).resize(140, 140).extend({ top: 20, bottom: 20, left: 20, right: 20, background: '#F5F0E8' })
+    .flatten({ background: '#F5F0E8' }).png().toFile(path.join(SHARED, 'img', 'apple-touch-icon.png'));
+  await sharp(path.join(CANVAS, 'assets', 'hero-mountain-road.png')).resize(1200, 630, { fit: 'cover' }).jpeg({ quality: 82 })
+    .toFile(path.join(SHARED, 'img', 'og.jpg'));
 
   // 4. Carry the artboard's dependencies across, and give it the shared rates
   //    and engine in place of the canvas's own copy.
@@ -253,7 +266,7 @@ async function main() {
   if (!canvasFile) throw new Error('no *.dc.html found in ../Webpage');
   let html = await readFile(path.join(CANVAS, canvasFile), 'utf8');
   for (const [from, to] of rewrites) html = html.replaceAll(from, to);
-  html = patchArtboard(html);
+  html = await fillPartials(patchArtboard(html));
 
   // src/_headers also sends X-Robots-Tag, but Pages and Workers static assets
   // do not honour that file identically. The meta tag works on both, and a

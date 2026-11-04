@@ -61,23 +61,32 @@ result in `frontend/app/booking/summary.tsx`.
   prices all sixteen of the rate table's worked examples through both.
 - **Get Estimate** stays disabled until the trip is complete, with one line
   under it saying what is still missing (a pickup chosen from the suggestions
-  or the map, a destination, a date that hasn't passed, a return on or after
-  the departure, a time).
+  or the map, a destination, a date that hasn't passed and is at most 180 days
+  ahead, a return on or after the departure, a time). Pickup time starts at
+  7:00 AM, in 15-minute steps.
+- **A route lookup that fails** (the connection, say) shows its own screen —
+  "The estimate didn’t load. Check your connection and try again." — with
+  **Try again** and **Edit trip details**; "no driving route between those
+  places" stays a line under Destination.
 - **Result** — the route on an interactive map with tap-to-expand, and under
   it two tiles: EST. TRIP TIME and EST. DISTANCE (time to the nearest 5
   minutes, distance to the km, as §2.4 says; the fare uses the exact values;
   a round trip shows the total and "… each way", one way says "One way").
-  Past 12 hours of driving, the safety warning ("This trip needs
-  more than 12 hours of driving. Your Buddy needs rest for a safe trip. The
-  fare includes a rest stop.") and a switch, "Drive through without the rest
-  stop — only if you and your Buddy both agree", that re-prices the same route
-  on the drive-through plan as a new estimate. Then one number, "Inclusive of
+  Past 12 hours of driving, a box with the plan in PRD 6.5's words — "This
+  trip needs more than 12 hours of driving. Your Buddy needs rest for a safe
+  trip. The fare includes a rest stop.", or with the switch on, "Driving
+  through without a rest stop. You and your Buddy both agree before the trip."
+  — and the switch, "Drive through without a rest stop — only if you and your
+  Buddy both agree", that re-prices the same route on the drive-through plan
+  as a new estimate. Then one number, "Inclusive of
   all taxes", and 👍/👎 beside it ("Does this fare work for you?"): a 👎 opens
   an optional comment (280 characters, Send, then "Thank you. Noted."). The
-  §2.4 lines follow — 12 hours of your Buddy's time from pickup (on each day),
-  food, the stay, the night charge and the long-drive plan when they apply;
-  tolls extra, paid on the road; extra time charged by the minute in the final
-  fare — the same lines the app shows,
+  PRD 6.5 lines follow — "Includes 12 hours of your Buddy's time from pickup."
+  (no "on each of the N days"), food, the stay, and the night charge when it
+  applies ("Includes a night charge. Your trip runs between 10 PM and 6 AM.");
+  tolls extra, paid on the road; "Extra time is ₹1.99 a minute, added to the
+  final fare." (the rate from `rates.json`). The app's summary screen still
+  words these as before,
   then "Final fare is calculated when your trip ends." and the disclaimer
   ("Indicative fare for the route, date and time you entered, … Terms of Use
   apply."). Then "Edit trip details" and the waitlist (+91 field and the
@@ -178,7 +187,9 @@ that carries a phone number confirms it with a one-time code first (below).
   Every form shows a fixed `+91` beside a 10-digit field; whatever is typed or
   pasted must come to 10 digits once a `+91` / `0091` / `91` / `0` prefix is
   gone, starting 6–9 as mobiles do, and is stored as `+91XXXXXXXXXX`. Any other
-  country code, and any landline, is refused: a code can't reach them.
+  country code, and any landline, is refused: a code can't reach them. The
+  message is "Enter a valid mobile number.", shown as soon as the field is
+  left with a number that can't be right, and again by the Worker.
 - **Consent.** Every waitlist form has the tick "Send me an SMS or WhatsApp
   when booking opens. I agree to the Privacy Policy and Terms of Use." and
   can't be sent without it; the row's Consent column says Yes. A page cached
@@ -234,9 +245,16 @@ each list's count and a **Download CSV** button:
 
 | File | Columns |
 |---|---|
-| `ridebuddy-clients-YYYY-MM-DD.csv` | ID, Submitted (IST), Phone, Source, Trip, Fare (₹), 👍/👎, Comment, Consent, Phone verified, Repeat |
-| `ridebuddy-buddies-YYYY-MM-DD.csv` | ID, Submitted (IST), Name, Phone, Licence, City or base, Phone verified, Repeat |
-| `ridebuddy-agencies-YYYY-MM-DD.csv` | ID, Submitted (IST), Agency name, Contact person, Phone, City or base, Drivers, Work email, GSTIN, Phone verified, Repeat |
+| `ridebuddy-clients-YYYY-MM-DD.csv` | ID, Submitted (IST), Phone, Source, Trip, Fare (₹), 👍/👎, Comment, Consent, Phone verified, Repeat, *attribution* |
+| `ridebuddy-buddies-YYYY-MM-DD.csv` | ID, Submitted (IST), Name, Phone, Licence, City or base, Phone verified, Repeat, *attribution* |
+| `ridebuddy-agencies-YYYY-MM-DD.csv` | ID, Submitted (IST), Agency name, Contact person, Phone, City or base, Drivers, Work email, GSTIN, Phone verified, Repeat, *attribution* |
+
+*Attribution* is the same nine columns on every list: Visitor ID, UTM source,
+UTM medium, UTM campaign, UTM term, UTM content, Referrer, Landing page and
+Internal — where the visitor first came from, read from the cookies
+`src/site.js` sets (see "Analytics"). Blank on rows saved before them, or
+from a browser that blocks cookies. Internal is Yes for the team's own
+browsers (`?internal=1`), so test signups can be filtered out.
 
 Phone verified is Yes where the number was confirmed with a one-time code
 (blank on rows saved before the codes). In the clients
@@ -295,10 +313,30 @@ masked; the URL, which holds the key, is never logged); the visitor sees
 
 ## Analytics
 
-The site counts its own visits: no Google Analytics, no cookies on visitors,
-nothing sent anywhere but this Worker. `build.mjs` adds `/site.js` (from
-`src/site.js`, minified, ~1.6 KB gzipped) to every page; it batches events and
-posts them to `POST /api/e`, and `/admin` shows the numbers.
+The site counts its own visits: no Google Analytics, nothing sent anywhere
+but this Worker. `build.mjs` adds `/site.js` (from `src/site.js`, minified,
+~2.5 KB gzipped) to every page; it batches events and posts them to
+`POST /api/e`, and `/admin` shows the numbers.
+
+**Attribution (QA audit W10).** `site.js` keeps three first-party cookies, which the
+Worker reads with every beacon and every form (`attribution()` in
+`worker/lib.js`):
+
+| Cookie | What | Kept |
+|---|---|---|
+| `visitor_id` | a random id for this browser | 12 months |
+| `rb_ft` | the first touch: `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, the referring site, the landing page — written on the first page view and never overwritten | 12 months |
+| `rb_internal` | `1` once any page is opened with `?internal=1` (`?internal=0` clears it): the team's own browser | 12 months |
+
+Each beacon is stored with the visitor_id and first touch (`beacons.visitor_id`,
+`beacons.touch`), and each list row with all of it (the CSVs' attribution
+columns). A browser marked internal isn't counted in the analytics at all, and
+its signups say Internal: Yes. Campaign parameters (and `?internal`) are
+carried onto every same-site link as it is clicked, and through
+`window.rbCarry()` for the pages' scripted navigation, so the next page still
+has them. A notice at the foot of the page says the site uses cookies until
+its OK is pressed (`rb_cookie_ok`); its wording is a placeholder until
+Product supplies CL-01 (`NOTICE` in `src/site.js`).
 
 **What is recorded**
 
@@ -331,13 +369,15 @@ suggestion lists are marked `data-rb-private`, so a click on one counts as
 after a full run and fails if a phone number, name, licence, agency detail,
 comment or address appears.
 
-**Visitors without cookies or IPs.** A visitor is a hash of the day's random
+**Counting visitors, without IPs.** The dashboard's visitor is a hash of the day's random
 salt, their network (IPv4 address, or IPv6 /64) and their browser's user agent.
 The salt changes daily and old ones are deleted, so visitors are counted per
-day and can't be followed across days or traced back; no IP is stored.
+day the same way with or without cookies; no IP is stored. The visitor_id is
+for tracing a lead back to how it arrived, not for the counts.
 Crawlers (by user agent), automated browsers (`navigator.webdriver`) and
 browsers marked "Don't count this browser" on `/admin` (an `rb_exclude` cookie
-set only there, for both `ridebuddy.co.in` and `www`) aren't counted. Script
+set only there, for both `ridebuddy.co.in` and `www`) and browsers marked by
+`?internal=1` aren't counted. Script
 blockers hide visits, as with any analytics.
 
 **Storage.** One D1 row per beacon (`beacons`), kept 13 months. Finished days
@@ -433,8 +473,17 @@ canvas into `Webpage/` and rebuild.
    "Verification before the first trip."
 10. **Analytics.** The pop-up reports mistyped numbers, failed saves and codes
    that didn't go through. `/site.js` is added to the page like every other.
+11. **Go-live clean-up (QA audit v2.3).** The hero line reads "Verified,
+   trained Buddies for outstation trips from the Chandigarh Tricity, in your
+   own car." (L01); the page is `lang="en-IN"` with a title, description,
+   sharing card and icons (P01, P02); the hero and trust photos are plain
+   `<img>`s, so `image-slot.js` no longer ships (P05); and the dead code goes —
+   the artboard's own estimator page with its WhatsApp field, the WhatsApp and
+   Book a Buddy handlers, the How It Works journey data with its deposit copy,
+   the mock trip card and the FAQ map (P07). The pop-up's number message is
+   "Enter a valid mobile number.", shown when the field is left too (S04).
 
-5–10 are text patches listed in `artboard-patches.mjs` (a `cut` patch removes
+5–11 are text patches listed in `artboard-patches.mjs` (a `cut` patch removes
 everything between two markers). Each must match the
 artboard an exact number of times (once, unless it says otherwise). A canvas
 re-export that changes one of those spots fails the build here, loudly,
@@ -554,7 +603,12 @@ Validate config changes locally with `npx wrangler deploy --dry-run`.
 
 **Search engines.** `/`, `/estimate/`, `/about/` and `/contact/` are listed in
 `src/sitemap.xml`, which `src/robots.txt` points to; `/beta/` stays out
-(`noindex`, and disallowed in `robots.txt`).
+(`noindex`, and disallowed in `robots.txt`). Submit the sitemap in Google
+Search Console once the site is live. Every page is `lang="en-IN"`, with its
+own title and description, a canonical link on the bare domain, and the
+shared icons and sharing card from `src/shared/head.html` (the logomark as
+32px and 180px PNGs, and `/shared/img/og.jpg`, the Home hero at 1200×630 —
+both made by `build.mjs`; swap in the favicon pack from Drive when it's final).
 
 ### The two addresses
 
@@ -609,8 +663,6 @@ allow `ridebuddy.co.in/*`.
   The app shows the warning and the rest-stop fare only.
 - **`/beta/` is not server-rendered** — the artboard is compiled in the browser
   by Babel. Fine for a link-shared preview; hence `noindex`.
-- **`.image-slots.state.json` 404s** in the `/beta/` console — an authoring-tool
-  probe from `image-slot.js`, harmless.
 - The map uses the classic `google.maps.Marker`; moving to Advanced Markers
   needs a Map ID from the Cloud console.
 - Routing uses `google.maps.DirectionsService`, the browser twin of the

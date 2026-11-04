@@ -227,6 +227,9 @@ const admin = (base, p, { user = 'admin', pass = PASSWORD, ip, headers = {} } = 
 const visible = (html) => html.replace(/<style>[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/g, '').replace(/<[^>]+>/g, ' ').replace(/&#39;/g, "'").replace(/\s+/g, ' ');
 const json = (r) => { try { return JSON.parse(r.text); } catch { return null; } };
 const csvRows = (text) => text.replace(/^\uFEFF/, '').trimEnd().split('\r\n');
+/** The attribution columns every list ends with (admin.js ATTR_HEAD), and a list's rows with them left off where they are blank. */
+const ATTR_HEAD = ',Visitor ID,UTM source,UTM medium,UTM campaign,UTM term,UTM content,Referrer,Landing page,Internal';
+const listRows = (text) => csvRows(text).map((r, i) => (i ? r.replace(/,{9}$/, '') : r));
 
 // ----- Endpoints ------------------------------------------------------------------------
 
@@ -323,9 +326,9 @@ async function endpoints() {
     same(clients.status, 200, 'clients.csv downloads with the password');
     check(/attachment; filename="ridebuddy-clients-\d{4}-\d{2}-\d{2}\.csv"/.test(clients.headers['content-disposition'] || ''), 'as a dated attachment');
     check(clients.text.startsWith('\uFEFF'), 'with a byte-order mark for Excel');
-    const c = csvRows(clients.text);
+    const c = listRows(clients.text);
     const after = (row) => row.replace(/^\d+,\d{4}-\d{2}-\d{2} \d{2}:\d{2},/, '');
-    same(c[0], 'ID,Submitted (IST),Phone,Source,Trip,Fare (₹),👍/👎,Comment,Consent,Phone verified,Repeat', 'clients header');
+    same(c[0], `ID,Submitted (IST),Phone,Source,Trip,Fare (₹),👍/👎,Comment,Consent,Phone verified,Repeat${ATTR_HEAD}`, 'clients header');
     same(c.length, 11, 'nine signups and one vote from someone who never joined; the honeypot one is not listed');
     check(/^1,\d{4}-\d{2}-\d{2} \d{2}:\d{2},\+919870871324,Contact page,,,,,,,$/.test(c[1]), `first signup, normalised and timestamped in IST (${c[1]})`);
     check(c[2].endsWith(',+919870871324,Contact page,,,,,,,(repeat)') && c[3].endsWith('(repeat)'), 'the same number in other formats is marked (repeat)');
@@ -338,15 +341,15 @@ async function endpoints() {
 
     const buddies = await admin(B, '/admin/buddies.csv', { user: 'Admin' });
     same(buddies.status, 200, 'buddies.csv downloads (username in any case)');
-    const b = csvRows(buddies.text);
-    same(b[0], 'ID,Submitted (IST),Name,Phone,Licence,City or base,Phone verified,Repeat', 'buddies header');
+    const b = listRows(buddies.text);
+    same(b[0], `ID,Submitted (IST),Name,Phone,Licence,City or base,Phone verified,Repeat${ATTR_HEAD}`, 'buddies header');
     check(b[1].endsWith(',Voiku Zavadschi,+919870871324,VNS8893,Mohali,,'), `an application row (${b[1]})`);
     check(b[2].endsWith(`,"'=HYPERLINK(""http://x"",""click"")",+919870871324,"PB01 2011, 0012345",,,(repeat)`), 'a formula-like name opens as text; a licence with a comma stays one cell; same phone is a repeat');
 
     const agencies = await admin(B, '/admin/agencies.csv');
     same(agencies.status, 200, 'agencies.csv downloads');
-    const a = csvRows(agencies.text);
-    same(a[0], 'ID,Submitted (IST),Agency name,Contact person,Phone,City or base,Drivers,Work email,GSTIN,Phone verified,Repeat', 'agencies header');
+    const a = listRows(agencies.text);
+    same(a[0], `ID,Submitted (IST),Agency name,Contact person,Phone,City or base,Drivers,Work email,GSTIN,Phone verified,Repeat${ATTR_HEAD}`, 'agencies header');
     same(a.slice(1).map(after).join(' | '), 'Tricity Drivers,Gurpreet Kaur,+919811122233,Panchkula,6–20,ops@tricitydrivers.in,03ABCDE1234F1Z5,, | Solo Cabs,Aman,+919811122233,Zirakpur,,,,,(repeat)',
       'agency rows: email lower-cased, GSTIN upper-cased, optional fields blank, a repeat number marked');
 
@@ -357,6 +360,17 @@ async function endpoints() {
     check(/👍 The fare works 1 👎 It doesn’t 2/.test(dv), 'the dashboard counts the latest vote on each fare');
     check(/One-time codes: no 2Factor key ?, so no phone form can save\. Add TWOFACTOR_API_KEY as a Secret/.test(dv), 'the admin page says when the 2Factor key is missing');
     check(dash.headers['cache-control'] === 'no-store' && /noindex/.test(dash.headers['x-robots-tag'] || ''), 'admin responses are never cached or indexed');
+
+    // Attribution (W10): the cookies src/site.js sets ride on every form; each list row keeps them.
+    const touch = encodeURIComponent(JSON.stringify({ utm_source: 'whatsapp', utm_medium: 'group', utm_campaign: 'launch', utm_term: 'driver', utm_content: 'v2', referrer: 'l.instagram.com', landing_page: '/about/' }));
+    const cookies = { 'CF-Connecting-IP': '198.51.100.40', Cookie: `visitor_id=k3v9x0q2m8w4r7t1z5y6; rb_ft=${touch}; rb_internal=1` };
+    same((await post(B, '/api/waitlist', { phone: '9811100040', source: 'about', consent: true }, cookies)).status, 200, 'a signup with the attribution cookies is saved');
+    same((await post(B, '/api/buddy', { type: 'individual', name: 'Attr Test', phone: '9811100041', licence: 'PB01 4', city: 'Mohali' }, cookies)).status, 200, '…and an application');
+    const ATTR_CELLS = 'k3v9x0q2m8w4r7t1z5y6,whatsapp,group,launch,driver,v2,l.instagram.com,/about/,Yes';
+    check(csvRows((await admin(B, '/admin/clients.csv')).text).at(-1).endsWith(`,+919811100040,About page,,,,,Yes,,,${ATTR_CELLS}`), 'clients.csv: the visitor_id, all five utm values, the referrer, the landing page and Internal');
+    check(csvRows((await admin(B, '/admin/buddies.csv')).text).at(-1).endsWith(`,Attr Test,+919811100041,PB01 4,Mohali,,,${ATTR_CELLS}`), 'buddies.csv: the same');
+    same((await post(B, '/api/waitlist', { phone: '9811100042', source: 'contact', consent: true }, { 'CF-Connecting-IP': '198.51.100.41', Cookie: 'visitor_id=<x>; rb_ft=%7Bnot-json' })).status, 200, 'malformed cookies don\'t stop a signup');
+    check(csvRows((await admin(B, '/admin/clients.csv')).text).at(-1).endsWith(',+919811100042,Contact page,,,,,Yes,,,,,,,,,,,'), '…and are left blank');
 
     // Getting in.
     const none = await raw(B, { path: '/admin' });
@@ -410,6 +424,8 @@ async function analytics() {
       { n: 'phone_invalid', p: '/contact/', d: { form: 'contact' } }, { n: 'waitlist_joined', p: '/contact/', d: { source: 'contact' } },
       { n: 'click', p: '/contact/', w: 'header', l: '<script>alert(1)</script>' }, { n: 'perf', p: '/beta/', d: { lcp: 1800, net: '4g' } },
     ], { ip: '49.36.2.2' });
+    // The team's own browser, marked by ?internal=1 (src/site.js): answered, never counted (Visitors stays 3 below).
+    same((await beacon([{ n: 'pageview', p: '/about/', f: 1 }], { ip: '49.36.4.4', headers: { Cookie: 'visitor_id=internal00000000001; rb_internal=1' } })).status, 204, 'a browser marked ?internal=1 is answered, not counted');
     // C: a browser that sends neither Origin nor Sec-Fetch-Site is still taken.
     same((await raw(B, { method: 'POST', path: '/api/e', body: JSON.stringify({ e: [{ n: 'pageview', p: '/', f: 1 }] }), headers: { 'User-Agent': UA, 'CF-Connecting-IP': '49.36.3.3', 'X-RB-Now': TODAY } })).status, 204, 'a beacon without Origin is taken');
     // Not visitors, or not ours.
@@ -486,10 +502,10 @@ async function migration() {
     same((await post(B, '/api/feedback', { estimate_id: 'est_migration00000001', vote: 'down', comment: 'Fine otherwise', trip: { type: 'one', from: 'Mohali', to: 'Kasauli', date: '2026-10-20', time: '08:00', fare: 1650 } })).status, 200, 'a vote is saved into the older waitlist table');
     same((await post(B, '/api/buddy', { type: 'individual', name: 'New Applicant', phone: '9000000002', licence: 'PB01 2', city: 'Kharar' })).status, 200, 'an application with a city, into the older buddies table');
     same((await post(B, '/api/buddy', { type: 'agency', agency: 'Hill Drivers', contact: 'Ravi', phone: '9000000003', city: 'Mohali' })).status, 200, 'and an agency, into a table that did not exist');
-    const c = csvRows((await admin(B, '/admin/clients.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
+    const c = listRows((await admin(B, '/admin/clients.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
     same(c.slice(1).join(' | '), '1,+919870871324,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,,, | 2,+447911123456,Contact page,,,,,,, | 3,,Estimate page,"One way · Mohali → Kasauli · 20 Oct, 08:00",1650,👎,Fine otherwise,,,',
       'old rows keep their data, the old fare is split into its column, new rows have every column');
-    const b = csvRows((await admin(B, '/admin/buddies.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
+    const b = listRows((await admin(B, '/admin/buddies.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
     same(b.slice(1).join(' | '), '1,Old Applicant,+919000000001,PB01 1,,, | 2,New Applicant,+919000000002,PB01 2,Kharar,,', 'the buddies table gains the city and phone-verified columns');
     same(csvRows((await admin(B, '/admin/agencies.csv')).text).length, 2, 'the agencies list exists and has the new application');
   } finally {
@@ -574,11 +590,11 @@ async function otp() {
     same((await post(B, '/api/waitlist', { ...signup, code: stub.codeFor('+919811100109') }, ip(9))).status, 200, '…and lands on the vote\'s row');
 
     const after = (row) => row.replace(/^\d+,\d{4}-\d{2}-\d{2} \d{2}:\d{2},/, '');
-    same(csvRows((await admin(B, '/admin/clients.csv')).text).slice(1).map(after).join(' | '),
+    same(listRows((await admin(B, '/admin/clients.csv')).text).slice(1).map(after).join(' | '),
       '+919811100101,Home page,,,,,Yes,Yes, | +919811100109,Estimate page,"One way · Sector 17 → Shimla · 12 Oct, 09:00",1612,👎,,Yes,Yes,',
       'the list: only numbers proven with a code, marked Phone verified');
-    same(csvRows((await admin(B, '/admin/buddies.csv')).text).slice(1).map(after).join(), 'Harpreet Singh,+919811100107,PB01 20110012345,Mohali,Yes,', 'buddies.csv: Phone verified');
-    same(csvRows((await admin(B, '/admin/agencies.csv')).text).slice(1).map(after).join(), 'Hill Drivers,Ravi,+919811100108,Mohali,,,,Yes,', 'agencies.csv: Phone verified');
+    same(listRows((await admin(B, '/admin/buddies.csv')).text).slice(1).map(after).join(), 'Harpreet Singh,+919811100107,PB01 20110012345,Mohali,Yes,', 'buddies.csv: Phone verified');
+    same(listRows((await admin(B, '/admin/agencies.csv')).text).slice(1).map(after).join(), 'Hill Drivers,Ravi,+919811100108,Mohali,,,,Yes,', 'agencies.csv: Phone verified');
 
     // The daily cap (OTP_DAILY_CAP, 30 here): past it, no more SMS today.
     let capped = null;

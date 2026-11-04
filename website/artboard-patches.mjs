@@ -19,23 +19,18 @@ const ESTIMATE = [
       this.setState({ page, menuOpen: false });`,
     to: String.raw`    return (e) => {
       if (e) e.preventDefault();
-      if (PAGE_URL[page]) { window.location.href = PAGE_URL[page]; return; }
+      if (PAGE_URL[page]) { window.location.href = (window.rbCarry || String)(PAGE_URL[page]); return; }
       this.setState({ page, menuOpen: false });`,
   },
   {
     why: 'hero / nav "Get an Estimate" CTAs',
     from: "    this.setState({ page: 'estimate', menuOpen: false });\n    window.scrollTo({ top: 0, behavior: 'auto' });\n    this.track('estimator_opened');",
-    to: "    this.track('estimator_opened');\n    window.location.href = '/estimate/';",
+    to: "    this.track('estimator_opened');\n    window.location.href = (window.rbCarry || String)('/estimate/');",
   },
   {
     why: 'Round trips / One-way trips cards',
     from: "    this.setState({ tripType: type, view: 'form' });\n    this.scrollToEstimator();",
-    to: "    window.location.href = '/estimate/?type=' + (type === 'round' ? 'round' : 'one');",
-  },
-  {
-    why: '"Book a Buddy" (waitlist lives under the estimate result)',
-    from: "    this.setState({ page: 'estimate', menuOpen: false });\n    this.track('book_a_buddy_clicked', { phase: String(this.props.phase ?? '1') });",
-    to: "    this.track('book_a_buddy_clicked', { phase: String(this.props.phase ?? '1') });\n    window.location.href = '/estimate/';\n    return;",
+    to: "    window.location.href = (window.rbCarry || String)('/estimate/?type=' + (type === 'round' ? 'round' : 'one'));",
   },
 ];
 
@@ -284,6 +279,7 @@ const WAITLIST = [
     why: 'phone fields: digits only, at most ten; a pasted +91 or 0 number keeps its last ten',
     from: 'class Component extends DCLogic {',
     to: String.raw`const tenDigits = (v) => { const d = String(v).replace(/\D/g, ''); return d.length > 10 ? d.slice(-10) : d; };
+const PHONE_ERROR = 'Enter a valid mobile number.';
 
 class Component extends DCLogic {`,
   },
@@ -302,7 +298,7 @@ class Component extends DCLogic {`,
     const { wlPhone, wlConsent, wlSending } = this.state;
     if (wlSending) return;
     const errors = {};
-    if (!/^[6-9]\d{9}$/.test(wlPhone)) errors.phone = 'Enter a 10-digit mobile number.';
+    if (!/^[6-9]\d{9}$/.test(wlPhone)) errors.phone = PHONE_ERROR;
     if (!wlConsent) errors.consent = 'Tick the box to join the waitlist.';
     if (Object.keys(errors).length) {
       if (errors.phone) this.track('phone_invalid', { form: 'waitlist' });
@@ -341,12 +337,13 @@ class Component extends DCLogic {`,
   {
     why: 'waitlist pop-up: template values',
     from: '      bookBuddy: this.bookBuddy,',
-    to: String.raw`      bookBuddy: this.bookBuddy,
-      openWaitlist: this.openWaitlist, closeWaitlist: this.closeWaitlist, submitWaitlist: this.submitWaitlist,
+    to: String.raw`      openWaitlist: this.openWaitlist, closeWaitlist: this.closeWaitlist, submitWaitlist: this.submitWaitlist,
       wlOpen: s.wlOpen, wlDone: s.wlDone, wlPending: !s.wlDone && s.wlStep !== 'code', wlAtCode: !s.wlDone && s.wlStep === 'code',
       // The pop-up's one-time code step (codeStep()).
       ...this.codeValues('wl', this.verifyWaitlist, this.resendWaitlist),
       wlPhone: s.wlPhone, onWlPhone: (e) => this.setState({ wlPhone: tenDigits(e.target.value), wlErrors: Object.assign({}, s.wlErrors, { phone: '' }) }),
+      // Leaving the field with a number that can't be right says so at once.
+      onWlPhoneBlur: () => { const v = this.state.wlPhone; if (v && !/^[6-9]\d{9}$/.test(v)) this.setState({ wlErrors: Object.assign({}, this.state.wlErrors, { phone: PHONE_ERROR }) }); },
       wlPhoneError: s.wlErrors.phone || '', wlPhoneBorder: s.wlErrors.phone ? '#C62828' : 'rgba(100,100,100,.18)', wlPhoneInvalid: s.wlErrors.phone ? 'true' : 'false',
       wlConsent: s.wlConsent, onWlConsent: (e) => this.setState({ wlConsent: e.target.checked, wlErrors: Object.assign({}, s.wlErrors, { consent: '' }) }),
       wlConsentError: s.wlErrors.consent || '', wlFormError: s.wlErrors.form || '',
@@ -383,7 +380,7 @@ class Component extends DCLogic {`,
                 <label for="rb-wl-phone" style="font-family:var(--font-body),sans-serif;font-size:13px;font-weight:500;color:#888">Mobile number</label>
                 <div style="display:flex;align-items:stretch;min-height:48px;border-radius:var(--radius-lg);border:1.5px solid {{ wlPhoneBorder }};background:var(--color-parchment);overflow:hidden">
                   <span aria-hidden="true" style="display:flex;align-items:center;padding:0 12px 0 14px;border-right:1px solid rgba(100,100,100,.14);font-family:var(--font-body),DM Sans,sans-serif;font-size:15px;font-weight:500;color:var(--color-charcoal)">+91</span>
-                  <input id="rb-wl-phone" type="tel" inputMode="numeric" autoComplete="tel-national" aria-invalid="{{ wlPhoneInvalid }}" value="{{ wlPhone }}" onChange="{{ onWlPhone }}" placeholder="10-digit mobile" style="flex:1;min-width:0;border:none;outline:none;background:transparent;padding:0 14px;font-family:var(--font-body),DM Sans,sans-serif;font-size:15px;letter-spacing:0.02em;color:var(--color-charcoal)">
+                  <input id="rb-wl-phone" type="tel" inputMode="numeric" autoComplete="tel-national" aria-invalid="{{ wlPhoneInvalid }}" value="{{ wlPhone }}" onChange="{{ onWlPhone }}" onBlur="{{ onWlPhoneBlur }}" placeholder="10-digit mobile" style="flex:1;min-width:0;border:none;outline:none;background:transparent;padding:0 14px;font-family:var(--font-body),DM Sans,sans-serif;font-size:15px;letter-spacing:0.02em;color:var(--color-charcoal)">
                 </div>
                 <sc-if value="{{ wlPhoneError }}">
                   <span role="alert" style="font-family:var(--font-body),sans-serif;font-size:13px;color:#C62828">{{ wlPhoneError }}</span>
@@ -439,6 +436,95 @@ class Component extends DCLogic {`,
   },
 ];
 
+// ----- Go-live clean-up (QA audit v2.3: L01, P01, P02, P05, P07) ----------------------
+
+const AUDIT = [
+  {
+    why: 'L01: the hero line',
+    from: 'Verified, trained Buddies for outstation trips from Chandigarh. Shimla, Manali, Kasauli — in your own car.',
+    to: 'Verified, trained Buddies for outstation trips from the Chandigarh Tricity, in your own car.',
+  },
+  { why: 'P01: the page is in Indian English', from: '<html>\n<head>\n', to: '<html lang="en-IN">\n<head>\n' },
+  {
+    // build.mjs fills <!-- partial:head --> (icons, sharing image) as on every page.
+    why: 'P01, P02: a title, a description, the sharing card and the icons',
+    from: '<meta name="viewport" content="width=device-width, initial-scale=1">',
+    to: `<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RideBuddy — Your car. Your comfort. A Buddy you can trust.</title>
+<meta name="description" content="Verified, trained Buddies for outstation trips from the Chandigarh Tricity, in your own car. See your fare and join the waitlist.">
+<meta name="theme-color" content="#F5F0E8">
+<!-- partial:head -->
+<meta property="og:title" content="RideBuddy — Your car. Your comfort. A Buddy you can trust.">
+<meta property="og:description" content="Verified, trained Buddies for outstation trips from the Chandigarh Tricity, in your own car.">
+<meta property="og:url" content="https://ridebuddy.co.in/beta/">`,
+  },
+  {
+    why: 'P05: the hero photo as a plain image rather than an authoring slot',
+    from: String.raw`<image-slot id="home-hero" shape="rect" fit="cover" src="assets/hero-mountain-road.webp" placeholder="Buddy at Mountain Road — navy polo, white SUV, Himachal road curving away, golden hour. 16:9, keep lower-left calm. See imagery-brief.md"></image-slot>`,
+    to: '<img id="home-hero" src="assets/hero-mountain-road.webp" alt="A Buddy beside a white SUV on a mountain road in Himachal" fetchpriority="high" style="width:100%;height:100%;object-fit:cover;display:block">',
+  },
+  {
+    why: 'P05: the trust photo too',
+    from: String.raw`<image-slot id="home-trust" shape="rounded" radius="12" fit="cover" src="assets/buddy-solo.webp" placeholder="Buddy Solo — portrait beside the customer's car, driveway, early golden light. 4:5. See imagery-brief.md"></image-slot>`,
+    to: '<img id="home-trust" src="assets/buddy-solo.webp" alt="A Buddy beside a customer\'s car in the driveway" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block">',
+  },
+  { why: 'P05: no image slots left, so no image-slot.js', from: '<script src="./image-slot.js"></script>\n', to: '' },
+  {
+    why: 'P07: the artboard\'s own estimator page — every Estimate CTA goes to /estimate/ — with its WhatsApp field and Book a Buddy button',
+    cut: ['  <!-- ══════════════════ ESTIMATE ══════════════════ -->', '  <!-- ══════════════════ HOW IT WORKS ══════════════════ -->'],
+  },
+  { why: 'P07: the Book a Buddy handler', from: String.raw`  /**
+   * Booking isn't live in Phase 1, so "Book a Buddy" routes to the only real action:
+   * the waitlist under a completed estimate. Never a dead button.
+   */
+  bookBuddy = (e) => {
+    if (e) e.preventDefault();
+    this.setState({ page: 'estimate', menuOpen: false });
+    this.track('book_a_buddy_clicked', { phase: String(this.props.phase ?? '1') });
+    setTimeout(() => {
+      const el = document.getElementById('waitlist') || document.getElementById('estimate');
+      if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 88, behavior: 'smooth' });
+      else window.scrollTo({ top: 0, behavior: 'auto' });
+    }, 80);
+  };
+
+`, to: '' },
+  { why: 'P07: the WhatsApp handler (a TODO that saved nothing)', from: String.raw`  submitWhatsapp = () => {
+    if (!/\d{6}/.test(this.state.whatsapp)) return;
+    // TODO(open item #3): POST to launch-alert endpoint once founder confirms tooling.
+    this.setState({ waDone: true });
+    this.track('whatsapp_number_submitted');
+  };
+
+`, to: '' },
+  { why: 'P07: the WhatsApp field\'s and the FAQ\'s state', from: "      whatsapp: '',\n      waDone: false,\n      openFaq: 0,\n", to: '' },
+  {
+    why: 'P07: the WhatsApp field\'s template values',
+    from: "      whatsapp: s.whatsapp, waDone: s.waDone, waPending: !s.waDone,\n      onWhatsapp: (e) => this.setState({ whatsapp: e.target.value }),\n      submitWhatsapp: this.submitWhatsapp,\n",
+    to: '',
+  },
+  { why: 'P07: How It Works journey data (with its deposit copy) and the mock trip card (RB-40218)', from: String.raw`      journey: [
+        { title: 'Estimate your fare.', body: 'A specific number for your exact trip, from the Estimate Fare page.' },
+        { title: phase2 ? 'Book in minutes.' : 'Book in minutes — when booking opens.', body: 'Trip type, route, dates, your car — in the app. A 20% deposit confirms the trip; the balance settles when the trip ends.' },
+        { title: 'Your Buddy is assigned.', body: "Profile, rating, trip count — you see who's driving before the trip." },
+        { title: 'Trip day.', body: 'Your Buddy arrives on time. You hold the trip-start OTP — the trip begins only when you share it.' },
+        { title: 'Ride your way.', body: 'Your car, your rules. Stop for parathas at Dharampur if you want. Tolls you pay directly, as you always do.' },
+        { title: 'Trip ends, fare settles.', body: 'You mark the trip complete. Final fare is calculated from the actual trip. Rate your Buddy.' },
+      ],
+      tripCardProps: {
+        from: 'Chandigarh',
+        to: 'Shimla',
+        bookingId: 'RB-40218',
+        badge: React.createElement(window.RideBuddyDesignSystem_f63581.Badge, { status: 'assigned' }, 'Assigned'),
+        details: [
+          { label: 'Depart', value: pretty(s.departDate) },
+          { label: 'Pickup', value: s.pickupTime },
+          { label: 'Type', value: 'Round Trip' },
+        ],
+      },
+`, to: '' },
+];
+
 // ----- No How It Works page ----------------------------------------------------------
 // The page goes, with the FAQ that lived on it, Home's "See the full journey"
 // link to it, and its links in the header, phone menu and footer (URLS, BOOKING).
@@ -450,13 +536,18 @@ const HOW = [
     cut: ['  <!-- ══════════════════ HOW IT WORKS ══════════════════ -->', '  <!-- ══════════════════ ABOUT ══════════════════ -->'],
   },
   {
-    why: 'the FAQ\'s questions: nothing shows them any more, so none of them ships',
-    from: String.raw`        ['Is this a cab service?', 'No. You travel in your own car; RideBuddy provides the driver.'],
+    why: 'the FAQ\'s data: nothing shows it any more (P07: no empty FAQ map either)',
+    from: String.raw`      faqs: [
+        ['Is this a cab service?', 'No. You travel in your own car; RideBuddy provides the driver.'],
         ['Is the estimate the final price?', "It's a specific estimate for your exact trip. Final fare is calculated when your trip ends, from the actual trip."],
         ['What about tolls?', "Tolls aren't part of the fare. You pay them directly on the road, in your own car — your FASTag, your call."],
         ["What does my Buddy's stay cost on multi-day trips?", '₹499 per night, included in your estimate — or arrange the stay yourself and it\u2019s excluded. Many hotels provide driver stay at no cost.'],
         ['Who are the Buddies?', 'Police-verified before their first trip, formally trained on hill roads, night driving and customer conduct, and rated by customers after every trip.'],
         ['Which cities do you serve?', 'Pickups across the Chandigarh Tricity — Chandigarh, Mohali and Panchkula. Outstation destinations across North India.'],
+      ].map(([q2, a], i) => ({
+        q: q2, a, open: s.openFaq === i, rot: s.openFaq === i ? '180deg' : '0deg',
+        toggle: () => this.setState((p) => ({ openFaq: p.openFaq === i ? -1 : i })),
+      })),
 `,
     to: '',
   },
@@ -494,4 +585,4 @@ const VERIFIED = [
   },
 ];
 
-export const ARTBOARD_PATCHES = [...ESTIMATE, ...URLS, ...BOOKING, ...FORMS, ...WAITLIST, ...HOW, ...MOVED_OUT, ...VERIFIED];
+export const ARTBOARD_PATCHES = [...ESTIMATE, ...URLS, ...BOOKING, ...FORMS, ...WAITLIST, ...AUDIT, ...HOW, ...MOVED_OUT, ...VERIFIED];
