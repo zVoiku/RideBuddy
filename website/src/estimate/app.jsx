@@ -56,7 +56,7 @@ function newEstimateId() {
   return `est_${[...bytes].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 20)}`;
 }
 
-/** The trip a fare is for, ["Round Trip", "2 days"]: two rows beside the fare. */
+/** The trip a fare is for, ["Round Trip", "2 days"]: two rows, first under the route map. */
 function tripParts(result) {
   const d = result.trip_days;
   return [result.labels.round ? 'Round Trip' : 'One Way', `${d} day${d === 1 ? '' : 's'}`];
@@ -77,8 +77,12 @@ function tripOf(result) {
 
 // ----- Small parts of the result ---------------------------------------------------
 
-/** Under the route map: the drive time and distance, each way too on a round trip. */
-function TripTiles({ route, round }) {
+/**
+ * Under the route map, three sections: the trip the fare is for in two rows
+ * ("Round Trip" over "2 days"), then the drive time and the distance, each way
+ * too on a round trip.
+ */
+function TripTiles({ route, round, detail }) {
   const km = Math.round(route.distance_km);
   const min = route.duration_min;
   const tile = (icon, label, value, note) => (
@@ -93,6 +97,9 @@ function TripTiles({ route, round }) {
   );
   return (
     <div className="rb-tiles">
+      <div className="rb-tile rb-tile--trip">
+        <div className="rb-tile__trip"><span>{detail[0]}</span><span>{detail[1]}</span></div>
+      </div>
       {tile(CLOCK, 'Est. trip time', fmtDuration(round ? 2 * min : min), round ? `${fmtDuration(min)} each way` : 'One way')}
       {tile(ROUTE, 'Est. distance', `${(round ? 2 * km : km).toLocaleString('en-IN')} km`, round ? `${km.toLocaleString('en-IN')} km each way` : 'One way')}
     </div>
@@ -132,7 +139,7 @@ function LongDrive({ driveThrough, onChange }) {
  * at once (POST /api/feedback); the latest vote counts and a comment stays when
  * the vote changes. Keyed by the estimate, so a new fare starts unvoted.
  */
-function FarePanel({ fare, detail, estimateId, trip }) {
+function FarePanel({ fare, estimateId, trip }) {
   const [vote, setVote] = useState(null);
   const [open, setOpen] = useState(false);
   const [comment, setComment] = useState('');
@@ -184,12 +191,9 @@ function FarePanel({ fare, detail, estimateId, trip }) {
   return (
     <div className="rb-farepanel">
       <div className="rb-farepanel__row">
-        <div className="rb-fare">
+        <div>
           <div className="rb-fare__label">Estimated fare</div>
-          <div className="rb-fare__amount">
-            <span className="rb-fare__value" data-testid="fare-estimate">{formatINR(fare)}</span>
-            <span className="rb-fare__trip"><span>{detail[0]}</span><span>{detail[1]}</span></span>
-          </div>
+          <div className="rb-fare__value" data-testid="fare-estimate">{formatINR(fare)}</div>
           <div className="rb-fare__tax">Inclusive of all taxes</div>
         </div>
         <div className="rb-thumbs" role="group" aria-label="Does this fare work for you?">
@@ -871,10 +875,10 @@ function App() {
               <p className="rb-result__route">{routeLine}</p>
 
               <RouteMap route={route} pickup={pickup.place} joined />
-              <TripTiles route={route} round={result.labels.round} />
+              <TripTiles route={route} round={result.labels.round} detail={tripParts(result)} />
 
               {result.long_drive && <LongDrive driveThrough={result.drive_through} onChange={setDriveThrough} />}
-              <FarePanel key={estimateId} fare={result.total_fare} detail={tripParts(result)} estimateId={estimateId} trip={tripOf(result)} />
+              <FarePanel key={estimateId} fare={result.total_fare} estimateId={estimateId} trip={tripOf(result)} />
               <ul className="rb-conds">
                 {conditions.map((c, i) => (
                   <li key={i} className={c.excluded ? 'rb-excluded' : ''}>
