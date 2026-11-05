@@ -56,11 +56,14 @@ function newEstimateId() {
   return `est_${[...bytes].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 20)}`;
 }
 
-/** "Round Trip · 2 days": the trip a fare is for, as the result says it beside the fare and under the route. */
-function tripDetail(result) {
+/** The trip a fare is for, ["Round Trip", "2 days"]: two rows beside the fare. */
+function tripParts(result) {
   const d = result.trip_days;
-  return `${result.labels.round ? 'Round Trip' : 'One Way'} · ${d} day${d === 1 ? '' : 's'}`;
+  return [result.labels.round ? 'Round Trip' : 'One Way', `${d} day${d === 1 ? '' : 's'}`];
 }
+
+/** "Round Trip · 2 days": the same, in one line under the route. */
+const tripDetail = (result) => tripParts(result).join(' · ');
 
 /** What the Worker words into the Trip column, plus the fare, which has its own. */
 function tripOf(result) {
@@ -181,9 +184,12 @@ function FarePanel({ fare, detail, estimateId, trip }) {
   return (
     <div className="rb-farepanel">
       <div className="rb-farepanel__row">
-        <div>
-          <div className="rb-fare__label">Estimated fare<span className="rb-fare__trip"> · {detail}</span></div>
-          <div className="rb-fare__value" data-testid="fare-estimate">{formatINR(fare)}</div>
+        <div className="rb-fare">
+          <div className="rb-fare__label">Estimated fare</div>
+          <div className="rb-fare__amount">
+            <span className="rb-fare__value" data-testid="fare-estimate">{formatINR(fare)}</span>
+            <span className="rb-fare__trip"><span>{detail[0]}</span><span>{detail[1]}</span></span>
+          </div>
           <div className="rb-fare__tax">Inclusive of all taxes</div>
         </div>
         <div className="rb-thumbs" role="group" aria-label="Does this fare work for you?">
@@ -219,17 +225,21 @@ const HOURS = Array.from({ length: 24 }, (_, h) => h);
 const MINUTES = [0, 15, 30, 45];
 const pad2 = (n) => String(n).padStart(2, '0');
 
-/** Two dropdowns for "HH:MM": the hour as "7 AM", "7 PM", and :00, :15, :30 or :45. */
+/**
+ * Two dropdowns for "HH:MM", the hour as "7 AM", "7 PM" and the minutes as 00,
+ * 15, 30 or 45, in one field drawn like the date fields beside it.
+ */
 function TimeField({ label, value, onChange }) {
   const [h, m] = value.split(':').map(Number);
   return (
     <div className="rb-field" role="group" aria-labelledby="rb-pickup-time-label">
       <span className="rb-label" id="rb-pickup-time-label">{label}</span>
       <div className="rb-time">
-        <select id="rb-pickup-hour" className="rb-select" aria-label="Hour" value={h} onChange={(e) => onChange(`${pad2(e.target.value)}:${pad2(m)}`)}>
+        <select id="rb-pickup-hour" className="rb-time__hour" aria-label="Hour" value={h} onChange={(e) => onChange(`${pad2(e.target.value)}:${pad2(m)}`)}>
           {HOURS.map((x) => <option key={x} value={x}>{`${x % 12 || 12} ${x < 12 ? 'AM' : 'PM'}`}</option>)}
         </select>
-        <select id="rb-pickup-minute" className="rb-select" aria-label="Minutes" value={m} onChange={(e) => onChange(`${pad2(h)}:${pad2(e.target.value)}`)}>
+        <span className="rb-time__sep" aria-hidden="true" />
+        <select id="rb-pickup-minute" className="rb-time__min" aria-label="Minutes" value={m} onChange={(e) => onChange(`${pad2(h)}:${pad2(e.target.value)}`)}>
           {MINUTES.map((x) => <option key={x} value={x}>{pad2(x)}</option>)}
         </select>
       </div>
@@ -864,7 +874,7 @@ function App() {
               <TripTiles route={route} round={result.labels.round} />
 
               {result.long_drive && <LongDrive driveThrough={result.drive_through} onChange={setDriveThrough} />}
-              <FarePanel key={estimateId} fare={result.total_fare} detail={tripDetail(result)} estimateId={estimateId} trip={tripOf(result)} />
+              <FarePanel key={estimateId} fare={result.total_fare} detail={tripParts(result)} estimateId={estimateId} trip={tripOf(result)} />
               <ul className="rb-conds">
                 {conditions.map((c, i) => (
                   <li key={i} className={c.excluded ? 'rb-excluded' : ''}>

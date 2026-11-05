@@ -12,6 +12,7 @@
  *     node website/test/verify.mjs
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -154,8 +155,31 @@ async function setTime(page, hhmm) {
   await page.selectOption('#rb-pickup-minute', String(m));
 }
 
-/** "Estimated fare · Round Trip · 3 days": the label beside the fare, as shown (not upper-cased). */
-const fareLabel = (page) => page.locator('.rb-fare__label').evaluate((el) => el.textContent.replace(/\s+/g, ' ').trim());
+/** "Round Trip / 3 days": the trip the fare is for, its two rows beside the fare. */
+const fareTrip = (page) => page.locator('.rb-fare__trip').evaluate((el) => [...el.children].map((row) => row.textContent.trim()).join(' / '));
+
+/**
+ * The trip beside the fare as drawn: in the fare's typeface, to its right and
+ * within its height, in two rows centred on each other, and between them a
+ * 2px bar of the fare's green, within the fare's height.
+ */
+const fareLook = (page) => page.evaluate(() => {
+  const [label, value, trip] = ['.rb-fare__label', '.rb-fare__value', '.rb-fare__trip'].map((s) => document.querySelector(s));
+  const v = value.getBoundingClientRect(), t = trip.getBoundingClientRect();
+  const rows = [...trip.children].map((row) => row.getBoundingClientRect());
+  const mid = (r) => (r.left + r.right) / 2;
+  const b = getComputedStyle(trip, '::before');
+  const bar = { left: t.left + parseFloat(b.left), top: t.top + parseFloat(b.top), bottom: t.bottom - parseFloat(b.bottom) };
+  return {
+    label: label.textContent.trim(), sameFont: getComputedStyle(value).fontFamily === getComputedStyle(trip).fontFamily,
+    twoRows: rows.length === 2 && rows[1].top >= rows[0].bottom - 1 && Math.abs(mid(rows[0]) - mid(rows[1])) < 1,
+    beside: rows.length === 2 && Math.min(rows[0].left, rows[1].left) >= v.right && rows[0].top >= v.top - 2 && rows[1].bottom <= v.bottom + 6,
+    bar: b.content === '""' && b.width === '2px' && b.backgroundColor === getComputedStyle(value).color
+      && bar.left > v.right && bar.left + 2 < Math.min(...rows.map((r) => r.left)) && bar.top >= v.top && bar.bottom <= v.bottom,
+    sizes: [value, trip].map((el) => getComputedStyle(el).fontSize).join('/'),
+  };
+});
+const looksRight = (l) => l.label === 'Estimated fare' && l.sameFont && l.twoRows && l.beside && l.bar;
 
 async function estimateAndCompare(page, name) {
   await page.getByRole('button', { name: 'Get Estimate' }).click();
@@ -189,6 +213,23 @@ async function main() {
     port: PORT, password: ADMIN_PASSWORD,
     vars: { RB_TEST: '1', TWOFACTOR_API_KEY: 'verify-key', TWOFACTOR_API_BASE: stub.url },
   });
+
+  // Every page is checked with the server on each visit, and asks for the
+  // scripts and stylesheet built with it by content, kept a year (src/_headers,
+  // build.mjs versionAssets): a cached page can't meet a newer script.
+  const served = async (p) => { const r = await fetch(`${dev.base}${p}`); return { cache: r.headers.get('cache-control'), body: Buffer.from(await r.arrayBuffer()) }; };
+  for (const page of ['/', '/estimate/', '/about/', '/contact/', '/beta/']) {
+    const { cache, body } = await served(page);
+    const refs = [...body.toString().matchAll(/(?:src|href)="(\/(?:estimate\/app\.js|shared\/pages\.js|shared\/site\.css|site\.js))(\?v=[0-9a-f]{12})?"/g)];
+    const wrong = [];
+    for (const [, file, v] of refs) {
+      const asset = await served(`${file}${v || ''}`);
+      if (v !== `?v=${createHash('sha256').update(asset.body).digest('hex').slice(0, 12)}` || asset.cache !== 'public, max-age=31536000, immutable') wrong.push(`${file}${v || ''} (${asset.cache})`);
+    }
+    check(cache === 'no-cache' && refs.length >= 1 && !wrong.length,
+      `${page}: revalidated each visit (${cache}); loads ${refs.map((r) => r[1]).join(', ')} by content, kept a year${wrong.length ? ` — wrong: ${wrong.join(', ')}` : ''}`);
+  }
+
   /** Types the code the stand-in 2Factor got for `phone` and verifies it, after one wrong try when `wrongFirst`. */
   const enterCode = async (pg, scope, fieldId, phone, wrongFirst = false) => {
     const code = stub.codeFor(phone);
@@ -245,6 +286,12 @@ async function main() {
     const shown = [await page.inputValue('#rb-pickup-hour'), await page.inputValue('#rb-pickup-minute')];
     check(hours.length === 24 && hours[0] === '12 AM' && hours[7] === '7 AM' && hours[23] === '11 PM' && minutes.join() === '00,15,30,45' && shown.join(':') === '7:0',
       `pickup time: an hour dropdown (12 AM … 11 PM) and minutes in 15s (${minutes.join(', ')}), 7:00 AM by default`);
+    const fields = await page.$$eval('.rb-grid input[type="date"], .rb-time', (els) => els.map((el) => {
+      const cs = getComputedStyle(el);
+      return `${Math.round(el.getBoundingClientRect().height)} ${cs.backgroundColor} ${cs.borderRadius}`;
+    }));
+    check(fields.length === 3 && new Set(fields).size === 1 && await page.locator('.rb-time select').count() === 2,
+      `pickup time: both dropdowns in one field drawn like the date fields (${[...new Set(fields)].join(' / ')})`);
     const in180 = new Date(Date.now() + (330 + 180 * 1440) * 60000).toISOString().slice(0, 10);
     const maxes = await page.$$eval('input[type="date"]', (els) => els.map((el) => el.max));
     check(maxes.length === 2 && maxes.every((m) => m === in180), `no date past today + 180 (max ${maxes.join(', ')})`);
@@ -309,7 +356,14 @@ async function main() {
     const result = (await page.locator('.rb-result').innerText()).replace(/\s+/g, ' ');
     check(result.includes('Inclusive of all taxes') && !/Extra distance/.test(result) && result.includes('Final fare is calculated when your trip ends.'),
       'the fare says it includes all taxes; no "Extra distance" line; the final-fare line stays');
-    check(await fareLabel(page) === 'Estimated fare · One Way · 1 day', `beside the fare, the trip it is for ("${await fareLabel(page)}")`);
+    check(await fareTrip(page) === 'One Way / 1 day', `beside the fare, the trip it is for ("${await fareTrip(page)}")`);
+    const onDesktop = await fareLook(page);
+    check(looksRight(onDesktop), `the trip in two rows, centred, to the right of the fare in its typeface, a bar of its green between (${JSON.stringify(onDesktop)})`);
+    // A 360px phone, the narrowest common one: still beside the fare, both scaled to the panel.
+    await page.setViewportSize({ width: 360, height: 800 });
+    const onPhone = await fareLook(page);
+    await page.setViewportSize({ width: 1280, height: 1000 });
+    check(looksRight(onPhone), `…and on a 360px phone (${JSON.stringify(onPhone)})`);
     const oneConds = await conds(page);
     check(JSON.stringify(oneConds) === JSON.stringify(["Includes 12 hours of your Buddy's time from pickup.", "Includes your Buddy's food.", TOLLS, EXTRA_TIME]),
       `one way, 9 AM: the §2.4 lines (${oneConds.join(' | ')})`);
@@ -378,7 +432,7 @@ async function main() {
     const each = Math.round(round.inputs.distanceKm); // the route one way
     check(new RegExp(`^EST\\. DISTANCE ${2 * each} km ${each} km each way$`, 'i').test(roundTiles[1] || '') && /each way$/.test(roundTiles[0] || ''),
       `round trip: the tiles give the total and each way (${roundTiles.join(' | ')})`);
-    check(await fareLabel(page) === 'Estimated fare · Round Trip · 3 days', `round trip: "${await fareLabel(page)}"`);
+    check(await fareTrip(page) === 'Round Trip / 3 days', `round trip: "${await fareTrip(page)}"`);
     const roundConds = await conds(page);
     check(roundConds[0] === "Includes 12 hours of your Buddy's time from pickup." && roundConds.includes("Includes your Buddy's stay for 2 nights."),
       `round trip: 12 hours from pickup (no "on each of the N days"), and the stay for 2 nights (${roundConds.slice(0, 3).join(' | ')})`);
@@ -396,7 +450,7 @@ async function main() {
     const warn = (await page.locator('.rb-long__warn').textContent().catch(() => '')).replace(/\s+/g, ' ').trim();
     check(jaipur.result.long_drive && !jaipur.result.drive_through && jaipur.result.trip_days === 2
       && warn === REST_STOP, `long drive: PRD 6.5's rest-stop line, a second Trip Day ("${warn}")`);
-    check(await fareLabel(page) === 'Estimated fare · Round Trip · 2 days', `a same-day round trip with its rest stop is priced as 2 days, and says so ("${await fareLabel(page)}")`);
+    check(await fareTrip(page) === 'Round Trip / 2 days', `a same-day round trip with its rest stop is priced as 2 days, and says so ("${await fareTrip(page)}")`);
     const switchLabel = (await page.locator('.rb-switch__label').textContent()).trim();
     check(switchLabel === 'Drive through without a rest stop' && !(await conds(page)).some((c) => /long drive|rest stop/i.test(c)),
       `long drive: the switch reads "${switchLabel}", and the list of lines doesn't repeat the plan`);

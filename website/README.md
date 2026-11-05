@@ -62,9 +62,9 @@ result in `frontend/app/booking/summary.tsx`.
 - **Get Estimate** stays disabled until the trip is complete, with one line
   under it saying what is still missing (a pickup chosen from the suggestions
   or the map, a destination, a date that hasn't passed and is at most 180 days
-  ahead, a return on or after the departure, a time). Pickup time is two
-  dropdowns, the hour (12 AM … 11 PM) and the minutes (00, 15, 30, 45),
-  7:00 AM to start.
+  ahead, a return on or after the departure, a time). Pickup time is one
+  field drawn like the date fields beside it, holding two dropdowns: the hour
+  (12 AM … 11 PM) and the minutes (00, 15, 30, 45), 7:00 AM to start.
 - **A route lookup that fails** (the connection, say) shows its own screen —
   "The estimate didn’t load. Check your connection and try again." — with
   **Try again** and **Edit trip details**; "no driving route between those
@@ -80,9 +80,11 @@ result in `frontend/app/booking/summary.tsx`.
   — and the switch, "Drive through without a rest stop — only if you and your
   Buddy both agree", that re-prices the same route on the drive-through plan
   as a new estimate. Then one number, "Inclusive of
-  all taxes", with the trip it is for beside its label ("Estimated fare ·
-  Round Trip · 2 days" — the days the fare covers, a rest stop's included),
-  and 👍/👎 beside it ("Does this fare work for you?"): a 👎 opens
+  all taxes", with the trip it is for to its right in the fare's typeface and
+  green, after a thin bar of the same green, in two rows centred on each other
+  ("Round Trip" over "2 days" — the days the fare covers, a rest stop's
+  included; narrower than a 390px phone all of it scales with the panel, so a
+  fare of up to five digits keeps it beside), and 👍/👎 beside it ("Does this fare work for you?"): a 👎 opens
   an optional comment (280 characters, Send, then "Thank you. Noted."). The
   PRD 6.5 lines follow — "Includes 12 hours of your Buddy's time from pickup."
   (no "on each of the N days"), food, the stay, and the night charge when it
@@ -532,16 +534,18 @@ dashboard section, a label sent to inject HTML shown escaped, the daily CSV,
 "Don't count this browser", the campaign link maker, totals outliving 13
 months, and a backlog summed eight days at a time.
 
-`verify.mjs` serves `dist/` and the Worker with `wrangler dev`, drives the
-pages headless — no Hourly (an old `?type=hourly` link opens a round trip),
+`verify.mjs` serves `dist/` and the Worker with `wrangler dev`, checks each
+page's caching (sent `no-cache`, its scripts asked for by the hash of what is
+served and kept a year), drives the pages headless — no Hourly (an old `?type=hourly` link opens a round trip),
 one way, a late departure, a three-day round trip, a same-day Jaipur round trip long enough for the long-drive rule (warning, rest
 stop, then the drive-through switch and back), an out-of-area pickup, the map
 picker (open, drag, re-caption, tap a place, confirm, then price the pinned
 point), fullscreen map, mobile viewport — and re-prices every estimate with
 the backend's `fare_breakdown` on the exact inputs the page used — with Get
-Estimate disabled and its hint until the trip is complete, the trip-time and
-distance tiles, "Inclusive of all taxes", the §2.4 lines, and the
-disclaimers. Then the forms: a 👎 with a comment,
+Estimate disabled and its hint until the trip is complete, the pickup time
+drawn like the date fields, the trip in two rows to the right of the fare
+in its typeface, after a bar of its green (on a 360px phone too), the trip-time and distance tiles, "Inclusive of all taxes", the
+§2.4 lines, and the disclaimers. Then the forms: a 👎 with a comment,
 then joining the waitlist under the same estimate (one row with the vote), the
 `/contact/` waitlist card, About's Join the Waitlist pop-up, the `/beta` hero's,
 an individual Buddy application from an old `/beta/#apply` link and a driver
@@ -603,6 +607,17 @@ Preview builds of other branches (`wrangler versions upload`) bind the same
 database, so test submissions from a preview land in the real lists.
 
 Validate config changes locally with `npx wrangler deploy --dry-run`.
+
+**Caching** (`src/_headers`). The pages — `/`, `/estimate/`, `/about/`,
+`/contact/`, `/beta/` — are sent `no-cache`: a browser checks each with
+Cloudflare on every visit (a quick 304 when nothing changed), so a deploy
+shows at once. The scripts and stylesheet `build.mjs` makes
+(`/estimate/app.js`, `/shared/pages.js`, `/shared/site.css`, `/site.js`) are
+asked for by content, `?v=<hash>`, and kept a year; a build that changes one
+gives it a new address. So a page always arrives with the files built with it,
+never an old page with a new script. Pictures and the artboard's own files
+keep a 5-minute cache. A new page needs its own `no-cache` line in `_headers`;
+the build versions its scripts by itself.
 
 **Search engines.** `/`, `/estimate/`, `/about/` and `/contact/` are listed in
 `src/sitemap.xml`, which `src/robots.txt` points to; `/beta/` stays out

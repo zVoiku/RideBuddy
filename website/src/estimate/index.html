@@ -43,15 +43,26 @@
   .rb-group { display: flex; flex-direction: column; gap: 10px; }
   .rb-group__label { font-size: 13px; font-weight: 500; color: #888; }
   .rb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
-  /* Pickup time: the hour and the minutes, side by side, as the design system's filled inputs. */
-  .rb-time { display: grid; grid-template-columns: 3fr 2fr; gap: 8px; }
-  .rb-select {
-    width: 100%; min-height: 44px; padding: 0 36px 0 14px; border: none; border-radius: var(--radius-lg); cursor: pointer;
-    background: var(--surface-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center;
-    font-family: var(--font-body); font-size: var(--text-body); color: var(--text-primary);
-    -webkit-appearance: none; appearance: none;
+  /* The dates and the pickup time at one height, so the row lines up in every browser. */
+  .rb-grid .rb-input { height: 44px; }
+  /* Pickup time: the hour and the minutes, two dropdowns in one field drawn as
+     the design system's filled input (the date fields' look), a hairline between. */
+  .rb-time {
+    display: flex; align-items: center; height: 44px; border-radius: var(--radius-lg);
+    background: var(--surface-input); transition: box-shadow var(--duration-fast) var(--ease-default);
   }
-  .rb-select:focus { outline: none; box-shadow: var(--ring-focus); }
+  .rb-time:focus-within { box-shadow: var(--ring-focus); }
+  /* From the keyboard, a tint shows which of the two has focus. */
+  .rb-time select:focus-visible { background-color: rgba(74, 92, 47, 0.08); }
+  .rb-time select {
+    flex: 3 1 0; min-width: 0; height: 100%; margin: 0; padding: 0 32px 0 16px; border: none; border-radius: var(--radius-lg);
+    background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%231E1E1A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center;
+    font-family: var(--font-body); font-size: var(--text-body); color: var(--text-primary);
+    cursor: pointer; outline: none; -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  }
+  .rb-time .rb-time__min { flex-grow: 2; padding-left: 14px; }
+  .rb-time option { color: var(--text-primary); background: var(--color-white); }
+  .rb-time__sep { flex: none; width: 1px; height: 20px; background: rgba(30, 30, 26, 0.14); }
   .rb-stay { display: flex; flex-direction: column; gap: 10px; padding: 18px; background: var(--color-green-50); border-radius: var(--radius-lg); }
   .rb-stay__q { font-size: 14px; font-weight: 500; }
   .rb-stay__hint { font-size: 12px; color: var(--color-grey-500); }
@@ -189,12 +200,31 @@
   .rb-switch__sub { display: block; font-size: 12px; color: var(--color-grey-500); }
   .rb-farepanel { margin-top: 22px; background: var(--color-green-50); border-radius: var(--radius-lg); overflow: hidden; }
   .rb-farepanel__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding: 24px; }
+  .rb-fare { flex: 1 1 220px; min-width: 0; container-type: inline-size; }
   .rb-fare__label { font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-green-700); margin-bottom: 6px; }
-  /* The trip the fare is for, beside the label: "· Round Trip · 2 days". */
-  .rb-fare__trip { text-transform: none; letter-spacing: 0; font-weight: 500; }
+  /* The fare, a bar, and the trip it is for in two rows, "Round Trip" over
+     "2 days", centred on each other: all in the fare's typeface and green, the
+     rows as tall as the digits (0.37 of the fare's size). Narrower than a 390px
+     phone, all of it scales down with the panel (100cqi, its width), so a fare
+     of up to five digits keeps the rows beside it; browsers without container
+     units keep the sizes and let the rows wrap under the fare. */
+  .rb-fare__amount { display: flex; flex-wrap: wrap; align-items: center; row-gap: 6px; }
   .rb-fare__value {
-    font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800;
-    font-size: clamp(44px, 7vw, 60px); line-height: 1; letter-spacing: -0.03em; color: var(--color-green-500);
+    font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800; line-height: 1; letter-spacing: -0.03em; color: var(--color-green-500);
+    font-size: clamp(44px, 7vw, 60px); font-size: min(clamp(44px, 7vw, 60px), calc((100cqi - 2px) / 5.55));
+  }
+  .rb-fare__trip {
+    position: relative; margin-left: 0.55em; padding-left: calc(0.55em + 2px);
+    text-align: center; font-family: var(--font-display), Urbanist, sans-serif; font-weight: 700;
+    line-height: 1.2; letter-spacing: -0.01em; color: var(--color-green-500); white-space: nowrap;
+    font-size: clamp(16px, 2.6vw, 22px); font-size: min(clamp(16px, 2.6vw, 22px), calc((100cqi - 2px) / 15.25));
+  }
+  .rb-fare__trip > span { display: block; }
+  /* The bar: 2px of the same green, from the top of "Round Trip" to the
+     baseline of "2 days" (Urbanist's capitals are 0.70 of its size, its
+     ascent 0.95), so it stands as tall as the fare's digits. */
+  .rb-fare__trip::before {
+    content: ''; position: absolute; left: 0; top: 0.25em; bottom: 0.25em; width: 2px; border-radius: 1px; background: currentColor;
   }
   .rb-fare__tax { font-size: 13px; line-height: 1.4; color: var(--color-green-700); margin-top: 8px; }
   .rb-thumbs { display: flex; gap: 8px; padding-left: 20px; border-left: 0.5px solid rgba(74, 92, 47, .22); }
