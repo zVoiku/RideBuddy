@@ -160,21 +160,26 @@ const fareTrip = (page) => page.locator('.rb-fare__trip').evaluate((el) => [...e
 
 /**
  * The trip beside the fare as drawn: in the fare's typeface, to its right and
- * within its height, in two rows centred on each other.
+ * within its height, in two rows centred on each other, and between them a
+ * 2px bar of the fare's green, within the fare's height.
  */
 const fareLook = (page) => page.evaluate(() => {
   const [label, value, trip] = ['.rb-fare__label', '.rb-fare__value', '.rb-fare__trip'].map((s) => document.querySelector(s));
-  const v = value.getBoundingClientRect();
+  const v = value.getBoundingClientRect(), t = trip.getBoundingClientRect();
   const rows = [...trip.children].map((row) => row.getBoundingClientRect());
   const mid = (r) => (r.left + r.right) / 2;
+  const b = getComputedStyle(trip, '::before');
+  const bar = { left: t.left + parseFloat(b.left), top: t.top + parseFloat(b.top), bottom: t.bottom - parseFloat(b.bottom) };
   return {
     label: label.textContent.trim(), sameFont: getComputedStyle(value).fontFamily === getComputedStyle(trip).fontFamily,
     twoRows: rows.length === 2 && rows[1].top >= rows[0].bottom - 1 && Math.abs(mid(rows[0]) - mid(rows[1])) < 1,
     beside: rows.length === 2 && Math.min(rows[0].left, rows[1].left) >= v.right && rows[0].top >= v.top - 2 && rows[1].bottom <= v.bottom + 6,
+    bar: b.content === '""' && b.width === '2px' && b.backgroundColor === getComputedStyle(value).color
+      && bar.left > v.right && bar.left + 2 < Math.min(...rows.map((r) => r.left)) && bar.top >= v.top && bar.bottom <= v.bottom,
     sizes: [value, trip].map((el) => getComputedStyle(el).fontSize).join('/'),
   };
 });
-const looksRight = (l) => l.label === 'Estimated fare' && l.sameFont && l.twoRows && l.beside;
+const looksRight = (l) => l.label === 'Estimated fare' && l.sameFont && l.twoRows && l.beside && l.bar;
 
 async function estimateAndCompare(page, name) {
   await page.getByRole('button', { name: 'Get Estimate' }).click();
@@ -353,7 +358,7 @@ async function main() {
       'the fare says it includes all taxes; no "Extra distance" line; the final-fare line stays');
     check(await fareTrip(page) === 'One Way / 1 day', `beside the fare, the trip it is for ("${await fareTrip(page)}")`);
     const onDesktop = await fareLook(page);
-    check(looksRight(onDesktop), `the trip in two rows, centred, to the right of the fare in its typeface (${JSON.stringify(onDesktop)})`);
+    check(looksRight(onDesktop), `the trip in two rows, centred, to the right of the fare in its typeface, a bar of its green between (${JSON.stringify(onDesktop)})`);
     // A 360px phone, the narrowest common one: still beside the fare, both scaled to the panel.
     await page.setViewportSize({ width: 360, height: 800 });
     const onPhone = await fareLook(page);

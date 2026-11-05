@@ -202,22 +202,30 @@
   .rb-farepanel__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; padding: 24px; }
   .rb-fare { flex: 1 1 220px; min-width: 0; container-type: inline-size; }
   .rb-fare__label { font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-green-700); margin-bottom: 6px; }
-  /* The fare, and to its right, in its typeface, the trip it is for in two rows,
-     "Round Trip" over "2 days", centred on each other and as tall as the digits
-     (0.37 of the fare's size). Narrower than a 375px phone, both scale down with
-     the panel (100cqi, its width), so a fare of up to five digits keeps the two
-     rows beside it; browsers without container units keep the sizes and wrap. */
-  .rb-fare__amount { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+  /* The fare, a bar, and the trip it is for in two rows, "Round Trip" over
+     "2 days", centred on each other: all in the fare's typeface and green, the
+     rows as tall as the digits (0.37 of the fare's size). Narrower than a 390px
+     phone, all of it scales down with the panel (100cqi, its width), so a fare
+     of up to five digits keeps the rows beside it; browsers without container
+     units keep the sizes and let the rows wrap under the fare. */
+  .rb-fare__amount { display: flex; flex-wrap: wrap; align-items: center; row-gap: 6px; }
   .rb-fare__value {
     font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800; line-height: 1; letter-spacing: -0.03em; color: var(--color-green-500);
-    font-size: clamp(44px, 7vw, 60px); font-size: min(clamp(44px, 7vw, 60px), calc((100cqi - 14px) / 5.1));
+    font-size: clamp(44px, 7vw, 60px); font-size: min(clamp(44px, 7vw, 60px), calc((100cqi - 2px) / 5.55));
   }
   .rb-fare__trip {
+    position: relative; margin-left: 0.55em; padding-left: calc(0.55em + 2px);
     text-align: center; font-family: var(--font-display), Urbanist, sans-serif; font-weight: 700;
     line-height: 1.2; letter-spacing: -0.01em; color: var(--color-green-500); white-space: nowrap;
-    font-size: clamp(16px, 2.6vw, 22px); font-size: min(clamp(16px, 2.6vw, 22px), calc((100cqi - 14px) / 14));
+    font-size: clamp(16px, 2.6vw, 22px); font-size: min(clamp(16px, 2.6vw, 22px), calc((100cqi - 2px) / 15.25));
   }
   .rb-fare__trip > span { display: block; }
+  /* The bar: 2px of the same green, from the top of "Round Trip" to the
+     baseline of "2 days" (Urbanist's capitals are 0.70 of its size, its
+     ascent 0.95), so it stands as tall as the fare's digits. */
+  .rb-fare__trip::before {
+    content: ''; position: absolute; left: 0; top: 0.25em; bottom: 0.25em; width: 2px; border-radius: 1px; background: currentColor;
+  }
   .rb-fare__tax { font-size: 13px; line-height: 1.4; color: var(--color-green-700); margin-top: 8px; }
   .rb-thumbs { display: flex; gap: 8px; padding-left: 20px; border-left: 0.5px solid rgba(74, 92, 47, .22); }
   .rb-thumb {
