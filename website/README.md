@@ -70,9 +70,13 @@ result in `frontend/app/booking/summary.tsx`.
   **Try again** and **Edit trip details**; "no driving route between those
   places" stays a line under Destination.
 - **Result** — the route on an interactive map with tap-to-expand, and under
-  it two tiles: EST. TRIP TIME and EST. DISTANCE (time to the nearest 5
-  minutes, distance to the km, as §2.4 says; the fare uses the exact values;
-  a round trip shows the total and "… each way", one way says "One way").
+  it three sections: the trip the fare is for, in two rows centred on each
+  other in the fare's typeface and green ("Round Trip" over "2 days" — the
+  days the fare covers, a rest stop's included), then EST. TRIP TIME and EST.
+  DISTANCE (time to the nearest 5 minutes, distance to the km, as §2.4 says;
+  the fare uses the exact values; a round trip shows the total and "… each
+  way", one way says "One way"). Below 640px the trip runs across the top and
+  the other two sit side by side under it.
   Past 12 hours of driving, a box with the plan in PRD 6.5's words — "This
   trip needs more than 12 hours of driving. Your Buddy needs rest for a safe
   trip. The fare includes a rest stop.", or with the switch on, "Driving
@@ -80,11 +84,7 @@ result in `frontend/app/booking/summary.tsx`.
   — and the switch, "Drive through without a rest stop — only if you and your
   Buddy both agree", that re-prices the same route on the drive-through plan
   as a new estimate. Then one number, "Inclusive of
-  all taxes", with the trip it is for to its right in the fare's typeface and
-  green, after a thin bar of the same green, in two rows centred on each other
-  ("Round Trip" over "2 days" — the days the fare covers, a rest stop's
-  included; narrower than a 390px phone all of it scales with the panel, so a
-  fare of up to five digits keeps it beside), and 👍/👎 beside it ("Does this fare work for you?"): a 👎 opens
+  all taxes", and 👍/👎 beside it ("Does this fare work for you?"): a 👎 opens
   an optional comment (280 characters, Send, then "Thank you. Noted."). The
   PRD 6.5 lines follow — "Includes 12 hours of your Buddy's time from pickup."
   (no "on each of the N days"), food, the stay, and the night charge when it
@@ -543,9 +543,10 @@ picker (open, drag, re-caption, tap a place, confirm, then price the pinned
 point), fullscreen map, mobile viewport — and re-prices every estimate with
 the backend's `fare_breakdown` on the exact inputs the page used — with Get
 Estimate disabled and its hint until the trip is complete, the pickup time
-drawn like the date fields, the trip in two rows to the right of the fare
-in its typeface, after a bar of its green (on a 360px phone too), the trip-time and distance tiles, "Inclusive of all taxes", the
-§2.4 lines, and the disclaimers. Then the forms: a 👎 with a comment,
+drawn like the date fields, the three sections under the map (the trip in
+two rows first, then the trip-time and distance; on a 360px phone the trip
+across the top), the fare on its own, "Inclusive of all taxes", the §2.4
+lines, and the disclaimers. Then the forms: a 👎 with a comment,
 then joining the waitlist under the same estimate (one row with the vote), the
 `/contact/` waitlist card, About's Join the Waitlist pop-up, the `/beta` hero's,
 an individual Buddy application from an old `/beta/#apply` link and a driver
