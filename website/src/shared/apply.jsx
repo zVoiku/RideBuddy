@@ -38,18 +38,22 @@ export function ApplyPopup({ open, onClose }) {
   const honeypot = useRef(null);
   const f = useCodeForm('/api/buddy', 'apply-code');
 
+  // Sent: the next application starts empty (audit N9).
+  const clear = () => {
+    setName(''); setAgencyName(''); setPhone(''); setLicence(''); setCity(''); setFleet(''); setEmail(''); setGstin(''); setErrors({});
+  };
+
   // Each opening starts a new application, with what was typed still there.
   useEffect(() => { if (open) setSent(false); }, [open]);
 
   const agency = type === 'agency';
-  const form = agency ? 'agency' : 'buddy';
   const field = (set, key) => (e) => { set(e.target.value); setErrors((x) => ({ ...x, [key]: '' })); };
 
   const send = async (code) => {
     const fields = agency
       ? { type: 'agency', agency: agencyName, contact: name, phone, city, drivers: fleet || null, email, gstin }
       : { type: 'individual', name, phone, licence, city };
-    const r = await f.submit({ ...fields, website: honeypot.current?.value || '' }, { form, code });
+    const r = await f.submit({ ...fields, website: honeypot.current?.value || '' }, { source: 'buddy', code });
     if (!r) return;
     if (!r.ok) {
       // The Worker calls the agency's contact person "contact"; the form shows it in the name field.
@@ -57,7 +61,9 @@ export function ApplyPopup({ open, onClose }) {
       return;
     }
     setSent(true);
-    track('buddy_application_submitted', { type: agency ? 'agency' : 'individual' });
+    clear();
+    // PRD 10.2; the first touch rides with every beacon (src/site.js, worker/analytics.js).
+    track('buddy_interest_submitted', { buddy_interest_id: r.buddy_interest_id || null, type: agency ? 'agency' : 'individual' });
   };
 
   const submit = () => {
@@ -71,7 +77,7 @@ export function ApplyPopup({ open, onClose }) {
     setErrors(next);
     if (Object.keys(next).length) {
       // A number typed but short is a mistyped number; anything else, a form sent incomplete.
-      track(next.phone && phone ? 'phone_invalid' : 'form_invalid', { form });
+      track(next.phone && phone ? 'phone_invalid' : 'form_invalid', { form: 'buddy', type: agency ? 'agency' : 'individual' });
       return;
     }
     send('');
@@ -86,7 +92,7 @@ export function ApplyPopup({ open, onClose }) {
       <div className="rb-dialog__body">
         {sent ? (
           <>
-            <Done>Application received. We’ll contact you when onboarding opens.</Done>
+            <Done>Application received. One call or message when onboarding opens.</Done>
             <Button onClick={onClose}>Done</Button>
           </>
         ) : f.step === 'code' ? (

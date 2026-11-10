@@ -14,7 +14,7 @@ import { FARE, estimate, formatINR, roundTripDays } from './fare-engine.js';
 import * as maps from './maps.js';
 import {
   Button, Chip, CodeStep, ConsentTick, CONSENT_ERROR, Done, Honeypot, Icon, Input, MOBILE, PHONE_ERROR, PhoneField,
-  postForm, track, useCodeForm, WAITLIST_JOINED,
+  postForm, TERMS, track, useCodeForm, WAITLIST_JOINED,
 } from '../shared/ui.jsx';
 import { SiteHeader } from '../shared/header.jsx';
 
@@ -45,6 +45,14 @@ function fmtDuration(min) {
 function fmtClock(hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
   return `${h % 12 || 12}${m ? `:${String(m).padStart(2, '0')}` : ''} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "2026-11-12" -> "12 Nov 2026": the departure date in the waitlist confirmation. */
+function fmtDate(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${d} ${MONTHS[m - 1]} ${y}`;
 }
 
 /**
@@ -138,14 +146,16 @@ function LongDrive({ driveThrough, onChange }) {
  * The fare, and 👍/👎 on it. A 👎 opens an optional comment. Each vote is saved
  * at once (POST /api/feedback); the latest vote counts and a comment stays when
  * the vote changes. Keyed by the estimate, so a new fare starts unvoted.
+ * fare_feedback fires once per vote or change (PRD F8, audit N10), with
+ * `facts`, the trip it was on (PRD 10.2); sending a comment fires nothing more.
  */
-function FarePanel({ fare, estimateId, trip }) {
+function FarePanel({ fare, estimateId, trip, facts }) {
   const [vote, setVote] = useState(null);
   const [open, setOpen] = useState(false);
   const [comment, setComment] = useState('');
+  const [commented, setCommented] = useState(false);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
-  const [thanks, setThanks] = useState(false);
 
   const cast = async (next) => {
     if (next === vote) return;
@@ -153,7 +163,6 @@ function FarePanel({ fare, estimateId, trip }) {
     setVote(next);
     setOpen(next === 'down');
     setError('');
-    setThanks(false);
     const r = await postForm('/api/feedback', { estimate_id: estimateId, vote: next, trip });
     if (!r.ok) {
       setVote(before);
@@ -161,7 +170,7 @@ function FarePanel({ fare, estimateId, trip }) {
       track('save_failed', { form: 'feedback' });
       return;
     }
-    track('fare_feedback', { vote: next, change: !!before });
+    track('fare_feedback', { estimate_id: estimateId, vote: next, has_comment: commented, is_change: !!before, ...facts });
   };
 
   const send = async () => {
@@ -177,9 +186,9 @@ function FarePanel({ fare, estimateId, trip }) {
       if (!r.errors.comment) track('save_failed', { form: 'feedback' });
       return;
     }
+    // The panel closes and 👎 stays selected; no message (PRD F4).
     setOpen(false);
-    setThanks(true);
-    track('fare_feedback', { vote: 'down', comment: true });
+    setCommented(true);
   };
 
   const thumb = (v, icon, label, title) => (
@@ -213,7 +222,6 @@ function FarePanel({ fare, estimateId, trip }) {
           {error && <span className="rb-error-msg" role="alert">{error}</span>}
         </div>
       )}
-      {thanks && <p className="rb-fb__thanks" role="status">Thank you. Noted.</p>}
     </div>
   );
 }
@@ -253,7 +261,7 @@ function TimeField({ label, value, onChange }) {
 
 // ----- Place field: the web twin of CityPicker.tsx --------------------------------
 
-function PlaceField({ label, icon, placeholder, kind, value, onChange, onSelect, onBusy, onOpenMap, error, disabled }) {
+function PlaceField({ label, icon, placeholder, kind, trip, value, onChange, onSelect, onBusy, onOpenMap, error, disabled }) {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -296,8 +304,8 @@ function PlaceField({ label, icon, placeholder, kind, value, onChange, onSelect,
       if (!det) { onSelect(null, 'Could not load that place. Try another.'); return; }
       const check = maps.withinService(kind, det);
       if (!check.ok) {
-        // Demand from outside the service area: where, by area only.
-        track('place_refused', { kind, city: det.city || '', area: det.area || '' });
+        // Demand from outside the service area: where, by area only (PRD 6.3).
+        track('estimate_refused', { reason: check.reason, trip, area: det.area || '', city: det.city || '' });
         onSelect(null, check.message);
         return;
       }
@@ -592,8 +600,9 @@ function App() {
   const [tripType, setTripType] = useState(['round', 'one'].includes(PRESET) ? PRESET : 'round');
   const [pickup, setPickup] = useState({ text: '', place: null });
   const [destination, setDestination] = useState({ text: '', place: null });
-  const [departDate, setDepartDate] = useState(istDate(1));
-  const [returnDate, setReturnDate] = useState(istDate(2));
+  // No date until the visitor picks one (PRD D2, audit W06): band 3 counts the date they chose.
+  const [departDate, setDepartDate] = useState('');
+  const [returnDate, setReturnDate] = useState('');
   const [pickupTime, setPickupTime] = useState('07:00');
   const [stayArranged, setStayArranged] = useState(false);
   const [errors, setErrors] = useState({});
@@ -601,11 +610,14 @@ function App() {
   const [route, setRoute] = useState(null);
   const [result, setResult] = useState(null);
   const [mapsDown, setMapsDown] = useState('');
+  // Why the route lookup failed, for the error screen's second line: 'connection' or 'google'.
+  const [failure, setFailure] = useState('connection');
   // Each fare shown gets an id: its 👍/👎 and a signup made under it share a row.
   const [estimateId, setEstimateId] = useState('');
   const [waPhone, setWaPhone] = useState('');
   const [waConsent, setWaConsent] = useState(false);
-  const [waDone, setWaDone] = useState(false);
+  // The trip the visitor joined the waitlist with, shown in the confirmation (PRD S8); null until then.
+  const [joined, setJoined] = useState(null);
   const [waErrors, setWaErrors] = useState({});
   // The one-time code step (website/worker/otp.js).
   const wa = useCodeForm('/api/waitlist', 'rb-waitlist-code');
@@ -617,8 +629,15 @@ function App() {
   // Which field, if any, is currently choosing a point on the map.
   const [picker, setPicker] = useState(null);
   // Analytics: the first time the visitor touches the form, and maps failing (once each).
+  // The form hears a tap before the chip it lands on does, so a first tap on a
+  // trip type reports the trip it chose (the chip's data-rb-trip), not the one it replaced.
   const started = useRef(false);
-  const markStarted = () => { if (!started.current) { started.current = true; track('estimate_started'); } };
+  const markStarted = (e) => {
+    if (started.current) return;
+    started.current = true;
+    const chip = e?.target?.closest?.('[data-rb-trip]');
+    track('estimate_started', { trip: chip ? chip.getAttribute('data-rb-trip') : tripType });
+  };
   const mapsFailed = useRef(false);
 
   const isRound = tripType === 'round';
@@ -626,10 +645,11 @@ function App() {
   const multiDay = isRound && !!departDate && !!returnDate && returnDate > departDate;
 
   useEffect(() => {
-    track('estimator_opened');
+    // How the visitor arrived: a trip-type deep link (/estimate/?type=round, ?type=one) or directly.
+    track('estimator_opened', { entry: ['round', 'one'].includes(PRESET) ? PRESET : 'direct' });
     const onFail = () => {
-      setMapsDown('Maps are unavailable right now, so we can’t look up routes. Please try again shortly.');
-      if (!mapsFailed.current) { mapsFailed.current = true; track('maps_failed'); }
+      setMapsDown(maps.REFUSAL.maps_failed);
+      if (!mapsFailed.current) { mapsFailed.current = true; track('estimate_refused', { reason: 'maps_failed', trip: tripType }); }
     };
     window.addEventListener('rb-maps-auth-failure', onFail);
     maps.loadGoogleMaps().catch(onFail);
@@ -678,9 +698,19 @@ function App() {
     if (Object.keys(next).length) return;
 
     setView('loading');
+    const refuse = (reason, field, extra = {}) => {
+      track('estimate_refused', { reason, trip: tripType, ...extra });
+      setView('form');
+      err(field, maps.REFUSAL[reason]);
+    };
     try {
       const r = await maps.getDirections(pickup.place, destination.place);
       if (!r) throw new Error('no-route');
+      // Under 40 km of road one way: not an outstation trip (D4, audit W04).
+      if (r.distance_km < maps.MIN_TRIP_KM) {
+        refuse('too_short', 'destination', { km: Math.round(r.distance_km), area: destination.place.area || '', city: destination.place.city || '' });
+        return;
+      }
       const inputs = {
         tripType: 'point_to_point', oneWay: !isRound,
         distanceKm: r.distance_km, durationHours: r.duration_min / 60, days,
@@ -694,8 +724,10 @@ function App() {
       });
       setRoute(r);
       setView('result');
+      // A new fare: the waitlist under it starts again (a signup adds this trip).
+      setJoined(null);
       // What people price, for the demand numbers on /admin: areas and cities,
-      // never an address.
+      // never an address (PRD 10.2: kept, plus the estimate's id and flags).
       track('estimate_completed', {
         trip: tripType,
         pickup_area: pickup.place.area || '', pickup_city: pickup.place.city || '',
@@ -707,17 +739,22 @@ function App() {
         hour: Number(pickupTime.slice(0, 2)),
         weekday: new Date(`${departDate}T00:00:00Z`).getUTCDay(),
         night: !!est.night_charge_applied,
+        estimate_id: est.estimate_id, long_drive: !!est.long_drive, drive_through: !!est.drive_through,
+        stay: !!est.stay_included, date_touched: true,
       });
     } catch (e) {
+      const code = String(e?.code || e?.message || '');
       // Google answers "no route" either with no legs or by refusing with ZERO_RESULTS / NOT_FOUND.
-      if (e.message === 'no-route' || /ZERO_RESULTS|NOT_FOUND/.test(String(e?.code || e?.message || ''))) {
-        setView('form');
-        track('route_not_found');
-        err('destination', 'We couldn’t find a driving route between those places.');
+      if (e.message === 'no-route' || /ZERO_RESULTS|NOT_FOUND/.test(code)) {
+        refuse('route_not_found', 'destination');
         return;
       }
+      // The error screen, its second line by cause: the connection (offline, or a
+      // request that never got an answer: UNKNOWN_ERROR), or Google refusing the route.
+      const connection = !navigator.onLine || !e?.code || /UNKNOWN_ERROR/.test(code);
+      setFailure(connection ? 'connection' : 'google');
       setView('error');
-      track('route_failed');
+      track('estimate_refused', { reason: 'route_failed', trip: tripType, cause: connection ? 'connection' : code.slice(0, 40) });
     }
   };
 
@@ -726,9 +763,9 @@ function App() {
   // The fare for these inputs, shown as a new estimate: its own id, so a
   // 👍/👎 is always on the fare the visitor saw.
   const priced = (inputs, labels) => {
-    const est = { ...estimate(inputs), inputs, labels };
+    const est = { ...estimate(inputs), inputs, labels, estimate_id: newEstimateId() };
     setResult(est);
-    setEstimateId(newEstimateId());
+    setEstimateId(est.estimate_id);
     // Exposed for the end-to-end check in test/verify.mjs: the exact inputs
     // the engine priced, so the same trip can be re-priced by the backend.
     window.__rbLastEstimate = { inputs, result: est };
@@ -751,7 +788,7 @@ function App() {
     if (!waConsent) next.consent = CONSENT_ERROR;
     setWaErrors(next);
     if (Object.keys(next).length) {
-      if (next.phone) track('phone_invalid', { form: 'estimate' });
+      if (next.phone) track('phone_invalid', { form: 'signup' });
       return;
     }
     sendWaitlist('');
@@ -763,11 +800,20 @@ function App() {
     const r = await wa.submit({
       phone: waPhone, consent: true, source: 'estimate', estimate_id: estimateId,
       website: honeypot.current?.value || '', trip: tripOf(result),
-    }, { form: 'estimate', code });
+    }, { source: 'estimate', estimateId, code });
     if (!r) return;
     if (!r.ok) { setWaErrors(r.errors.phone || r.errors.consent ? r.errors : { phone: r.error }); return; }
-    setWaDone(true);
-    track('waitlist_joined', { source: 'estimate' });
+    setJoined(result.labels);
+    track('signup_completed', {
+      lead_id: r.lead_id ?? null, source: 'estimate', estimate_id: estimateId, is_repeat: !!r.is_repeat,
+      days_ahead: Math.round((Date.parse(result.labels.date) - Date.parse(istDate(0))) / 864e5),
+    });
+  };
+
+  // "Get Another Estimate" (PRD S8): back to the form, the trip still there to change.
+  const anotherEstimate = () => {
+    setView('form');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // The conditions, as PRD 6.5 words them (QA audit v2.3, R01–R03). A long
@@ -786,7 +832,6 @@ function App() {
   const routeLine = result
     ? `${result.labels.pickup} → ${result.labels.destination} · ${tripDetail(result)}`
     : '';
-  const disclaimer = 'Indicative fare for the route, date and time you entered, using the route’s standard drive time without traffic. This is not a booking or an offer. Rates can change before booking opens. Terms of Use apply.';
 
   return (
     <>
@@ -808,18 +853,18 @@ function App() {
                   <span className="rb-group__label">Trip type</span>
                   <div className="rb-chips">
                     {TRIP_TYPES.map((t) => (
-                      <Chip key={t.id} selected={tripType === t.id} onClick={() => { setTripType(t.id); setErrors({}); }}>{t.label}</Chip>
+                      <Chip key={t.id} data-rb-trip={t.id} selected={tripType === t.id} onClick={() => { setTripType(t.id); setErrors({}); }}>{t.label}</Chip>
                     ))}
                   </div>
                 </div>
 
-                <PlaceField label="Pickup" icon={<Icon d={PIN} />} placeholder="Sector, area or landmark in the Tricity" kind="pickup"
+                <PlaceField label="Pickup" icon={<Icon d={PIN} />} placeholder="Sector, area or landmark in the Tricity" kind="pickup" trip={tripType}
                   value={pickup} error={errors.pickup} onBusy={(b) => setBusyFields((m) => ({ ...m, pickup: b }))}
                   onOpenMap={() => setPicker('pickup')}
                   onChange={(text) => { setPickup({ text, place: null }); err('pickup', ''); }}
                   onSelect={(place, msg) => { setPickup(place ? { text: place.description, place } : { text: pickup.text, place: null }); err('pickup', msg || ''); }} />
 
-                <PlaceField label="Destination" icon={<Icon d={NAV} />} placeholder="Where are you headed" kind="destination"
+                <PlaceField label="Destination" icon={<Icon d={NAV} />} placeholder="Where are you headed" kind="destination" trip={tripType}
                   value={destination} error={errors.destination} onBusy={(b) => setBusyFields((m) => ({ ...m, destination: b }))}
                   onOpenMap={() => setPicker('destination')}
                   onChange={(text) => { setDestination({ text, place: null }); err('destination', ''); }}
@@ -829,7 +874,7 @@ function App() {
                   <Input label={isRound ? 'Departure date' : 'Pickup date'} type="date" value={departDate} min={istDate(0)} max={istDate(MAX_DAYS_AHEAD)}
                     onChange={(e) => { setDepartDate(e.target.value); err('date', ''); }} />
                   {isRound && (
-                    <Input label="Return date" type="date" value={returnDate} min={departDate} max={istDate(MAX_DAYS_AHEAD)} error={errors.date || undefined}
+                    <Input label="Return date" type="date" value={returnDate} min={departDate || istDate(0)} max={istDate(MAX_DAYS_AHEAD)} error={errors.date || undefined}
                       onChange={(e) => { setReturnDate(e.target.value); err('date', ''); }} />
                   )}
                   <TimeField label="Pickup time" value={pickupTime} onChange={setPickupTime} />
@@ -864,7 +909,7 @@ function App() {
           {view === 'error' && (
             <div className="rb-failed" role="alert" data-rb-region="estimate error">
               <p className="rb-failed__title">The estimate didn’t load.</p>
-              <p className="rb-failed__sub">Check your connection and try again.</p>
+              <p className="rb-failed__sub">{failure === 'google' ? maps.REFUSAL.route_failed : 'Check your connection and try again.'}</p>
               <Button onClick={getEstimate}>Try again</Button>
               <button type="button" className="rb-edit" onClick={editTrip}>Edit trip details</button>
             </div>
@@ -878,7 +923,11 @@ function App() {
               <TripTiles route={route} round={result.labels.round} detail={tripParts(result)} />
 
               {result.long_drive && <LongDrive driveThrough={result.drive_through} onChange={setDriveThrough} />}
-              <FarePanel key={estimateId} fare={result.total_fare} estimateId={estimateId} trip={tripOf(result)} />
+              <FarePanel key={estimateId} fare={result.total_fare} estimateId={estimateId} trip={tripOf(result)} facts={{
+                trip: result.labels.round ? 'round' : 'one', km: Math.round(route.distance_km), fare: result.total_fare,
+                days: result.trip_days || 0, night: !!result.night_charge_applied, stay: !!result.stay_included,
+                long_drive: !!result.long_drive, drive_through: !!result.drive_through, dest_city: destination.place?.city || '',
+              }} />
               <ul className="rb-conds">
                 {conditions.map((c, i) => (
                   <li key={i} className={c.excluded ? 'rb-excluded' : ''}>
@@ -890,20 +939,30 @@ function App() {
                 ))}
               </ul>
               <p className="rb-final">Final fare is calculated when your trip ends.</p>
-              <p className="rb-disclaimer">{disclaimer}</p>
+              <p className="rb-disclaimer">
+                Indicative fare for the route, date and time you entered, using the route’s standard drive time without traffic. This is not a booking
+                or an offer. Rates can change before booking opens. <a href={TERMS} target="_blank" rel="noopener">Terms of Use</a> apply.
+              </p>
               <button type="button" className="rb-edit" onClick={editTrip}>
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
                 Edit trip details
               </button>
 
               <div className="rb-book">
-                {waDone ? (
-                  <Done>{WAITLIST_JOINED}</Done>
+                {joined ? (
+                  <div className="rb-joined" data-rb-region="waitlist joined">
+                    <Done>{WAITLIST_JOINED}</Done>
+                    <div className="rb-joined__trip">
+                      <span className="rb-joined__route">{joined.pickup} → {joined.destination}</span>
+                      <span className="rb-joined__meta">{joined.round ? 'Round Trip' : 'One Way'} · {fmtDate(joined.date)}</span>
+                    </div>
+                    <button type="button" className="rb-edit" onClick={anotherEstimate}>Get Another Estimate</button>
+                  </div>
                 ) : (
                   <div id="waitlist" className="rb-waitlist">
                     <div>
-                      <h3>Join the waitlist.</h3>
-                      <p>Booking opens soon. Waitlist members go first.</p>
+                      <h3>Join the waitlist</h3>
+                      <p>Get one message when booking opens.</p>
                     </div>
                     {wa.step === 'code' ? (
                       <CodeStep f={wa} onVerify={() => sendWaitlist(wa.code)} onResend={() => sendWaitlist('')} />
@@ -916,7 +975,6 @@ function App() {
                           onChange={(v) => { setWaConsent(v); setWaErrors((e) => ({ ...e, consent: '' })); }} />
                         <Honeypot ref={honeypot} />
                         <Button onClick={submitWaitlist} disabled={wa.sending}>{wa.sending ? 'Joining…' : 'Join the Waitlist'}</Button>
-                        <small>One message when the app is live. Nothing else.</small>
                       </>
                     )}
                   </div>

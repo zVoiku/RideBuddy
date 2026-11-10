@@ -98,7 +98,7 @@ class Component extends DCLogic {`,
     to: "your Buddy brings you back.', go: this.presetTrip('one'), href: '/estimate/?type=one' },",
   },
   {
-    why: 'footer links carry their URLs (Terms and Privacy stay as they are); no How It Works; "Become a Buddy" is /contact/#apply',
+    why: 'footer links carry their URLs (Terms and Privacy are the legal pages); no How It Works; "Become a Buddy" is /contact/#apply',
     from: String.raw`      footerCols: [
         { title: 'Pages', items: [
           { label: 'Home', go: this.nav('home') }, { label: 'Estimate Fare', go: this.nav('estimate') }, { label: 'How It Works', go: this.nav('how') },
@@ -127,8 +127,8 @@ class Component extends DCLogic {`,
         ] },
         { title: 'More', items: [
           { label: 'Become a Buddy', href: '/contact/#apply' },
-          { label: 'Terms', go: (e) => { if (e) e.preventDefault(); }, href: '#' },
-          { label: 'Privacy', go: (e) => { if (e) e.preventDefault(); }, href: '#' },
+          { label: 'Terms', href: '/terms/' },
+          { label: 'Privacy', href: '/privacy/' },
         ] },
       ],`,
   },
@@ -188,6 +188,9 @@ const codeStep = (p, id) => `<div style="display:flex;flex-direction:column;gap:
                 <sc-if value="{{ ${p}ResendWait }}">
                   <span style="font-family:var(--font-body),sans-serif;font-size:14px;color:var(--color-grey-500)">{{ ${p}ResendLabel }}</span>
                 </sc-if>
+                <sc-if value="{{ ${p}Resending }}">
+                  <span role="status" style="font-family:var(--font-body),sans-serif;font-size:14px;color:var(--color-grey-500)">Sending a new code…</span>
+                </sc-if>
               </div>
             </div>`;
 
@@ -206,11 +209,11 @@ const FORMS = [
     try {
       const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
-      if (res.ok && data.ok) return { ok: true };
+      if (res.ok && data.ok) return Object.assign({}, data, { ok: true });
       if (res.status === 202 && data.otp === 'sent') return { ok: false, otp: 'sent', sentTo: data.sentTo, resendIn: data.resendIn || 30, errors: {} };
-      return { ok: false, error: data.error || 'We couldn’t save that just now. Please try again.', errors: data.errors || {}, reason: data.reason || '' };
+      return { ok: false, error: data.error || 'Couldn’t save your number. Try again.', errors: data.errors || {}, reason: data.reason || '' };
     } catch (e) {
-      return { ok: false, error: 'We couldn’t reach RideBuddy. Check your connection and try again.', errors: {} };
+      return { ok: false, error: 'Couldn’t connect. Check your connection and try again.', errors: {} };
     }
   }
 
@@ -219,10 +222,10 @@ const FORMS = [
     return el ? el.value : '';
   }
 
-  /** A one-time code went out: the form (state prefix p: wl) moves to its code step. */
-  codeSent(p, r, form, fieldId) {
+  /** A one-time code went out: the form (state prefix p: wl) moves to its code step. \`sent\`: otp_sent's properties (PRD 10.2). */
+  codeSent(p, r, sent, fieldId) {
     this.setState({ [p + 'Step']: 'code', [p + 'Code']: '', [p + 'CodeError']: '', [p + 'SentTo']: r.sentTo, [p + 'ResendAt']: Date.now() + r.resendIn * 1000, otpNow: Date.now() });
-    this.track('otp_sent', { form });
+    this.track('otp_sent', sent);
     // Into the code field as soon as it is on the page.
     const focus = (tries) => {
       const el = document.getElementById(fieldId);
@@ -245,10 +248,12 @@ const FORMS = [
       [p + 'CodeBorder']: error ? '#C62828' : 'rgba(100,100,100,.18)',
       [p + 'CodeInvalid']: error ? 'true' : 'false',
       [p + 'CantVerify']: !!s[p + 'Sending'] || (s[p + 'Code'] || '').length !== 6,
-      [p + 'VerifyCta']: s[p + 'Sending'] ? 'Checking…' : 'Verify Number',
+      [p + 'VerifyCta']: s[p + 'Pending'] === 'verify' ? 'Checking…' : 'Verify Number',
       [p + 'Verify']: verify,
+      // A resend shows its own state, not the Verify button's (audit N11).
+      [p + 'Resending']: s[p + 'Pending'] === 'resend',
       [p + 'CanResend']: left === 0 && !s[p + 'Sending'],
-      [p + 'ResendWait']: left > 0,
+      [p + 'ResendWait']: left > 0 && s[p + 'Pending'] !== 'resend',
       [p + 'ResendLabel']: 'Resend OTP in 0:' + String(left).padStart(2, '0'),
       [p + 'Resend']: resend,
       [p + 'ChangeNumber']: () => this.setState({ [p + 'Step']: 'form', [p + 'Code']: '', [p + 'CodeError']: '' }),
@@ -261,7 +266,7 @@ const FORMS = [
     why: 'state for the waitlist pop-up',
     from: '      applyErrors: {},\n    };',
     to: String.raw`      applyErrors: {},
-      wlOpen: false, wlPhone: '', wlConsent: false, wlErrors: {}, wlSending: false, wlDone: false,
+      wlOpen: false, wlPhone: '', wlConsent: false, wlErrors: {}, wlSending: false, wlPending: '', wlDone: false,
       // Its one-time code step: 'form' or 'code', the code typed, where it went, when a new one may be asked for.
       wlStep: 'form', wlCode: '', wlCodeError: '', wlSentTo: '', wlResendAt: 0,
       otpNow: 0,
@@ -271,7 +276,7 @@ const FORMS = [
 
 // ----- "Join the Waitlist": hero, closing band, and the pop-up they open -------------
 
-/** Where a pop-up signup was made (forms.js SOURCES): Home, the artboard's one page now. */
+/** The page a pop-up signup was made on (forms.js PAGES): Home, the artboard's one page now. Its source is hero (PRD S1). */
 const WAITLIST_SOURCE = "'home'";
 
 const WAITLIST = [
@@ -301,7 +306,7 @@ class Component extends DCLogic {`,
     if (!/^[6-9]\d{9}$/.test(wlPhone)) errors.phone = PHONE_ERROR;
     if (!wlConsent) errors.consent = 'Tick the box to join the waitlist.';
     if (Object.keys(errors).length) {
-      if (errors.phone) this.track('phone_invalid', { form: 'waitlist' });
+      if (errors.phone) this.track('phone_invalid', { form: 'signup' });
       this.setState({ wlErrors: errors });
       return;
     }
@@ -314,22 +319,25 @@ class Component extends DCLogic {`,
   sendWaitlist = async (code) => {
     const s = this.state;
     if (s.wlSending) return;
-    const source = ${WAITLIST_SOURCE};
+    // PRD 10.2: a hero signup carries no trip.
+    const ids = { source: 'hero', estimate_id: null };
     const atCode = s.wlStep === 'code';
-    this.setState({ wlSending: true, wlErrors: {}, wlCodeError: '' });
-    const r = await this.postForm('/api/waitlist', Object.assign({ phone: s.wlPhone, consent: true, source, website: this.honeypot('rb-hp-waitlist') }, code ? { code } : {}));
-    this.setState({ wlSending: false });
-    if (r.otp === 'sent') { this.codeSent('wl', r, 'waitlist', 'rb-wl-code'); return; }
+    this.setState({ wlSending: true, wlPending: code ? 'verify' : atCode ? 'resend' : 'form', wlErrors: {}, wlCodeError: '' });
+    const r = await this.postForm('/api/waitlist', Object.assign({ phone: s.wlPhone, consent: true, source: 'hero', page: ${WAITLIST_SOURCE}, website: this.honeypot('rb-hp-waitlist') }, code ? { code } : {}));
+    this.setState({ wlSending: false, wlPending: '' });
+    if (r.otp === 'sent') { this.codeSent('wl', r, Object.assign({ is_resend: atCode }, ids), 'rb-wl-code'); return; }
     if (!r.ok) {
-      if (r.reason) this.track('otp_failed', { form: 'waitlist', kind: r.reason });
-      else this.track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'waitlist' });
+      if (r.reason) {
+        const reason = { wrong: 'wrong_code', too_many: 'too_many_attempts', expired: 'expired' }[r.reason] || 'send_failed';
+        this.track('otp_failed', Object.assign({ reason }, ids, reason === r.reason || reason !== 'send_failed' ? {} : { cause: r.reason }));
+      } else this.track(r.errors.phone ? 'phone_invalid' : 'save_failed', { form: 'signup' });
       if (atCode) { this.setState({ wlCodeError: r.errors.code || r.error }); return; }
       this.setState({ wlErrors: Object.keys(r.errors).length ? r.errors : { form: r.error } });
       return;
     }
-    if (code) this.track('otp_verified', { form: 'waitlist' });
+    if (code) this.track('otp_verified', ids);
     this.setState({ wlDone: true, wlStep: 'form', wlCode: '' });
-    this.track('waitlist_joined', { source });
+    this.track('signup_completed', { lead_id: r.lead_id == null ? null : r.lead_id, source: 'hero', estimate_id: null, is_repeat: !!r.is_repeat, days_ahead: null });
   };
 
   openApply = (e) => {`,
@@ -369,9 +377,9 @@ class Component extends DCLogic {`,
           <div style="display:flex;flex-direction:column;gap:16px;margin-top:24px">
             <div style="display:flex;gap:10px;align-items:flex-start;background:var(--badge-confirmed-bg);border-radius:var(--radius-lg);padding:16px">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#1B5E20" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex:0 0 auto;margin-top:2px"><path d="m20 6-11 11-5-5"></path></svg>
-              <span style="font-family:var(--font-body),sans-serif;font-size:15px;line-height:1.5;font-weight:500;color:#1B5E20">You're on the waitlist. We'll message you once.</span>
+              <span style="font-family:var(--font-body),sans-serif;font-size:15px;line-height:1.5;font-weight:500;color:#1B5E20">You're on the waitlist. One message when booking opens.</span>
             </div>
-            <x-import component-from-global-scope="RideBuddyDesignSystem_f63581.Button" onClick="{{ closeWaitlist }}" hint-size="100%,48px">Done</x-import>
+            <a href="/estimate/" style="display:flex;align-items:center;justify-content:center;min-height:48px;border-radius:var(--radius-lg);background:var(--brand-primary);color:var(--text-on-brand);text-decoration:none;font-family:var(--font-body),sans-serif;font-size:15px;font-weight:500" style-hover="background:var(--brand-primary-hover)">Get Estimate</a>
           </div>
         </sc-if>
         <sc-if value="{{ wlPending }}" hint-placeholder-val="{{ true }}">
@@ -389,7 +397,7 @@ class Component extends DCLogic {`,
               <div style="display:flex;flex-direction:column">
                 <label style="display:flex;gap:12px;align-items:flex-start;min-height:44px;cursor:pointer">
                 <input id="rb-wl-consent" type="checkbox" checked="{{ wlConsent }}" onChange="{{ onWlConsent }}" style="flex:0 0 auto;width:20px;height:20px;margin:1px 0 0;accent-color:#4A5C2F;cursor:pointer">
-                <span style="font-family:var(--font-body),sans-serif;font-size:13px;line-height:1.55;color:var(--color-charcoal)">Send me an SMS or WhatsApp when booking opens. I agree to the Privacy Policy and Terms of Use.</span>
+                <span style="font-family:var(--font-body),sans-serif;font-size:13px;line-height:1.55;color:var(--color-charcoal)">Send me an SMS or WhatsApp when booking opens. I agree to the <a href="/privacy/" target="_blank" rel="noopener" style="color:var(--color-green-700);text-decoration:underline">Privacy Policy</a> and <a href="/terms/" target="_blank" rel="noopener" style="color:var(--color-green-700);text-decoration:underline">Terms of Use</a>.</span>
                 </label>
                 <sc-if value="{{ wlConsentError }}">
                   <span role="alert" style="font-family:var(--font-body),sans-serif;font-size:13px;color:#C62828;margin-top:-12px">{{ wlConsentError }}</span>
@@ -566,6 +574,18 @@ const MOVED_OUT = [
   {
     why: 'the About and Contact pages, and the Buddy application pop-up',
     cut: ['  <!-- ══════════════════ ABOUT ══════════════════ -->', '  <!-- Join the Waitlist pop-up: hero and closing band (website/artboard-patches.mjs) -->'],
+  },
+  {
+    // Audit P07: the mailto Buddy form and the Contact form with its TODO, whose markup went above.
+    why: 'P07: their handlers — the mailto Buddy application and the Contact form that saved nothing (a TODO)',
+    cut: ['  openApply = (e) => {', '  stepForward = () => {'],
+  },
+  { why: 'P07: their template values', cut: ['      applyBuddy: this.openApply,\n', '      isPhase1: !phase2, isPhase2: phase2,'] },
+  { why: 'P07: the Contact form\'s template values', cut: ['      contactPhone: s.contactPhone, contactError: s.contactError,\n', '\n      // ── content ──'] },
+  {
+    why: 'P07: their state',
+    from: "      contactPhone: '',\n      contactError: '',\n      contactDone: false,\n      applyOpen: false,\n      applySent: false,\n      applyName: '',\n      applyPhone: '',\n      applyLicence: '',\n      applyErrors: {},\n",
+    to: '',
   },
 ];
 

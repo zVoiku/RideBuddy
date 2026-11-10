@@ -245,7 +245,6 @@
   .rb-fb__foot .rb-btn { width: auto; }
   .rb-fb__count { font-size: 12px; color: var(--color-grey-500); }
   .rb-fb__count--max { color: #B23C00; }
-  .rb-fb__thanks { margin: -8px 0 0; padding: 0 24px 20px; font-size: 13px; font-weight: 500; color: var(--color-green-700); }
 
   .rb-conds { list-style: none; margin: 24px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   .rb-conds li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.5; color: var(--color-grey-500); }
@@ -253,6 +252,7 @@
   .rb-conds li.rb-excluded { color: var(--color-grey-400); }
   .rb-final { font-size: 13px; color: var(--color-charcoal); background: var(--color-fill-soft); border-radius: var(--radius-lg); padding: 12px 16px; margin: 20px 0 0; }
   .rb-disclaimer { font-size: 12px; line-height: 1.55; color: var(--color-grey-500); margin: 12px 0 0; }
+  .rb-disclaimer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
   .rb-edit {
     display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 48px; margin-top: 20px;
     padding: 12px 20px; cursor: pointer; background: var(--color-white); border: 1.5px solid var(--color-green-500);
@@ -263,7 +263,15 @@
   .rb-waitlist { display: flex; flex-direction: column; gap: 14px; }
   .rb-waitlist h3 { font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800; font-size: 20px; letter-spacing: -0.01em; margin: 0; }
   .rb-waitlist p { font-size: 14px; line-height: 1.55; color: var(--color-grey-500); margin: 0; }
-  .rb-waitlist small { font-size: 12px; color: var(--color-grey-500); }
+  /* Joined (PRD S8): the line, the trip saved with the signup, and Get Another Estimate. */
+  .rb-joined { display: flex; flex-direction: column; gap: 14px; }
+  .rb-joined__trip {
+    display: flex; flex-direction: column; gap: 4px; padding: 14px 16px;
+    border: 0.5px solid var(--border-hairline); border-radius: var(--radius-lg); background: var(--color-white);
+  }
+  .rb-joined__route { font-family: var(--font-display), Urbanist, sans-serif; font-weight: 700; font-size: 17px; color: var(--color-charcoal); }
+  .rb-joined__meta { font-size: 14px; color: var(--color-grey-500); }
+  .rb-joined .rb-edit { margin-top: 0; }
 
 
   .rb-map { position: relative; margin: 22px 0 0; border-radius: var(--radius-lg); overflow: hidden; border: 0.5px solid var(--border-hairline); background: var(--color-green-50); }
@@ -302,6 +310,7 @@
 <main class="rb-page">
   <div id="app"></div>
 </main>
+<!-- partial:footer -->
 <script src="/vendor/react.production.min.js"></script>
 <script src="/vendor/react-dom.production.min.js"></script>
 <script src="__DS_DIR__/_ds_bundle.js"></script>

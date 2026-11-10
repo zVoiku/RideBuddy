@@ -12,7 +12,7 @@
 import { clock, dailyHistory, headlineFor, statsFor } from './analytics.js';
 import { LINK_PAGES, renderDashboard, shell } from './dashboard.js';
 import { addHit, countHits, networkHash, ready, sha256Hex } from './db.js';
-import { SOURCES } from './forms.js';
+import { PAGES } from './forms.js';
 import { ADMIN_HEADERS, plain } from './http.js';
 import { TOUCH_FIELDS, istDay, istStamp, shiftDay, splitStoredTrip, toCsv } from './lib.js';
 import { otpReady } from './otp.js';
@@ -175,13 +175,14 @@ const attrCells = (r) => [r.visitor_id || '', ...TOUCH_FIELDS.map((f) => r[f] ||
 /** Signups, and the 👍/👎 on fares: phone blank where the voter didn't join. */
 async function clientsCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, phone, source, trip, fare, vote, comment, consent, verified, ${ATTR_SQL}, ${REPEAT('waitlist')} AS is_repeat FROM waitlist t ORDER BY id`,
+    `SELECT id, created_at, phone, source, page, trip, fare, vote, comment, consent, verified, ${ATTR_SQL}, ${REPEAT('waitlist')} AS is_repeat FROM waitlist t ORDER BY id`,
   ).all();
+  // Source as PRD S9 names it (estimate, hero); the page a hero signup was made on beside it.
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Phone', 'Source', 'Trip', 'Fare (₹)', '👍/👎', 'Comment', 'Consent', 'Phone verified', 'Repeat', ...ATTR_HEAD],
+    ['ID', 'Submitted (IST)', 'Phone', 'Source', 'Page', 'Trip', 'Fare (₹)', '👍/👎', 'Comment', 'Consent', 'Phone verified', 'Repeat', ...ATTR_HEAD],
     results.map((r) => {
       const { trip, fare } = splitStoredTrip(r.trip, r.fare);
-      return [r.id, istStamp(r.created_at), r.phone, SOURCES[r.source] || r.source, trip, fare ?? '', VOTE[r.vote] || '',
+      return [r.id, istStamp(r.created_at), r.phone, r.source, PAGES[r.page] || r.page || '', trip, fare ?? '', VOTE[r.vote] || '',
         r.comment || '', r.consent ? 'Yes' : '', r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : '', ...attrCells(r)];
     }),
   );

@@ -29,7 +29,11 @@ export const TICK = 'm20 6-11 11-5-5';
 export const PHONE_ERROR = 'Enter a valid mobile number.';
 export const CONSENT_ERROR = 'Tick the box to join the waitlist.';
 export const CONSENT = 'Send me an SMS or WhatsApp when booking opens. I agree to the Privacy Policy and Terms of Use.';
-export const WAITLIST_JOINED = "You're on the waitlist. We'll message you once.";
+/** PRD S8's confirmation, with a trip or without. */
+export const WAITLIST_JOINED = "You're on the waitlist. One message when booking opens.";
+/** The legal pages (src/privacy, src/terms), opened from every consent line in a new tab. */
+export const PRIVACY = '/privacy/';
+export const TERMS = '/terms/';
 /** An Indian mobile number, as the Worker accepts it (website/worker/lib.js). */
 export const MOBILE = /^[6-9]\d{9}$/;
 
@@ -38,10 +42,15 @@ export function track(event, payload) {
   (window.dataLayer = window.dataLayer || []).push(Object.assign({ event }, payload || {}));
 }
 
+// PRD 12's save and network errors. The Worker words the rest (the fields, the codes).
+const SAVE_ERROR = { '/api/waitlist': 'Couldn’t save your number. Try again.', '/api/buddy': 'Couldn’t save your application. Try again.' };
+export const NETWORK_ERROR = 'Couldn’t connect. Check your connection and try again.';
+
 /**
  * Saves a form through the site's Worker (website/worker/index.js). Resolves
- * to { ok: true }; to { ok: false, otp: 'sent', sentTo, resendIn } when the
- * Worker has sent a one-time code to the number and wants it back
+ * to { ok: true, ...what the Worker names (lead_id, is_repeat,
+ * buddy_interest_id) }; to { ok: false, otp: 'sent', sentTo, resendIn } when
+ * the Worker has sent a one-time code to the number and wants it back
  * (website/worker/otp.js); or to { ok: false, error, errors, reason }. Never
  * throws: a failure is shown to the visitor, who can try again. The /beta
  * artboard carries the same helper (artboard-patches.mjs).
@@ -50,11 +59,11 @@ export async function postForm(path, body) {
   try {
     const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
-    if (res.ok && data.ok) return { ok: true };
+    if (res.ok && data.ok) return { ...data, ok: true };
     if (res.status === 202 && data.otp === 'sent') return { ok: false, otp: 'sent', sentTo: data.sentTo, resendIn: data.resendIn || 30, errors: {} };
-    return { ok: false, error: data.error || 'We couldn’t save that just now. Please try again.', errors: data.errors || {}, reason: data.reason || '' };
+    return { ok: false, error: data.error || SAVE_ERROR[path] || 'Couldn’t save that. Try again.', errors: data.errors || {}, reason: data.reason || '' };
   } catch (e) {
-    return { ok: false, error: 'We couldn’t reach RideBuddy. Check your connection and try again.', errors: {} };
+    return { ok: false, error: NETWORK_ERROR, errors: {}, network: true };
   }
 }
 
@@ -104,12 +113,23 @@ export function CodeField({ id, value, onChange, error }) {
   );
 }
 
+/** CONSENT, with its Privacy Policy and Terms of Use opening in a new tab (PRD S3). A link inside the label opens; it doesn't tick. */
+export function ConsentText() {
+  return (
+    <span>
+      Send me an SMS or WhatsApp when booking opens. I agree to the{' '}
+      <a href={PRIVACY} target="_blank" rel="noopener">Privacy Policy</a> and{' '}
+      <a href={TERMS} target="_blank" rel="noopener">Terms of Use</a>.
+    </span>
+  );
+}
+
 export function ConsentTick({ id, checked, onChange, error }) {
   return (
     <div className="rb-consent">
       <label htmlFor={id}>
         <input id={id} type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-        <span>{CONSENT}</span>
+        <ConsentText />
       </label>
       {error && <span className="rb-error-msg" role="alert">{error}</span>}
     </div>
@@ -174,12 +194,24 @@ export function Done({ children }) {
 }
 
 /**
+ * PRD 10.2's otp_failed reasons, from the Worker's: a wrong code, too many,
+ * expired, or a code that didn't go out (refused or failed). The Worker's own
+ * reason rides along as `cause` where it says more.
+ */
+const OTP_REASONS = { wrong: 'wrong_code', too_many: 'too_many_attempts', expired: 'expired' };
+
+/** PRD 10.2's `form` for phone_invalid and save_failed: a sign-up, or the Buddy form. */
+export const formOf = (source) => (source === 'buddy' ? 'buddy' : 'signup');
+
+/**
  * A form that saves only after a one-time code (website/worker/otp.js): the
  * first POST sends a code to the number, the same POST with the code saves.
- * `submit(body, { form, code })` posts; a code sent or refused is handled
- * here, and it resolves to the Worker's answer when that is the form's to
- * show (saved, or the fields' errors) — null otherwise. `form` names the form
- * for the analytics (otp_sent, otp_failed, phone_invalid, ...).
+ * `submit(body, { source, estimateId, code })` posts; a code sent or refused
+ * is handled here, and it resolves to the Worker's answer when that is the
+ * form's to show (saved, or the fields' errors) — null otherwise. `source`
+ * (estimate, hero, buddy) and `estimateId` (null without a trip) go with the
+ * analytics, as PRD 10.2 names them: otp_sent, otp_verified, otp_failed,
+ * phone_invalid, save_failed.
  */
 export function useCodeForm(path, codeId) {
   const [step, setStep] = useState('form');
@@ -188,7 +220,9 @@ export function useCodeForm(path, codeId) {
   const [sentTo, setSentTo] = useState('');
   const [resendAt, setResendAt] = useState(0);
   const [now, setNow] = useState(0);
-  const [sending, setSending] = useState(false);
+  // What is on its way: '' (nothing), 'form', 'verify' (a code being checked) or 'resend'.
+  const [pending, setPending] = useState('');
+  const sending = pending !== '';
 
   // The code step counts down to "Resend OTP".
   useEffect(() => {
@@ -197,38 +231,43 @@ export function useCodeForm(path, codeId) {
     return () => clearInterval(t);
   }, [step]);
 
-  const submit = async (body, { form, code: withCode = '' }) => {
+  const submit = async (body, { source, estimateId = null, code: withCode = '' }) => {
     if (sending) return null;
     const atCode = step === 'code';
-    setSending(true);
+    const ids = { source, estimate_id: estimateId };
+    setPending(withCode ? 'verify' : atCode ? 'resend' : 'form');
     setCodeError('');
     const r = await postForm(path, withCode ? { ...body, code: withCode } : body);
-    setSending(false);
+    setPending('');
     if (r.otp === 'sent') {
       setStep('code');
       setCode('');
       setSentTo(r.sentTo);
       setResendAt(Date.now() + r.resendIn * 1000);
       setNow(Date.now());
-      track('otp_sent', { form });
+      track('otp_sent', { ...ids, is_resend: atCode });
       setTimeout(() => focusWhenReady(codeId), 0);
       return null;
     }
     if (!r.ok) {
       // For the analytics: a code that didn't go through, a mistyped number, another field, or a save that failed.
-      if (r.reason) track('otp_failed', { form, kind: r.reason });
-      else track(r.errors.phone ? 'phone_invalid' : Object.keys(r.errors).length ? 'form_invalid' : 'save_failed', { form });
+      if (r.reason) {
+        const reason = OTP_REASONS[r.reason] || 'send_failed';
+        track('otp_failed', { ...ids, reason, ...(reason === r.reason || OTP_REASONS[r.reason] ? {} : { cause: r.reason }) });
+      } else {
+        track(r.errors.phone ? 'phone_invalid' : Object.keys(r.errors).length ? 'form_invalid' : 'save_failed', { form: formOf(source) });
+      }
       if (atCode) { setCodeError(r.errors.code || r.error); return null; }
       return r;
     }
-    if (withCode) track('otp_verified', { form });
+    if (withCode) track('otp_verified', ids);
     setStep('form');
     setCode('');
     return r;
   };
 
   return {
-    step, code, codeError, sentTo, sending, submit, codeId,
+    step, code, codeError, sentTo, sending, pending, submit, codeId,
     resendIn: Math.max(0, Math.ceil((resendAt - now) / 1000)),
     setCode: (v) => { setCode(v); setCodeError(''); },
     changeNumber: () => { setStep('form'); setCode(''); setCodeError(''); },
@@ -249,11 +288,13 @@ export function CodeStep({ f, onVerify, onResend }) {
         <button type="button" className="rb-linkbtn" onClick={f.changeNumber}>Change number</button>
       </div>
       <CodeField id={f.codeId} value={f.code} error={f.codeError} onChange={f.setCode} />
-      <Button onClick={onVerify} disabled={f.sending || f.code.length !== 6}>{f.sending ? 'Checking…' : 'Verify Number'}</Button>
-      <div className="rb-resend">
-        {f.resendIn > 0
-          ? <span>Resend OTP in 0:{String(f.resendIn).padStart(2, '0')}</span>
-          : <button type="button" className="rb-linkbtn" onClick={onResend} disabled={f.sending}>Resend OTP</button>}
+      <Button onClick={onVerify} disabled={f.sending || f.code.length !== 6}>{f.pending === 'verify' ? 'Checking…' : 'Verify Number'}</Button>
+      <div className="rb-resend" aria-live="polite">
+        {f.pending === 'resend'
+          ? <span>Sending a new code…</span>
+          : f.resendIn > 0
+            ? <span>Resend OTP in 0:{String(f.resendIn).padStart(2, '0')}</span>
+            : <button type="button" className="rb-linkbtn" onClick={onResend} disabled={f.sending}>Resend OTP</button>}
       </div>
     </>
   );

@@ -12,6 +12,10 @@ const NAME = /^[a-z][a-z0-9_]{0,39}$/;
 const PROP = /^[a-z][a-z0-9_]{0,23}$/;
 const HOST = /^(\(internal\)|[a-z0-9.-]{1,100}(:\d{1,5})?)$/i;
 
+/** A page view: PRD 10.2's page_view, or pageview from pages cached before it. */
+export const isView = (n) => n === 'page_view' || n === 'pageview';
+const VIEWS = "('page_view', 'pageview')";
+
 /**
  * A beacon's events, each checked and trimmed; anything malformed is dropped.
  * Event: { n: name, p: page, l?: label, w?: region, h?: link target,
@@ -29,7 +33,7 @@ export function cleanEvents(body) {
       const v = cleanText(e[k], max);
       if (v) ev[k] = v;
     }
-    if (e.n === 'pageview') {
+    if (isView(e.n)) {
       if (e.f === 1) ev.f = 1;
       if (typeof e.r === 'string' && HOST.test(e.r)) ev.r = e.r.toLowerCase();
       if (e.u && typeof e.u === 'object') {
@@ -43,7 +47,7 @@ export function cleanEvents(body) {
     }
     if (e.d && typeof e.d === 'object' && !Array.isArray(e.d)) {
       const d = {};
-      for (const [k, v] of Object.entries(e.d).slice(0, 12)) {
+      for (const [k, v] of Object.entries(e.d).slice(0, 16)) {
         if (!PROP.test(k)) continue;
         if (typeof v === 'string') { const t = cleanText(v, 60); if (t) d[k] = t; }
         else if (typeof v === 'number' && Number.isFinite(v)) d[k] = Math.round(v * 100) / 100;
@@ -106,26 +110,41 @@ export const hourBand = (h) => (h < 6 ? 'Before 6 am' : h < 12 ? 'Morning, 6–1
 export const speedBand = (ms) => (ms <= FAST_MS ? 'Fast' : ms <= SLOW_MS ? 'Slowish' : 'Slow');
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const TRIPS = { round: 'Round trip', one: 'One way', hourly: 'Hourly' };
+/** A form, by PRD 10.2's `form` (signup, buddy, feedback) or the names pages cached before it sent. */
 const FORMS = {
-  contact: 'Contact page', estimate: 'estimate page', waitlist: 'Join the Waitlist pop-up', feedback: 'fare 👍/👎',
-  buddy: 'Buddy application', agency: 'agency application',
+  signup: 'a sign-up form', buddy: 'Buddy application', feedback: 'fare 👍/👎',
+  contact: 'Contact page', estimate: 'estimate page', waitlist: 'Join the Waitlist pop-up', agency: 'agency application',
 };
-/** Why a one-time code didn't go through (otp_failed, `kind`). */
+/** Where a one-time code was asked for, by PRD 10.2's `source`. */
+const CODE_SOURCES = { estimate: 'under an estimate', hero: 'Join the Waitlist', buddy: 'Buddy application' };
+/**
+ * Why a one-time code didn't go through: otp_failed's `cause` (the Worker's own
+ * reason, where it says more) or `reason` (PRD 10.2), or `kind` from before.
+ */
 const CODE_FAILURES = {
-  wrong: 'wrong code', expired: 'code expired', too_many: 'too many tries', send_failed: 'SMS not sent',
+  wrong_code: 'wrong code', too_many_attempts: 'too many tries', expired: 'code expired', send_failed: 'SMS not sent',
+  wrong: 'wrong code', too_many: 'too many tries',
   resend_wait: 'asked again too soon', number_limit: 'too many codes', network_limit: 'too many codes', daily_cap: 'SMS not sent',
   not_configured: 'no 2Factor key on Cloudflare',
 };
+/** estimate_refused reasons (PRD 6.3) that refuse a place: the refused list, by place. */
+const REFUSED = { pickup_out_of_area: 'Pickup', destination_too_far: 'Destination', too_short: 'Under 40 km' };
+/** …and those that are a lookup going wrong: problems. */
+const LOOKUP = {
+  route_not_found: 'No driving route between the two places', route_failed: 'Route lookup failed', maps_failed: 'Google Maps did not load',
+};
 
-/** Every event named on the dashboard, and how it reads there. */
+/** Every event named on the dashboard as a problem, and how it reads there. */
 export const PROBLEMS = {
   phone_invalid: (d) => `Mistyped phone number (${FORMS[d.form] || d.form || 'a form'})`,
   form_invalid: (d) => `Form sent incomplete (${FORMS[d.form] || d.form || 'a form'})`,
   save_failed: (d) => `A form could not be saved (${FORMS[d.form] || d.form || 'a form'})`,
-  otp_failed: (d) => `One-time code not confirmed (${FORMS[d.form] || d.form || 'a form'}: ${CODE_FAILURES[d.kind] || 'other'})`,
-  maps_failed: () => 'Google Maps did not load',
-  route_not_found: () => 'No driving route between the two places',
-  route_failed: () => 'Route lookup failed',
+  otp_failed: (d) => `One-time code not confirmed (${CODE_SOURCES[d.source] || FORMS[d.form] || d.form || 'a form'}: ${CODE_FAILURES[d.kind] || 'other'})`,
+  estimate_refused: (d) => LOOKUP[d.kind] || null,
+  // Named so before PRD 6.3's single estimate_refused:
+  maps_failed: () => LOOKUP.maps_failed,
+  route_not_found: () => LOOKUP.route_not_found,
+  route_failed: () => LOOKUP.route_failed,
   js_error: () => 'Script error on a page',
 };
 
@@ -135,11 +154,23 @@ export const PROBLEMS = {
 export const FAST_MS = 2500;
 export const SLOW_MS = 4000;
 
-/** Where a waitlist signup was made, as the dashboard names it. */
+/**
+ * Where a waitlist signup was made, as the dashboard names it: under an
+ * estimate, or a Join the Waitlist button (source hero) on the page it was sent
+ * from. Pages cached from before sent the page as the source.
+ */
 const JOINED_FROM = {
   estimate: 'Under an estimate', contact: 'Contact page', home: 'Home page', how: 'How It Works page', about: 'About page',
 };
-const DETAIL_EVENTS = ['place_refused', 'waitlist_joined', ...Object.keys(PROBLEMS)].map((n) => `'${n}'`).join(', ');
+const HERO_PAGES = [[/^\/contact\//, 'Contact page'], [/^\/about\//, 'About page'], [/^\/(beta\/)?(#|$)/, 'Home page']];
+function joinedFrom(source, page) {
+  if (source !== 'hero') return JOINED_FROM[source] || 'Other';
+  const hit = HERO_PAGES.find(([re]) => re.test(page || ''));
+  return hit ? hit[1] : 'Other';
+}
+/** A signup: PRD 10.2's signup_completed, or waitlist_joined from before. */
+const SIGNUPS = "('signup_completed', 'waitlist_joined')";
+const DETAIL_EVENTS = ['place_refused', 'waitlist_joined', 'signup_completed', ...Object.keys(PROBLEMS)].map((n) => `'${n}'`).join(', ');
 
 /** Every event of the day (?1), one row each, with its fields pulled out of the JSON. */
 const EV = `WITH ev AS (
@@ -161,7 +192,7 @@ export const DAY_SQL = [
   // 0 · every event, by name
   `${EV} SELECT n, COUNT(*) AS c FROM ev GROUP BY n`,
   // 1 · page views, and the people behind them
-  `${EV} SELECT p, COUNT(*) AS views, COUNT(DISTINCT vid) AS people FROM ev WHERE n = 'pageview' GROUP BY p`,
+  `${EV} SELECT p, COUNT(*) AS views, COUNT(DISTINCT vid) AS people FROM ev WHERE n IN ${VIEWS} GROUP BY p`,
   // 2 · clicks by page, place and label
   `${EV} SELECT p, COALESCE(w, '') AS w, COALESCE(l, '') AS l, COUNT(*) AS c FROM ev WHERE n = 'click' GROUP BY 1, 2, 3`,
   // 3 · page speed, banded
@@ -176,10 +207,13 @@ export const DAY_SQL = [
      json_extract(d, '$.ahead') AS ahead, json_extract(d, '$.fare') AS fare, json_extract(d, '$.weekday') AS weekday,
      json_extract(d, '$.hour') AS hour, json_extract(d, '$.km') AS km, COUNT(*) AS c
    FROM ev WHERE n = 'estimate_completed' GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9`,
-  // 5 · named events that carry details: refusals, signups, problems
-  `${EV} SELECT n, json_extract(d, '$.kind') AS kind, json_extract(d, '$.area') AS area, json_extract(d, '$.city') AS city,
-     json_extract(d, '$.source') AS source, json_extract(d, '$.form') AS form, CASE WHEN n = 'js_error' THEN l END AS msg, COUNT(*) AS c
-   FROM ev WHERE n IN (${DETAIL_EVENTS}) GROUP BY 1, 2, 3, 4, 5, 6, 7`,
+  // 5 · named events that carry details: refusals, signups, problems. `kind`
+  //     is the most specific reason an event gives (cause, reason, or kind).
+  `${EV} SELECT n, COALESCE(json_extract(d, '$.cause'), json_extract(d, '$.reason'), json_extract(d, '$.kind')) AS kind,
+     json_extract(d, '$.area') AS area, json_extract(d, '$.city') AS city,
+     json_extract(d, '$.source') AS source, json_extract(d, '$.form') AS form, CASE WHEN n = 'js_error' THEN l END AS msg,
+     CASE WHEN n IN ${SIGNUPS} THEN p END AS page, COUNT(*) AS c
+   FROM ev WHERE n IN (${DETAIL_EVENTS}) GROUP BY 1, 2, 3, 4, 5, 6, 7, 8`,
   // 6 · one row per visitor: device and city (first beacon), where they came from
   //     (first arrival from outside the site), and how far they got
   `${EV},
@@ -187,12 +221,12 @@ export const DAY_SQL = [
      SELECT vid, device, city, ROW_NUMBER() OVER (PARTITION BY vid ORDER BY id) AS rn FROM beacons WHERE day = ?1) WHERE rn = 1),
    lands AS (SELECT vid, r, u FROM (
      SELECT vid, r, u, ROW_NUMBER() OVER (PARTITION BY vid ORDER BY bid, k) AS rn
-     FROM ev WHERE n = 'pageview' AND f = 1 AND COALESCE(r, '') <> '(internal)') WHERE rn = 1),
+     FROM ev WHERE n IN ${VIEWS} AND f = 1 AND COALESCE(r, '') <> '(internal)') WHERE rn = 1),
    flags AS (SELECT vid,
-       MAX(n = 'pageview' AND p LIKE '/estimate/%') AS opened, MAX(n = 'estimate_started') AS started,
-       MAX(n = 'estimate_completed') AS fare, MAX(n = 'waitlist_joined' AND json_extract(d, '$.source') = 'estimate') AS joined_here,
-       MAX(n = 'waitlist_joined') AS joined, MAX(n = 'buddy_application_opened') AS b_open,
-       MAX(n = 'buddy_application_submitted') AS b_sent
+       MAX(n IN ${VIEWS} AND p LIKE '/estimate/%') AS opened, MAX(n = 'estimate_started') AS started,
+       MAX(n = 'estimate_completed') AS fare, MAX(n IN ${SIGNUPS} AND json_extract(d, '$.source') = 'estimate') AS joined_here,
+       MAX(n IN ${SIGNUPS}) AS joined, MAX(n = 'buddy_application_opened') AS b_open,
+       MAX(n IN ('buddy_interest_submitted', 'buddy_application_submitted')) AS b_sent
      FROM ev GROUP BY vid)
    SELECT fi.vid, fi.device, fi.city, l.r, l.u, g.opened, g.started, g.fare, g.joined_here, g.joined, g.b_open, g.b_sent
    FROM firsts fi LEFT JOIN flags g ON g.vid = fi.vid LEFT JOIN lands l ON l.vid = fi.vid`,
@@ -212,7 +246,7 @@ export function summarize([counts, pages, clicks, perf, fares, details, people])
   };
 
   for (const r of counts) {
-    if (r.n === 'pageview') add('pageviews', '', r.c);
+    if (isView(r.n)) add('pageviews', '', r.c);
     else if (r.n !== 'click' && r.n !== 'perf') add('event', r.n, r.c);
   }
   for (const r of pages) { add('page_views', r.p, r.views); add('page_visitors', r.p, r.people); }
@@ -235,13 +269,14 @@ export function summarize([counts, pages, clicks, perf, fares, details, people])
     if (typeof r.hour === 'number') add('hour', hourBand(r.hour), r.c);
     if (r.km) { add('km_sum', '', Math.round(r.km) * r.c); add('km_n', '', r.c); }
   }
+  const where = (r) => [r.area, r.city].filter(Boolean).join(', ') || 'Unknown';
   for (const r of details) {
-    if (PROBLEMS[r.n]) add('problem', PROBLEMS[r.n]({ form: r.form, kind: r.kind }), r.c);
+    const problem = PROBLEMS[r.n] && PROBLEMS[r.n]({ form: r.form, kind: r.kind, source: r.source });
+    if (problem) add('problem', problem, r.c);
     if (r.n === 'js_error') add('js_error', r.msg || 'error', r.c);
-    if (r.n === 'place_refused') {
-      add('refused', `${r.kind === 'destination' ? 'Destination' : 'Pickup'}\t${[r.area, r.city].filter(Boolean).join(', ') || 'Unknown'}`, r.c);
-    }
-    if (r.n === 'waitlist_joined') add('waitlist', JOINED_FROM[r.source] || 'Other', r.c);
+    if (r.n === 'estimate_refused' && REFUSED[r.kind]) add('refused', `${REFUSED[r.kind]}\t${where(r)}`, r.c);
+    if (r.n === 'place_refused') add('refused', `${r.kind === 'destination' ? 'Destination' : 'Pickup'}\t${where(r)}`, r.c);
+    if (r.n === 'signup_completed' || r.n === 'waitlist_joined') add('waitlist', joinedFrom(r.source, r.page), r.c);
   }
   for (const v of people) {
     let u = null;

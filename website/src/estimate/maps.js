@@ -8,6 +8,8 @@
  * Function names and return shapes mirror maps.ts on purpose.
  */
 
+import { FARE } from './fare-engine.js';
+
 // Injected at build time from GOOGLE_MAPS_BROWSER_KEY (see build.mjs). A
 // browser key is public by design; its protection is the HTTP-referrer
 // restriction and the short list of APIs enabled on it.
@@ -15,11 +17,23 @@ const KEY = __GOOGLE_MAPS_BROWSER_KEY__;
 
 export const CHANDIGARH = { lat: 30.7333, lng: 76.7794 };
 
-// Service area. Pickups: the Tricity (~25 km around Chandigarh — Mohali,
-// Panchkula, Zirakpur, Kharar, Pinjore). Destinations: within ~600 km, which
-// covers Delhi, Amritsar, Manali, Dharamshala, Rishikesh and Jaipur.
-export const PICKUP_RADIUS_KM = 25;
-export const DESTINATION_RADIUS_KM = 600;
+// Service area (rates.json, PRD 6.2). Pickups: the Tricity (25 km around
+// Chandigarh — Mohali, Panchkula, Zirakpur, Kharar, Pinjore). Destinations:
+// within 600 km, which covers Delhi, Amritsar, Manali, Dharamshala, Rishikesh
+// and Jaipur. And at least 40 km of road one way (D4): checked on the route.
+export const PICKUP_RADIUS_KM = FARE.pickup_radius_km;
+export const DESTINATION_RADIUS_KM = FARE.destination_radius_km;
+export const MIN_TRIP_KM = FARE.min_trip_km;
+
+/** PRD 6.3's refusals, word for word, by the reason estimate_refused carries. */
+export const REFUSAL = {
+  pickup_out_of_area: 'Pickups are within the Chandigarh Tricity.',
+  destination_too_far: `Destinations within ${DESTINATION_RADIUS_KM} km of Chandigarh.`,
+  too_short: `RideBuddy is for outstation trips. Pick a destination ${MIN_TRIP_KM} km or more away.`,
+  route_not_found: 'No driving route found. Try a nearby place.',
+  route_failed: 'Couldn’t calculate that route. Try again.',
+  maps_failed: 'Maps are down. Try again in a few minutes.',
+};
 
 const KM_PER_DEG_LAT = 111.32;
 const KM_PER_DEG_LNG = KM_PER_DEG_LAT * Math.cos((CHANDIGARH.lat * Math.PI) / 180);
@@ -45,12 +59,8 @@ export function haversineKm(a, b) {
 /** The box is coarse; the radius is the rule. Applied to the chosen place. */
 export function withinService(kind, place) {
   const km = haversineKm(CHANDIGARH, place);
-  if (kind === 'pickup' && km > PICKUP_RADIUS_KM) {
-    return { ok: false, message: 'Pickups are within the Chandigarh Tricity for now.' };
-  }
-  if (kind === 'destination' && km > DESTINATION_RADIUS_KM) {
-    return { ok: false, message: `We serve destinations within ${DESTINATION_RADIUS_KM} km of Chandigarh for now.` };
-  }
+  if (kind === 'pickup' && km > PICKUP_RADIUS_KM) return { ok: false, reason: 'pickup_out_of_area', message: REFUSAL.pickup_out_of_area };
+  if (kind === 'destination' && km > DESTINATION_RADIUS_KM) return { ok: false, reason: 'destination_too_far', message: REFUSAL.destination_too_far };
   return { ok: true };
 }
 

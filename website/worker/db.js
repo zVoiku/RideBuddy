@@ -95,7 +95,7 @@ const SCHEMA = [
  * exists": a column that is already there fails as a duplicate, which is fine.
  * SCHEMA_VERSION in meta records that this has run.
  */
-const SCHEMA_VERSION = '4';
+const SCHEMA_VERSION = '5';
 /** 4: where each row and beacon came from (lib.js attribution(); src/site.js sets the cookies). */
 const ATTRIBUTION = ['visitor_id TEXT', ...TOUCH_FIELDS.map((f) => `${f} TEXT`), 'internal INTEGER'];
 const ADDED_COLUMNS = [
@@ -107,8 +107,15 @@ const ADDED_COLUMNS = [
   // 4: attribution, on every list and on each beacon (its first touch as JSON)
   ...['waitlist', 'buddies', 'agencies'].flatMap((t) => ATTRIBUTION.map((c) => [t, c])),
   ['beacons', 'visitor_id TEXT'], ['beacons', 'touch TEXT'],
+  // 5: PRD sources (estimate or hero) with the page kept apart, and each beacon's session
+  ['waitlist', 'page TEXT'], ['beacons', 'session_id TEXT'],
 ];
-const AFTER_COLUMNS = ['CREATE INDEX IF NOT EXISTS waitlist_estimate ON waitlist (estimate_id)'];
+const AFTER_COLUMNS = [
+  'CREATE INDEX IF NOT EXISTS waitlist_estimate ON waitlist (estimate_id)',
+  // 5: rows saved when the source was the page become hero signups from that page.
+  "UPDATE waitlist SET page = source, source = 'hero' WHERE source IN ('home', 'how', 'about', 'contact')",
+  "UPDATE waitlist SET page = 'estimate' WHERE source = 'estimate' AND page IS NULL",
+];
 
 let readyOnce = null;
 

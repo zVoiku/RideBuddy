@@ -8,11 +8,12 @@
  * minutes and three tries. 2Factor's SMS OTP API only delivers it, in a
  * DLT-approved OTP template: 2Factor's default one, or RideBuddy's own once
  * TWOFACTOR_TEMPLATE names it (website/README.md).
- * The limits are the Phase 1 design's: a new code after 30 seconds, three
- * codes per number and ten per network an hour, plus a site-wide daily cap
- * so a flood can never run up the SMS bill.
+ * The limits are PRD S5's: a new code after 30 seconds, three codes per
+ * number and ten per network an hour, plus a site-wide daily cap so a flood
+ * can never run up the SMS bill. They count codes actually sent: a request
+ * that is refused, or that 2Factor fails to deliver, uses none of them.
  */
-import { addHit, sha256Hex } from './db.js';
+import { addHit, countHits, sha256Hex } from './db.js';
 import {
   CODE_EXPIRED, CODE_NETWORK_LIMIT, CODE_NUMBER_LIMIT, CODE_SEND_FAILED, CODE_TOO_MANY, CODE_WRONG, codeWait, istDay, maskPhone,
 } from './lib.js';
@@ -20,9 +21,9 @@ import {
 export const CODE_TTL = 300; // seconds a code stays good
 export const CODE_TRIES = 3; // tries before a code is void
 export const RESEND_AFTER = 30; // seconds before another code to the same number
-const PER_NUMBER = 3; // codes to one number an hour
-const PER_NETWORK = 10; // codes one network can ask for an hour
-const DAILY = 300; // codes a day, site-wide; OTP_DAILY_CAP overrides
+const PER_NUMBER = 3; // codes sent to one number an hour
+const PER_NETWORK = 10; // codes sent at the request of one network an hour
+const DAILY = 300; // codes sent a day, site-wide; OTP_DAILY_CAP overrides
 
 /** The Worker can send codes: the 2Factor key is set (shown on /admin). */
 export const otpReady = (env) => !!env.TWOFACTOR_API_KEY;
@@ -59,12 +60,12 @@ export async function sendCode({ env, db, salt, network, at }, phone) {
     const wait = RESEND_AFTER - (t - last);
     return { ok: false, status: 429, reason: 'resend_wait', error: codeWait(wait), resendIn: wait };
   }
-  if (await addHit(db, `otp:${key}`) > PER_NUMBER) return { ok: false, status: 429, reason: 'number_limit', error: CODE_NUMBER_LIMIT };
-  if (await addHit(db, `otpnet:${network}`) > PER_NETWORK) return { ok: false, status: 429, reason: 'network_limit', error: CODE_NETWORK_LIMIT };
+  // Checked here, counted below once the code has gone out.
+  if (await countHits(db, `otp:${key}`) >= PER_NUMBER) return { ok: false, status: 429, reason: 'number_limit', error: CODE_NUMBER_LIMIT };
+  if (await countHits(db, `otpnet:${network}`) >= PER_NETWORK) return { ok: false, status: 429, reason: 'network_limit', error: CODE_NETWORK_LIMIT };
   const cap = Number(env.OTP_DAILY_CAP) > 0 ? Number(env.OTP_DAILY_CAP) : DAILY;
-  const sentToday = await db.prepare('INSERT INTO otp_daily (day, n) VALUES (?, 1) ON CONFLICT (day) DO UPDATE SET n = n + 1 RETURNING n')
-    .bind(istDay(t * 1000)).first('n');
-  if (sentToday > cap) {
+  const day = istDay(t * 1000);
+  if ((await db.prepare('SELECT n FROM otp_daily WHERE day = ?').bind(day).first('n') ?? 0) >= cap) {
     console.error('otp: the daily cap of codes is reached', cap);
     return { ok: false, status: 503, reason: 'daily_cap', error: CODE_SEND_FAILED };
   }
@@ -80,6 +81,9 @@ export async function sendCode({ env, db, salt, network, at }, phone) {
     await db.prepare('DELETE FROM otp_codes WHERE who = ?').bind(key).run();
     return { ok: false, status: 502, reason: 'send_failed', error: CODE_SEND_FAILED };
   }
+  await addHit(db, `otp:${key}`);
+  await addHit(db, `otpnet:${network}`);
+  await db.prepare('INSERT INTO otp_daily (day, n) VALUES (?, 1) ON CONFLICT (day) DO UPDATE SET n = n + 1').bind(day).run();
   return { ok: true, sentTo: maskPhone(phone), resendIn: RESEND_AFTER, expiresIn: CODE_TTL };
 }
 

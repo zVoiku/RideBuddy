@@ -13,7 +13,7 @@ import { ApplyPopup } from './apply.jsx';
 
 const { useState, useEffect } = React;
 
-/** The page, as body[data-page] names it: 'about' or 'contact' — also where a waitlist signup was made (forms.js SOURCES). */
+/** The page, as body[data-page] names it: 'about' or 'contact' — also the `page` of a waitlist signup made on it (forms.js PAGES). */
 const PAGE = document.body.getAttribute('data-page') || '';
 const APPLY = '#apply';
 
@@ -54,7 +54,7 @@ function Popups() {
 
   return (
     <>
-      <WaitlistPopup open={waitlist} source={PAGE} onClose={() => setWaitlist(false)} />
+      <WaitlistPopup open={waitlist} page={PAGE} onClose={() => setWaitlist(false)} />
       <ApplyPopup open={apply} onClose={closeApply} />
     </>
   );

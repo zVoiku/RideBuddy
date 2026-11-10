@@ -5,7 +5,9 @@
  *
  *   npm run build && npm run test:worker
  */
+import { readdirSync } from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startDev } from './dev-server.mjs';
 import {
@@ -27,6 +29,19 @@ function dayTotals(beacons, day) {
   return summarize(DAY_SQL.map((sql) => db.prepare(sql).all(day)));
 }
 import { compact, renderDashboard } from '../worker/dashboard.js';
+
+/** The newest beacon's `column`, read from the local D1's files that `wrangler dev` keeps in `dir`. */
+function beaconColumn(dir, column) {
+  const files = readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('.sqlite')).map((f) => path.join(dir, String(f)));
+  for (const file of files) {
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      const row = db.prepare(`SELECT ${column} AS v FROM beacons ORDER BY id DESC LIMIT 1`).get();
+      if (row) return row.v;
+    } catch { /* not the site's database */ } finally { db.close(); }
+  }
+  return undefined;
+}
 
 const PASSWORD = 'test-password-ʀʙ-2026';
 
@@ -173,6 +188,34 @@ function analyticsUnits() {
   same([got('refused|Pickup\tConnaught Place, New Delhi'), got('problem|Mistyped phone number (Buddy application)'), got('speed|/beta/\tSlow'), got('speed_net|3g\tSlow')].join(' '), '1 1 1 1', 'a day: refusals, problems and speed');
   same(got('click|/estimate/\testimate result\tJoin the Waitlist'), 1, 'a day: clicks by page, place and label');
 
+  // PRD 10.2's names count as the names before them did: page_view, signup_completed
+  // (a hero signup by the page it was on), estimate_refused (a place refused, or a
+  // lookup gone wrong), buddy_interest_submitted, otp_failed by source and cause.
+  const prd = new Map(dayTotals([
+    { vid: 'F', device: 'Phone', city: 'Mohali', events: [
+      { n: 'page_view', p: '/about/', f: 1, r: 'www.google.com' },
+      { n: 'signup_completed', p: '/about/', d: { source: 'hero', lead_id: 7, is_repeat: false } },
+      { n: 'page_view', p: '/estimate/' }, { n: 'estimate_started', p: '/estimate/', d: { trip: 'one' } },
+      { n: 'estimate_refused', p: '/estimate/', d: { reason: 'too_short', trip: 'one', area: 'Phase 7', city: 'Mohali' } },
+      { n: 'estimate_refused', p: '/estimate/', d: { reason: 'route_failed', trip: 'one' } },
+      { n: 'estimate_completed', p: '/estimate/', d: { trip: 'one', dest_city: 'Shimla', fare: 1612, estimate_id: 'est_x', long_drive: false } },
+      { n: 'signup_completed', p: '/estimate/', d: { source: 'estimate', estimate_id: 'est_x', is_repeat: true, days_ahead: 3 } },
+      { n: 'otp_failed', p: '/contact/', d: { source: 'hero', reason: 'send_failed', cause: 'network_limit' } },
+    ] },
+    { vid: 'G', device: 'Computer', city: 'Chandigarh', events: [
+      { n: 'page_view', p: '/contact/', f: 1 }, { n: 'buddy_application_opened', p: '/contact/' },
+      { n: 'buddy_interest_submitted', p: '/contact/', d: { buddy_interest_id: 'buddy_4', type: 'individual' } },
+      { n: 'signup_completed', p: '/contact/', d: { source: 'hero' } },
+    ] },
+  ], '2026-09-27').map(([m, k, v]) => [`${m}|${k}`, v]));
+  const pg = (k) => prd.get(k) || 0;
+  same([pg('pageviews|'), pg('visitors|'), pg('page_views|/about/')].join(' '), '3 2 1', 'PRD names: page_view counts as a page view');
+  same([pg('waitlist|About page'), pg('waitlist|Under an estimate'), pg('waitlist|Contact page')].join(' '), '1 1 1', 'PRD names: signup_completed, a hero signup by the page it was on');
+  same(['1 opened', '2 started', '3 saw a fare', '4 joined the waitlist'].map((s) => pg(`funnel_estimate|${s}`)).join(' '), '1 1 1 1', 'PRD names: the estimator funnel');
+  same([pg('funnel_buddy|2 sent it'), pg('refused|Under 40 km\tPhase 7, Mohali'), pg('problem|Route lookup failed'),
+    pg('problem|One-time code not confirmed (Join the Waitlist: too many codes)')].join(' '), '1 1 1 1',
+  'PRD names: buddy_interest_submitted; estimate_refused as a refusal or a problem; otp_failed by source and cause');
+
   // The page escapes everything visitors can influence.
   const evil = '<img src=x onerror=alert(1)>';
   const html = renderDashboard({
@@ -263,21 +306,27 @@ async function endpoints() {
       same((await raw(B, { path: p })).status, want, `static site still served: ${p}`);
     }
 
-    // The client waitlist.
+    // The client waitlist. A page cached from before PRD sources sends its page as the source.
+    const leads = [];
     for (const phone of ['98708 71324', '+91 98708-71324', '09870871324']) {
       const r = await post(B, '/api/waitlist', { phone, source: 'contact' });
       check(r.status === 200 && json(r)?.ok === true, `waitlist accepts "${phone}" (${r.status})`);
+      leads.push([json(r)?.lead_id, json(r)?.is_repeat]);
     }
+    same(JSON.stringify(leads), '[[1,false],[1,true],[1,true]]', 'each signup names its lead (the number\'s first signup) and whether it is a repeat');
     const trip = { type: 'round', from: 'Sector 17', to: 'Shimla', date: '2026-10-12', ret: '2026-10-14', time: '09:00', fare: 5492 };
     const oneWay = { type: 'one', from: 'Sector 17', to: 'Shimla', date: '2026-10-12', time: '20:30', fare: 1860 };
     const foreign = await post(B, '/api/waitlist', { phone: '+44 7911 123456', source: 'contact', consent: true });
     check(foreign.status === 400 && json(foreign)?.errors?.phone === PHONE_ERROR, `a foreign number is refused: every form is +91 (${foreign.status})`);
     const unticked = await post(B, '/api/waitlist', { phone: '9811100000', source: 'home', consent: false });
     check(unticked.status === 400 && json(unticked)?.errors?.consent === CONSENT_ERROR, `the consent tick is required where the form has it (${unticked.status})`);
-    for (const [phone, source] of [['9811100001', 'home'], ['9811100002', 'how'], ['9811100003', 'about']]) {
-      same((await post(B, '/api/waitlist', { phone, source, consent: true })).status, 200, `the Join the Waitlist pop-up saves from the ${source} page`);
+    for (const [phone, page] of [['9811100001', 'home'], ['9811100002', 'how'], ['9811100003', 'about']]) {
+      // How It Works is gone: only a page cached from before it sends `how`, as the source.
+      const body = page === 'how' ? { phone, source: page, consent: true } : { phone, source: 'hero', page, consent: true };
+      same((await post(B, '/api/waitlist', body)).status, 200, `the Join the Waitlist pop-up saves from the ${page} page`);
     }
-    same((await post(B, '/api/waitlist', { phone: '9811100004', source: 'estimate', consent: true, trip })).status, 200, 'an estimate signup carries its trip and fare');
+    const fromEstimate = await post(B, '/api/waitlist', { phone: '9811100004', source: 'estimate', consent: true, trip });
+    check(fromEstimate.status === 200 && json(fromEstimate)?.lead_id === 7 && json(fromEstimate)?.is_repeat === false, `an estimate signup carries its trip and fare (lead ${json(fromEstimate)?.lead_id})`);
     const bad = await post(B, '/api/waitlist', { phone: '98708 7132', source: 'contact' });
     check(bad.status === 400 && json(bad)?.errors?.phone === PHONE_ERROR, `a number a digit short is refused with the field message (${bad.status})`);
     same((await post(B, '/api/waitlist', { phone: '9870871324', source: 'homepage' })).status, 400, 'an unknown source is refused');
@@ -312,13 +361,15 @@ async function endpoints() {
     const apply = (body) => post(B, '/api/buddy', body, { 'CF-Connecting-IP': '198.51.100.20' });
     const empty = await apply({ type: 'individual', name: ' ', phone: '', licence: '', city: '' });
     check(empty.status === 400 && Object.keys(json(empty)?.errors || {}).join() === 'name,phone,licence,city', `an empty application reports all four fields (${empty.status})`);
-    same((await apply({ type: 'individual', name: 'Voiku Zavadschi', phone: '+919870871324', licence: 'VNS8893', city: 'Mohali' })).status, 200, 'an application is saved, with the city');
+    const first = await apply({ type: 'individual', name: 'Voiku Zavadschi', phone: '+919870871324', licence: 'VNS8893', city: 'Mohali' });
+    check(first.status === 200 && json(first)?.buddy_interest_id === 'buddy_1', `an application is saved, with the city, and named (${json(first)?.buddy_interest_id})`);
     same((await apply({ name: '=HYPERLINK("http://x","click")', phone: '98708 71324', licence: 'PB01 2011, 0012345' })).status, 200, 'an application from a page cached before the city field is still saved');
     const agencyEmpty = await apply({ type: 'agency', agency: '', contact: '', phone: '', city: '' });
     check(agencyEmpty.status === 400 && Object.keys(json(agencyEmpty)?.errors || {}).join() === 'agency,contact,phone,city', `an empty agency application reports its four fields (${agencyEmpty.status})`);
     const agencyBad = await apply({ type: 'agency', agency: 'Tricity Drivers', contact: 'Gurpreet Kaur', phone: '9811122233', city: 'Panchkula', email: 'ops@', gstin: '03ABCDE1234F1Z' });
     check(agencyBad.status === 400 && json(agencyBad)?.errors?.email === EMAIL_ERROR && json(agencyBad)?.errors?.gstin === GSTIN_ERROR, `a mistyped email or GSTIN is refused, optional as they are (${agencyBad.status})`);
-    same((await apply({ type: 'agency', agency: 'Tricity Drivers', contact: 'Gurpreet Kaur', phone: '9811122233', city: 'Panchkula', drivers: '6–20', email: 'Ops@TricityDrivers.in', gstin: '03abcde1234f1z5' })).status, 200, 'an agency application is saved');
+    const agencySaved = await apply({ type: 'agency', agency: 'Tricity Drivers', contact: 'Gurpreet Kaur', phone: '9811122233', city: 'Panchkula', drivers: '6–20', email: 'Ops@TricityDrivers.in', gstin: '03abcde1234f1z5' });
+    check(agencySaved.status === 200 && json(agencySaved)?.buddy_interest_id === 'agency_1', `an agency application is saved, and named (${json(agencySaved)?.buddy_interest_id})`);
     same((await apply({ type: 'agency', agency: 'Solo Cabs', contact: 'Aman', phone: '9811122233', city: 'Zirakpur', drivers: 'lots' })).status, 200, 'an agency with no optional fields (an unknown driver count is left out)');
 
     // The downloads.
@@ -328,16 +379,16 @@ async function endpoints() {
     check(clients.text.startsWith('\uFEFF'), 'with a byte-order mark for Excel');
     const c = listRows(clients.text);
     const after = (row) => row.replace(/^\d+,\d{4}-\d{2}-\d{2} \d{2}:\d{2},/, '');
-    same(c[0], `ID,Submitted (IST),Phone,Source,Trip,Fare (₹),👍/👎,Comment,Consent,Phone verified,Repeat${ATTR_HEAD}`, 'clients header');
-    same(c.length, 11, 'nine signups and one vote from someone who never joined; the honeypot one is not listed');
-    check(/^1,\d{4}-\d{2}-\d{2} \d{2}:\d{2},\+919870871324,Contact page,,,,,,,$/.test(c[1]), `first signup, normalised and timestamped in IST (${c[1]})`);
-    check(c[2].endsWith(',+919870871324,Contact page,,,,,,,(repeat)') && c[3].endsWith('(repeat)'), 'the same number in other formats is marked (repeat)');
-    same([c[4], c[5], c[6]].map(after).join(' | '), '+919811100001,Home page,,,,,Yes,, | +919811100002,How It Works page,,,,,Yes,, | +919811100003,About page,,,,,Yes,,',
-      'pop-up signups: the page they joined from, and the consent (a page cached with How It Works still saves)');
-    same(after(c[7]), '+919811100004,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,Yes,,', 'the estimate signup: trip and fare in their own columns');
-    same(after(c[8]), '+919811100005,Estimate page,"One way · Sector 17 → Shimla · 12 Oct, 20:30",1860,👍,Too high for a one-way trip,Yes,,', 'vote first, then joined: one row, latest vote, the comment kept');
-    same(after(c[9]), '+919811100006,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,👎,"Expected under 5,000",Yes,,', 'joined first, then voted: the same row');
-    same(after(c[10]), ',Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,👎,,,,', 'a vote from someone who never joined: no phone, never a repeat');
+    same(c[0], `ID,Submitted (IST),Phone,Source,Page,Trip,Fare (₹),👍/👎,Comment,Consent,Phone verified,Repeat${ATTR_HEAD}`, 'clients header');
+    same(c.length, 11, 'nine signups and one vote from someone who never joined; the honeypot ones are not listed');
+    check(/^1,\d{4}-\d{2}-\d{2} \d{2}:\d{2},\+919870871324,hero,Contact page,,,,,,,$/.test(c[1]), `first signup, normalised and timestamped in IST; a page sent as the source is a hero signup from that page (${c[1]})`);
+    check(c[2].endsWith(',+919870871324,hero,Contact page,,,,,,,(repeat)') && c[3].endsWith('(repeat)'), 'the same number in other formats is marked (repeat)');
+    same([c[4], c[5], c[6]].map(after).join(' | '), '+919811100001,hero,Home page,,,,,Yes,, | +919811100002,hero,How It Works page,,,,,Yes,, | +919811100003,hero,About page,,,,,Yes,,',
+      'pop-up signups: source hero, the page they joined from, and the consent (a page cached with How It Works still saves)');
+    same(after(c[7]), '+919811100004,estimate,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,Yes,,', 'the estimate signup: trip and fare in their own columns');
+    same(after(c[8]), '+919811100005,estimate,Estimate page,"One way · Sector 17 → Shimla · 12 Oct, 20:30",1860,👍,Too high for a one-way trip,Yes,,', 'vote first, then joined: one row, latest vote, the comment kept');
+    same(after(c[9]), '+919811100006,estimate,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,👎,"Expected under 5,000",Yes,,', 'joined first, then voted: the same row');
+    same(after(c[10]), ',estimate,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,👎,,,,', 'a vote from someone who never joined: no phone, never a repeat');
 
     const buddies = await admin(B, '/admin/buddies.csv', { user: 'Admin' });
     same(buddies.status, 200, 'buddies.csv downloads (username in any case)');
@@ -367,10 +418,10 @@ async function endpoints() {
     same((await post(B, '/api/waitlist', { phone: '9811100040', source: 'about', consent: true }, cookies)).status, 200, 'a signup with the attribution cookies is saved');
     same((await post(B, '/api/buddy', { type: 'individual', name: 'Attr Test', phone: '9811100041', licence: 'PB01 4', city: 'Mohali' }, cookies)).status, 200, '…and an application');
     const ATTR_CELLS = 'k3v9x0q2m8w4r7t1z5y6,whatsapp,group,launch,driver,v2,l.instagram.com,/about/,Yes';
-    check(csvRows((await admin(B, '/admin/clients.csv')).text).at(-1).endsWith(`,+919811100040,About page,,,,,Yes,,,${ATTR_CELLS}`), 'clients.csv: the visitor_id, all five utm values, the referrer, the landing page and Internal');
+    check(csvRows((await admin(B, '/admin/clients.csv')).text).at(-1).endsWith(`,+919811100040,hero,About page,,,,,Yes,,,${ATTR_CELLS}`), 'clients.csv: the visitor_id, all five utm values, the referrer, the landing page and Internal');
     check(csvRows((await admin(B, '/admin/buddies.csv')).text).at(-1).endsWith(`,Attr Test,+919811100041,PB01 4,Mohali,,,${ATTR_CELLS}`), 'buddies.csv: the same');
     same((await post(B, '/api/waitlist', { phone: '9811100042', source: 'contact', consent: true }, { 'CF-Connecting-IP': '198.51.100.41', Cookie: 'visitor_id=<x>; rb_ft=%7Bnot-json' })).status, 200, 'malformed cookies don\'t stop a signup');
-    check(csvRows((await admin(B, '/admin/clients.csv')).text).at(-1).endsWith(',+919811100042,Contact page,,,,,Yes,,,,,,,,,,,'), '…and are left blank');
+    check(csvRows((await admin(B, '/admin/clients.csv')).text).at(-1).endsWith(',+919811100042,hero,Contact page,,,,,Yes,,,,,,,,,,,'), '…and are left blank');
 
     // Getting in.
     const none = await raw(B, { path: '/admin' });
@@ -392,6 +443,13 @@ async function endpoints() {
     same(flood.slice(0, 20).every((s) => s === 200) && flood[20], 429, 'the 21st submission in an hour from one network is refused');
     same((await post(B, '/api/buddy', { name: 'A B', phone: '9000000002', licence: 'X1' }, { 'CF-Connecting-IP': '198.51.100.7' })).status, 429, 'the cap covers both forms');
     same((await post(B, '/api/waitlist', { phone: '9000000003', source: 'contact' }, { 'CF-Connecting-IP': '198.51.100.8' })).status, 200, 'another network can still sign up');
+    // Code checks (Verify) have their own allowance, 60 an hour: pressing Verify never uses up the 20 (N7).
+    const checks = [];
+    for (let i = 0; i < 21; i += 1) checks.push((await post(B, '/api/waitlist', { phone: '9000000004', source: 'contact', code: '123456', website: 'x' }, { 'CF-Connecting-IP': '198.51.100.9' })).status);
+    same(checks.every((s) => s === 200) && (await post(B, '/api/waitlist', { phone: '9000000005', source: 'contact', website: 'x' }, { 'CF-Connecting-IP': '198.51.100.9' })).status, 200,
+      'twenty-one code checks from one network are not refused, and leave its 20 form posts untouched');
+    same((await post(B, '/api/waitlist', { phone: '9811100099', source: 'hero', page: 'nowhere', consent: true }, { 'CF-Connecting-IP': '198.51.100.10' })).status, 200, 'a hero signup with an unknown page is still saved');
+    check(csvRows((await admin(B, '/admin/clients.csv')).text).at(-1).includes(',+919811100099,hero,,'), '…as hero, with no page');
   } finally {
     await dev.stop();
   }
@@ -437,10 +495,14 @@ async function analytics() {
     same((await beacon(JSON.stringify({ e: [{ n: 'click', p: '/', l: 'x'.repeat(20000) }] }))).status, 413, 'an oversized beacon is refused');
     same((await raw(B, { path: '/api/e' })).status, 405, 'GET is not allowed');
 
+    // The session (src/site.js rb_sid, 30 minutes idle) is kept with each beacon.
+    await beacon([{ n: 'page_view', p: '/about/', f: 1 }], { ip: '49.36.2.2', headers: { Cookie: 'visitor_id=sess0000000000000001; rb_sid=s1x2y3z4a5b6c7d8' } });
+    same(beaconColumn(dev.dir, 'session_id'), 's1x2y3z4a5b6c7d8', 'a beacon keeps the session it was sent in');
+
     const week = await admin(B, '/admin?days=7', at(TODAY));
     same(week.status, 200, 'the dashboard opens');
     const w = visible(week.text);
-    check(/Visitors 3 ▲ new/.test(w) && /Page views 4 /.test(w) && /Fares shown 1 /.test(w),
+    check(/Visitors 3 ▲ new/.test(w) && /Page views 5 /.test(w) && /Fares shown 1 /.test(w),
       `7 days: yesterday (summed) and today (live) together; crawler, excluded browser and others' pages not counted (${w.match(/Visitors [^A-Z]*/)?.[0]})`);
     check(/Opened the estimate page 1 Started filling it in 100% of the step before 1 Saw a fare 100% of the step before 1 Joined the waitlist there 100% of the step before 1 /.test(w), 'the estimator funnel');
     check(/Google 1/.test(w) && /WhatsApp 1/.test(w) && /Direct or an app 1/.test(w) && /whatsapp \/ group \/ launch 1/.test(w), 'sources and the campaign');
@@ -454,7 +516,7 @@ async function analytics() {
     check(/Visitors 2 ▲ 100% vs yesterday/.test(today) && /Pick 7 days or more/.test(today), `Today: two visitors, compared with yesterday (${today.match(/Visitors [^A-Z]*/)?.[0]})`);
 
     const daily = await admin(B, '/admin/daily.csv', at(TODAY));
-    same(csvRows(daily.text).join(' | '), 'Date,Visitors,Page views,Fares shown,Waitlist signups,Buddy applications,Agency applications | 2026-09-25,1,1,1,0,0,0 | 2026-09-26,2,3,0,0,0,0', 'the daily CSV: one row a day');
+    same(csvRows(daily.text).join(' | '), 'Date,Visitors,Page views,Fares shown,Waitlist signups,Buddy applications,Agency applications | 2026-09-25,1,1,1,0,0,0 | 2026-09-26,2,4,0,0,0,0', 'the daily CSV: one row a day');
 
     const off = await admin(B, '/admin/exclude?on=1&days=7', at(TODAY));
     check(off.status === 303 && off.headers.location === '/admin?days=7#counting'
@@ -503,8 +565,8 @@ async function migration() {
     same((await post(B, '/api/buddy', { type: 'individual', name: 'New Applicant', phone: '9000000002', licence: 'PB01 2', city: 'Kharar' })).status, 200, 'an application with a city, into the older buddies table');
     same((await post(B, '/api/buddy', { type: 'agency', agency: 'Hill Drivers', contact: 'Ravi', phone: '9000000003', city: 'Mohali' })).status, 200, 'and an agency, into a table that did not exist');
     const c = listRows((await admin(B, '/admin/clients.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
-    same(c.slice(1).join(' | '), '1,+919870871324,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,,, | 2,+447911123456,Contact page,,,,,,, | 3,,Estimate page,"One way · Mohali → Kasauli · 20 Oct, 08:00",1650,👎,Fine otherwise,,,',
-      'old rows keep their data, the old fare is split into its column, new rows have every column');
+    same(c.slice(1).join(' | '), '1,+919870871324,estimate,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,,, | 2,+447911123456,hero,Contact page,,,,,,, | 3,,estimate,Estimate page,"One way · Mohali → Kasauli · 20 Oct, 08:00",1650,👎,Fine otherwise,,,',
+      'old rows keep their data (a page saved as the source becomes a hero signup from it), the old fare is split into its column, new rows have every column');
     const b = listRows((await admin(B, '/admin/buddies.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
     same(b.slice(1).join(' | '), '1,Old Applicant,+919000000001,PB01 1,,, | 2,New Applicant,+919000000002,PB01 2,Kharar,,', 'the buddies table gains the city and phone-verified columns');
     same(csvRows((await admin(B, '/admin/agencies.csv')).text).length, 2, 'the agencies list exists and has the new application');
@@ -591,7 +653,7 @@ async function otp() {
 
     const after = (row) => row.replace(/^\d+,\d{4}-\d{2}-\d{2} \d{2}:\d{2},/, '');
     same(listRows((await admin(B, '/admin/clients.csv')).text).slice(1).map(after).join(' | '),
-      '+919811100101,Home page,,,,,Yes,Yes, | +919811100109,Estimate page,"One way · Sector 17 → Shimla · 12 Oct, 09:00",1612,👎,,Yes,Yes,',
+      '+919811100101,hero,Home page,,,,,Yes,Yes, | +919811100109,estimate,Estimate page,"One way · Sector 17 → Shimla · 12 Oct, 09:00",1612,👎,,Yes,Yes,',
       'the list: only numbers proven with a code, marked Phone verified');
     same(listRows((await admin(B, '/admin/buddies.csv')).text).slice(1).map(after).join(), 'Harpreet Singh,+919811100107,PB01 20110012345,Mohali,Yes,', 'buddies.csv: Phone verified');
     same(listRows((await admin(B, '/admin/agencies.csv')).text).slice(1).map(after).join(), 'Hill Drivers,Ravi,+919811100108,Mohali,,,,Yes,', 'agencies.csv: Phone verified');
@@ -602,8 +664,9 @@ async function otp() {
       const r = await post(B, '/api/waitlist', { phone: `98113003${String(i).padStart(2, '0')}`, source: 'home', consent: true }, ip(20 + i));
       if (r.status === 503) capped = r;
     }
-    check(!!capped && json(capped)?.reason === 'daily_cap' && json(capped)?.error === CODE_SEND_FAILED && stub.messages.length === 30,
-      `the site-wide daily cap stops the SMS at 30 (${stub.messages.length} sent)`);
+    const delivered = stub.messages.filter((m) => m.delivered).length;
+    check(!!capped && json(capped)?.reason === 'daily_cap' && json(capped)?.error === CODE_SEND_FAILED && delivered === 30,
+      `the site-wide daily cap stops the SMS at 30 delivered; the one 2Factor refused doesn't count (${delivered} delivered)`);
   } finally {
     await dev.stop();
     await stub.close();

@@ -17,10 +17,16 @@
   "long_drive_threshold_h": 12,
   "rest_hours": 9,
 
+  "_service_area": "PRD 6.2-6.4: where the website prices trips. Pickups within pickup_radius_km of Chandigarh centre, destinations within destination_radius_km (straight line), and a one-way road distance of at least min_trip_km (D4). The website applies them; the backend doesn't use them.",
+  "min_trip_km": 40,
+  "pickup_radius_km": 25,
+  "destination_radius_km": 600,
+
   "standard_commission_pct": 30,
   "promo_discount_pct": 10,
   "gst_rate_pct": 18,
 
   "deposit_pct": 20,
+  "_app_only": "hourly_rate prices the app's Hourly trips (backend only); it, the commission, promo and GST rates are left out of the website's pages (website/build.mjs).",
   "hourly_rate": 249
 }

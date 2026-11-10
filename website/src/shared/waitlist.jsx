@@ -3,7 +3,8 @@
  * Joining the waitlist away from an estimate: the "Join the Waitlist" pop-up
  * (the /beta artboard's, on every page) and the Contact page's card, which
  * takes the number in place. Both save through POST /api/waitlist, after the
- * one-time code; `source` is the page, as the Worker names it (forms.js).
+ * one-time code, as PRD S1's `source` hero (no trip), with the page they were
+ * on kept apart (`page`: about, contact; forms.js PAGES).
  */
 import {
   Button, CodeStep, ConsentTick, CONSENT_ERROR, Dialog, DialogHead, Done, Honeypot, MOBILE, PHONE_ERROR, PhoneField,
@@ -13,11 +14,24 @@ import {
 const { useState, useRef } = React;
 
 /**
- * The number, the consent tick and the code, shared by both forms. `form`
- * names the form for the analytics; `toErrors` turns the Worker's refusal
+ * PRD S8's confirmation without a trip: the line, and Get Estimate. A link,
+ * so src/site.js carries any campaign parameters along with it.
+ */
+export function JoinedNoTrip() {
+  return (
+    <>
+      <Done>{WAITLIST_JOINED}</Done>
+      <a className="rb-btn rb-btn--primary" href="/estimate/">Get Estimate</a>
+    </>
+  );
+}
+
+/**
+ * The number, the consent tick and the code, shared by both forms. `page` is
+ * where the form is (about, contact); `toErrors` turns the Worker's refusal
  * into the form's errors.
  */
-function useWaitlist({ source, form, codeId, toErrors }) {
+function useWaitlist({ page, codeId, toErrors }) {
   const [phone, setPhone] = useState('');
   const [consent, setConsent] = useState(false);
   const [errors, setErrors] = useState({});
@@ -26,11 +40,11 @@ function useWaitlist({ source, form, codeId, toErrors }) {
   const f = useCodeForm('/api/waitlist', codeId);
 
   const send = async (code) => {
-    const r = await f.submit({ phone, consent: true, source, website: honeypot.current?.value || '' }, { form, code });
+    const r = await f.submit({ phone, consent: true, source: 'hero', page, website: honeypot.current?.value || '' }, { source: 'hero', code });
     if (!r) return;
     if (!r.ok) { setErrors(toErrors(r)); return; }
     setDone(true);
-    track('waitlist_joined', { source });
+    track('signup_completed', { lead_id: r.lead_id ?? null, source: 'hero', estimate_id: null, is_repeat: !!r.is_repeat, days_ahead: null });
   };
 
   const submit = () => {
@@ -40,7 +54,7 @@ function useWaitlist({ source, form, codeId, toErrors }) {
     if (!consent) next.consent = CONSENT_ERROR;
     setErrors(next);
     if (Object.keys(next).length) {
-      if (next.phone) track('phone_invalid', { form });
+      if (next.phone) track('phone_invalid', { form: 'signup' });
       return;
     }
     send('');
@@ -62,9 +76,9 @@ function useWaitlist({ source, form, codeId, toErrors }) {
  * closed, so a number typed, a code on its way, or the confirmation are still
  * there when it opens again.
  */
-export function WaitlistPopup({ open, source, onClose }) {
+export function WaitlistPopup({ open, page, onClose }) {
   const w = useWaitlist({
-    source, form: 'waitlist', codeId: 'rb-wl-code',
+    page, codeId: 'rb-wl-code',
     toErrors: (r) => (Object.keys(r.errors).length ? r.errors : { form: r.error }),
   });
   if (!open) return null;
@@ -73,10 +87,7 @@ export function WaitlistPopup({ open, source, onClose }) {
       <DialogHead id="rb-wl-title" title="Join the waitlist" sub="Get one message when booking opens." onClose={onClose} />
       <div className="rb-dialog__body">
         {w.done ? (
-          <>
-            <Done>{WAITLIST_JOINED}</Done>
-            <Button onClick={onClose}>Done</Button>
-          </>
+          <JoinedNoTrip />
         ) : w.f.step === 'code' ? (
           <CodeStep f={w.f} onVerify={w.verify} onResend={w.resend} />
         ) : (
@@ -93,18 +104,18 @@ export function WaitlistPopup({ open, source, onClose }) {
   );
 }
 
-/** The Contact page's waitlist card: the number goes in right there. */
+/** The Contact page's waitlist card: the number goes in right there (audit C03: the About card's line). */
 export function ContactWaitlist() {
   const w = useWaitlist({
-    source: 'contact', form: 'contact', codeId: 'rb-contact-code',
+    page: 'contact', codeId: 'rb-contact-code',
     toErrors: (r) => ({ phone: r.errors.phone || (r.errors.consent ? '' : r.error), consent: r.errors.consent || '' }),
   });
-  if (w.done) return <Done>{WAITLIST_JOINED}</Done>;
+  if (w.done) return <div className="rb-wlcard"><JoinedNoTrip /></div>;
   return (
     <div className="rb-wlcard">
       <div className="rb-wlcard__head">
         <h2>Join the waitlist.</h2>
-        {w.f.step !== 'code' && <p>Leave a number and we'll reach out when booking opens. Waitlist members go first.</p>}
+        {w.f.step !== 'code' && <p>Verify your mobile number. One message when booking opens. Nothing else.</p>}
       </div>
       {w.f.step === 'code' ? (
         <CodeStep f={w.f} onVerify={w.verify} onResend={w.resend} />
@@ -114,7 +125,6 @@ export function ContactWaitlist() {
           <ConsentTick id="rb-contact-consent" {...w.consentProps} />
           <Honeypot ref={w.honeypot} />
           <Button onClick={w.submit} disabled={w.f.sending}>{w.f.sending ? 'Joining…' : 'Join the Waitlist'}</Button>
-          <small>One message when the app is live. Nothing else.</small>
         </>
       )}
     </div>

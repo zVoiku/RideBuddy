@@ -68,7 +68,7 @@ const BETA = path.join(OUT, 'beta');
 // pages' logo, header and footer link here (__HOME__).
 const HOME = '/beta/';
 // The static pages built from src/<name>/index.html, beside the estimator.
-const PAGES = ['about', 'contact'];
+const PAGES = ['about', 'contact', 'privacy', 'terms', 'buddy/terms'];
 // Source folders that are not copied as they are: each is built below.
 const BUILT = ['estimate', 'shared', ...PAGES];
 
@@ -181,6 +181,24 @@ function mapsKey() {
   return key;
 }
 
+/**
+ * rates.json as the pages see it: the notes (keys starting "_") and the rates
+ * only the backend uses — the app's Hourly rate, the commission, promo and GST
+ * (rates.json `_app_only`) — are left out of the bundles. The engine never
+ * reads them; test/parity.mjs, under Node, still sees the whole file.
+ */
+const APP_ONLY = ['hourly_rate', 'standard_commission_pct', 'promo_discount_pct', 'gst_rate_pct'];
+const websiteRates = {
+  name: 'website-rates',
+  setup(b) {
+    b.onLoad({ filter: /[\\/]rates\.json$/ }, async (args) => {
+      const all = JSON.parse(await readFile(args.path, 'utf8'));
+      const kept = Object.fromEntries(Object.entries(all).filter(([k]) => !k.startsWith('_') && !APP_ONLY.includes(k)));
+      return { contents: JSON.stringify(kept), loader: 'json' };
+    });
+  },
+};
+
 function patchArtboard(html) {
   for (const p of ARTBOARD_PATCHES) {
     if (p.cut) {
@@ -229,7 +247,7 @@ async function main() {
     bundle: true, minify: true, format: 'iife', target: ['es2020'],
     jsx: 'transform', jsxFactory: 'React.createElement', jsxFragment: 'React.Fragment',
     define: { __HOME__: JSON.stringify(HOME) },
-    legalComments: 'none', logLevel: 'warning',
+    legalComments: 'none', logLevel: 'warning', plugins: [websiteRates],
   };
   await mkdir(path.join(OUT, 'estimate'), { recursive: true });
   const shell = await standalone(await readFile(path.join(SRC, 'estimate', 'index.html'), 'utf8'), 'the estimator', dsDir);
@@ -278,7 +296,7 @@ async function main() {
     entryPoints: [path.join(SRC, 'estimate', 'artboard-rates.js')],
     outfile: path.join(BETA, 'rate-config.js'),
     bundle: true, minify: true, format: 'esm', target: ['es2020'],
-    legalComments: 'none', logLevel: 'warning',
+    legalComments: 'none', logLevel: 'warning', plugins: [websiteRates],
   });
 
   // 5. Vendor the artboard's runtime deps and repoint support.js at them.

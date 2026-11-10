@@ -15,6 +15,15 @@
 /contact/
   Cache-Control: no-cache
 
+/privacy/
+  Cache-Control: no-cache
+
+/terms/
+  Cache-Control: no-cache
+
+/buddy/terms/
+  Cache-Control: no-cache
+
 /beta/
   Cache-Control: no-cache
 
