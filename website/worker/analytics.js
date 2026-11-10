@@ -6,7 +6,8 @@
  * day's random salt, their network and their browser: it changes every day,
  * and once the day's salt is deleted it can't be recomputed. Each beacon also
  * keeps the visitor_id and first touch that src/site.js keeps in first-party
- * cookies (lib.js attribution()), so a lead can be traced to how it arrived.
+ * cookies (lib.js attribution()), so a lead can be traced to how it arrived,
+ * and the session it was sent in (`rb_sid`: ends after 30 minutes idle).
  *
  * Storage: one D1 row per beacon (a batch of a page's events), kept 13 months.
  * Finished days are summed into daily_totals — kept for good — the first time
@@ -15,7 +16,7 @@
  */
 import { ready, sha256Hex } from './db.js';
 import { sameOrigin } from './http.js';
-import { attribution, cleanText, istDay, networkOf, shiftDay, TOUCH_FIELDS } from './lib.js';
+import { attribution, cleanText, cookieValue, istDay, networkOf, shiftDay, TOUCH_FIELDS } from './lib.js';
 import { DAY_SQL, cleanEvents, deviceOf, isBot, summarize } from './stats.js';
 
 const KEEP_DAYS = 396; // detailed beacons, ~13 months; daily totals stay for good
@@ -80,10 +81,12 @@ export async function ingest(request, env, ctx) {
   if (!events.length) return EMPTY(204);
 
   const touch = Object.fromEntries(TOUCH_FIELDS.filter((f) => who[f]).map((f) => [f, who[f]]));
+  const sid = cookieValue(request.headers.get('cookie'), 'rb_sid');
   const beacon = {
     day: istDay(now), at: Math.floor(now / 1000), net, ua, device: deviceOf(ua),
     city: cleanText(request.cf?.city, 60), country: cleanText(request.cf?.country, 2), events,
     visitorId: who.visitor_id, touch: Object.keys(touch).length ? JSON.stringify(touch) : null,
+    sessionId: /^[a-z0-9]{8,40}$/.test(sid) ? sid : null,
   };
   const saving = store(env.DB, beacon).catch((e) => console.error('analytics: not stored', e?.message || e));
   // Answer at once and write after; tests wait for the write so they can read it back.
@@ -96,8 +99,8 @@ async function store(db, b) {
   if (!(await underCap(db, b.day))) return;
   const salt = await daySalt(db, b.day);
   const vid = (await sha256Hex(`${salt}|${b.net}|${b.ua}`)).slice(0, 16);
-  await db.prepare('INSERT INTO beacons (day, at, vid, device, city, country, events, visitor_id, touch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .bind(b.day, b.at, vid, b.device, b.city, b.country, JSON.stringify(b.events), b.visitorId, b.touch).run();
+  await db.prepare('INSERT INTO beacons (day, at, vid, device, city, country, events, visitor_id, touch, session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(b.day, b.at, vid, b.device, b.city, b.country, JSON.stringify(b.events), b.visitorId, b.touch, b.sessionId).run();
 }
 
 let salted = { day: '', salt: '' };

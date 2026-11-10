@@ -20,7 +20,7 @@ export const CODE_EXPIRED = 'This code has expired. Get a new OTP.';
 export const CODE_TOO_MANY = 'Too many attempts. Get a new OTP.';
 export const CODE_SEND_FAILED = 'Couldn’t send the code. Try again in a minute.';
 export const CODE_NUMBER_LIMIT = 'Too many codes for this number. Try again in an hour.';
-export const CODE_NETWORK_LIMIT = 'Too many codes from your network. Please try again later.';
+export const CODE_NETWORK_LIMIT = 'Too many codes from your network. Try again in an hour.';
 export const codeWait = (seconds) => `Wait ${seconds} seconds, then ask for a new code.`;
 
 /**

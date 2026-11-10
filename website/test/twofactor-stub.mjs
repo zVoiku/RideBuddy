@@ -8,7 +8,7 @@ import http from 'node:http';
 /**
  * @param {number} port
  * @returns {Promise<{url: string, messages: object[], failNext: number, codeFor: (phone: string) => string | null, close: () => Promise<void>}>}
- *   messages: every request, as { method, key, phone, code, template }.
+ *   messages: every request, as { method, key, phone, code, template, delivered }.
  *   failNext: how many of the next messages 2Factor refuses (HTTP 200 with
  *   Status "Error", as 2Factor answers).
  */
@@ -29,9 +29,10 @@ export async function startTwoFactorStub(port) {
     const parts = req.url.split('?')[0].split('/').slice(1).map(decodeURIComponent);
     if (parts[0] !== 'API' || parts[1] !== 'V1' || parts[3] !== 'SMS' || parts.length < 6) { res.writeHead(404); res.end(); return; }
     const [, , key, , phone, code, template = null] = parts;
-    stub.messages.push({ method: req.method, key, phone, code, template });
+    const refuse = stub.failNext > 0;
+    stub.messages.push({ method: req.method, key, phone, code, template, delivered: !refuse });
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    if (stub.failNext > 0) {
+    if (refuse) {
       stub.failNext -= 1;
       res.end(JSON.stringify({ Status: 'Error', Details: `Invalid Phone Number ${phone} - Length Mismatch(Expected: 10)` }));
     } else {

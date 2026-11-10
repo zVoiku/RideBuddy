@@ -17,8 +17,21 @@ import {
   attribution, cleanComment, cleanText, describeTrip, isEmail, isGstin, normalizePhone, tripFare,
 } from './lib.js';
 
-/** Where a waitlist signup was made: the page the visitor was on. */
-export const SOURCES = { home: 'Home page', how: 'How It Works page', about: 'About page', contact: 'Contact page', estimate: 'Estimate page' };
+/**
+ * Where a waitlist signup was made (PRD S1, S9): `estimate`, under a fare, or
+ * `hero`, a Join the Waitlist button with no trip. The page it was on is kept
+ * apart, as these names. Pages cached from before sent the page as the source
+ * (home, about, contact, how): those are hero signups from that page.
+ */
+export const PAGES = { home: 'Home page', how: 'How It Works page', about: 'About page', contact: 'Contact page', estimate: 'Estimate page' };
+
+/** { source, page } for a waitlist post, or null for one this Worker doesn't know. */
+function signupSource(body) {
+  if (body.source === 'estimate') return { source: 'estimate', page: 'estimate' };
+  if (body.source === 'hero') return { source: 'hero', page: Object.hasOwn(PAGES, body.page) && body.page !== 'estimate' ? body.page : null };
+  if (Object.hasOwn(PAGES, body.source)) return { source: 'hero', page: body.source };
+  return null;
+}
 
 /** What a driver agency can tick for "Drivers you can supply". */
 export const DRIVERS = ['1–5', '6–20', '21–50', '50+'];
@@ -26,8 +39,10 @@ export const DRIVERS = ['1–5', '6–20', '21–50', '50+'];
 // Per network per rolling hour. High enough that people sharing a mobile
 // carrier's address never meet it; low enough that one machine can't flood.
 const FORM_CAP = 20;
-// Votes are one tap and can be changed, so they get their own, larger allowance.
+// Votes are one tap and can be changed, so they get their own, larger allowance;
+// so do code checks (Verify), each bounded anyway by three tries per code sent.
 const VOTE_CAP = 60;
+const VERIFY_CAP = 60;
 
 /**
  * Where a row came from, saved on every list (lib.js attribution()): the
@@ -42,7 +57,7 @@ const attrValues = (who) => ATTR.map((k) => who[k] ?? null);
 /** The id /estimate/ gives each fare it shows; it ties a vote to a signup. */
 const ESTIMATE_ID = /^est_[a-z0-9]{8,40}$/;
 
-const TOO_MANY = 'Too many tries from your network. Please try again later.';
+const TOO_MANY = 'Too many tries from your network. Try again in an hour.';
 const BAD = () => json(400, { ok: false, error: 'Bad request.' });
 
 /** @param {'waitlist' | 'feedback' | 'buddy'} kind */
@@ -65,7 +80,8 @@ export async function handleForm(request, env, kind) {
   const db = env.DB;
   const salt = await ready(db);
   const network = await networkHash(request, salt);
-  const [bucket, cap] = kind === 'feedback' ? [`vote:${network}`, VOTE_CAP] : [`form:${network}`, FORM_CAP];
+  const checking = kind !== 'feedback' && body.code != null && body.code !== '';
+  const [bucket, cap] = kind === 'feedback' ? [`vote:${network}`, VOTE_CAP] : checking ? [`verify:${network}`, VERIFY_CAP] : [`form:${network}`, FORM_CAP];
   if (await addHit(db, bucket) > cap) return json(429, { ok: false, error: TOO_MANY });
 
   // The field people never see was filled in: a bot. Thank it and keep nothing.
@@ -102,9 +118,20 @@ async function provePhone(ctx, phone, code) {
   return { verified: 1 };
 }
 
+/**
+ * The lead behind a saved signup (PRD 10.2 signup_completed): `lead_id`, the
+ * list ID of the number's first signup, the same for every later one, and
+ * `is_repeat`, whether the number was on the list before.
+ */
+async function savedLead(db, phone) {
+  const r = await db.prepare('SELECT MIN(id) AS lead, COUNT(*) AS n FROM waitlist WHERE phone = ?').bind(phone).first();
+  return json(200, { ok: true, lead_id: r.lead, is_repeat: r.n > 1 });
+}
+
 async function waitlist(ctx, body, now) {
   const { db } = ctx;
-  if (!Object.hasOwn(SOURCES, body.source)) return BAD();
+  const from = signupSource(body);
+  if (!from) return BAD();
   const phone = normalizePhone(body.phone);
   const errors = {};
   if (!phone.ok) errors.phone = phone.error;
@@ -117,10 +144,10 @@ async function waitlist(ctx, body, now) {
   if (proof.response) return proof.response;
   const { verified } = proof;
 
-  if (body.source !== 'estimate') {
-    await db.prepare(`INSERT INTO waitlist (created_at, phone, source, consent, verified, ${cols}) VALUES (?1, ?2, ?3, ?4, ?5, ${marks(6)})`)
-      .bind(now, phone.phone, body.source, consent, verified, ...attrValues(ctx.who)).run();
-    return json(200, { ok: true });
+  if (from.source !== 'estimate') {
+    await db.prepare(`INSERT INTO waitlist (created_at, phone, source, page, consent, verified, ${cols}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ${marks(7)})`)
+      .bind(now, phone.phone, from.source, from.page, consent, verified, ...attrValues(ctx.who)).run();
+    return savedLead(db, phone.phone);
   }
 
   const trip = describeTrip(body.trip);
@@ -133,15 +160,15 @@ async function waitlist(ctx, body, now) {
         trip = COALESCE(?4, trip), fare = COALESCE(?5, fare), verified = ?7, ${ATTR.map((c, i) => `${c} = ?${8 + i}`).join(', ')}
       WHERE id = (SELECT id FROM waitlist WHERE estimate_id = ?6 AND phone = '' ORDER BY id LIMIT 1)`)
       .bind(now, phone.phone, consent, trip, fare, est, verified, ...attrValues(ctx.who)).run();
-    if (r.meta.changes) return json(200, { ok: true });
+    if (r.meta.changes) return savedLead(db, phone.phone);
   }
   // A new row; a second number joining from the same fare carries its vote too.
-  await db.prepare(`INSERT INTO waitlist (created_at, phone, source, trip, fare, consent, estimate_id, vote, comment, verified, ${cols})
-    VALUES (?1, ?2, 'estimate', ?3, ?4, ?5, ?6,
+  await db.prepare(`INSERT INTO waitlist (created_at, phone, source, page, trip, fare, consent, estimate_id, vote, comment, verified, ${cols})
+    VALUES (?1, ?2, 'estimate', 'estimate', ?3, ?4, ?5, ?6,
       (SELECT vote FROM waitlist WHERE estimate_id = ?6 ORDER BY id DESC LIMIT 1),
       (SELECT comment FROM waitlist WHERE estimate_id = ?6 ORDER BY id DESC LIMIT 1), ?7, ${marks(8)})`)
     .bind(now, phone.phone, trip, fare, consent, est, verified, ...attrValues(ctx.who)).run();
-  return json(200, { ok: true });
+  return savedLead(db, phone.phone);
 }
 
 /**
@@ -161,8 +188,8 @@ async function feedback({ db, who }, body, now) {
   await db.batch([
     db.prepare('UPDATE waitlist SET vote = ?1, comment = COALESCE(?2, comment), updated_at = ?3 WHERE estimate_id = ?4')
       .bind(body.vote, comment, now, est),
-    db.prepare(`INSERT INTO waitlist (created_at, updated_at, phone, source, trip, fare, vote, comment, estimate_id, ${cols})
-      SELECT ?1, ?1, '', 'estimate', ?2, ?3, ?4, ?5, ?6, ${marks(7)} WHERE NOT EXISTS (SELECT 1 FROM waitlist WHERE estimate_id = ?6)`)
+    db.prepare(`INSERT INTO waitlist (created_at, updated_at, phone, source, page, trip, fare, vote, comment, estimate_id, ${cols})
+      SELECT ?1, ?1, '', 'estimate', 'estimate', ?2, ?3, ?4, ?5, ?6, ${marks(7)} WHERE NOT EXISTS (SELECT 1 FROM waitlist WHERE estimate_id = ?6)`)
       .bind(now, describeTrip(body.trip), tripFare(body.trip), body.vote, comment, est, ...attrValues(who)),
   ]);
   return json(200, { ok: true });
@@ -188,10 +215,10 @@ async function buddy(ctx, body, now) {
     const proof = await provePhone(ctx, phone.phone, body.code);
     if (proof.response) return proof.response;
     const drivers = DRIVERS.includes(body.drivers) ? body.drivers : null;
-    await db.prepare(`INSERT INTO agencies (created_at, agency, contact, phone, city, drivers, email, gstin, verified, ${cols})
+    const saved = await db.prepare(`INSERT INTO agencies (created_at, agency, contact, phone, city, drivers, email, gstin, verified, ${cols})
       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ${marks(10)})`)
       .bind(now, agency, contact, phone.phone, city, drivers, email || null, gstin || null, proof.verified, ...attrValues(ctx.who)).run();
-    return json(200, { ok: true });
+    return json(200, { ok: true, buddy_interest_id: `agency_${saved.meta.last_row_id}` });
   }
   const name = cleanText(body.name, 100);
   const licence = cleanText(body.licence, 40);
@@ -203,9 +230,10 @@ async function buddy(ctx, body, now) {
   if (Object.keys(errors).length) return invalid(errors);
   const proof = await provePhone(ctx, phone.phone, body.code);
   if (proof.response) return proof.response;
-  await db.prepare(`INSERT INTO buddies (created_at, name, phone, licence, city, verified, ${cols}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ${marks(7)})`)
+  const saved = await db.prepare(`INSERT INTO buddies (created_at, name, phone, licence, city, verified, ${cols}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ${marks(7)})`)
     .bind(now, name, phone.phone, licence, city || null, proof.verified, ...attrValues(ctx.who)).run();
-  return json(200, { ok: true });
+  // PRD 10.2's buddy_interest_id: the list and its ID (buddies.csv, agencies.csv).
+  return json(200, { ok: true, buddy_interest_id: `buddy_${saved.meta.last_row_id}` });
 }
 
 /** Field errors, keyed by field; `error` repeats the first for callers that show one line. */

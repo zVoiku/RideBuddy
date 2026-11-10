@@ -34,9 +34,10 @@ result in `frontend/app/booking/summary.tsx`.
   menus) and fails if they drift apart.
 - **Form** — trip type (Round Trip / One Way), pickup and destination from
   Google Places, pickup date and time, return date and the stay question for
-  round trips. No Hourly on the website (the app still offers it); an old
-  `?type=hourly` link opens a round trip. No booking: the result leads to the
-  waitlist.
+  round trips. The dates start empty: the visitor picks them (PRD D2), so the
+  fare is always for a date they chose. No Hourly on the website (the app
+  still offers it); an old `?type=hourly` link opens a round trip. No
+  booking: the result leads to the waitlist.
 - **Map picker** — each place field carries a map button that opens a modal
   map. **Tap one of Google's places and it is selected by name** ("National
   Museum, New Delhi"), which is what a customer means when they point at a
@@ -65,10 +66,19 @@ result in `frontend/app/booking/summary.tsx`.
   ahead, a return on or after the departure, a time). Pickup time is one
   field drawn like the date fields beside it, holding two dropdowns: the hour
   (12 AM … 11 PM) and the minutes (00, 15, 30, 45), 7:00 AM to start.
-- **A route lookup that fails** (the connection, say) shows its own screen —
-  "The estimate didn’t load. Check your connection and try again." — with
-  **Try again** and **Edit trip details**; "no driving route between those
-  places" stays a line under Destination.
+- **Trips it refuses**, each in PRD 6.3's words, as a line under the field
+  (`REFUSAL` in `src/estimate/maps.js`): a pickup outside the Tricity
+  ("Pickups are within the Chandigarh Tricity."), a destination too far
+  ("Destinations within 600 km of Chandigarh."), a trip under 40 km of road
+  one way ("RideBuddy is for outstation trips. Pick a destination 40 km or
+  more away." — checked once Directions gives the distance), and no driving
+  route ("No driving route found. Try a nearby place."). Maps not loading
+  says "Maps are down. Try again in a few minutes."
+- **A route lookup that fails** shows its own screen — "The estimate didn’t
+  load." — with **Try again** and **Edit trip details**. Its second line
+  depends on the cause: "Check your connection and try again." when the
+  request got no answer, "Couldn’t calculate that route. Try again." when
+  Google refused it.
 - **Result** — the route on an interactive map with tap-to-expand, and under
   it three sections: the trip the fare is for, in two rows centred on each
   other in the fare's typeface and green ("Round Trip" over "2 days" — the
@@ -85,7 +95,8 @@ result in `frontend/app/booking/summary.tsx`.
   Buddy both agree", that re-prices the same route on the drive-through plan
   as a new estimate. Then one number, "Inclusive of
   all taxes", and 👍/👎 beside it ("Does this fare work for you?"): a 👎 opens
-  an optional comment (280 characters, Send, then "Thank you. Noted."). The
+  an optional comment (280 characters, Send); the choice stays pressed, and
+  no message follows. The
   PRD 6.5 lines follow — "Includes 12 hours of your Buddy's time from pickup."
   (no "on each of the N days"), food, the stay, and the night charge when it
   applies ("Includes a night charge. Your trip runs between 10 PM and 6 AM.");
@@ -94,29 +105,38 @@ result in `frontend/app/booking/summary.tsx`.
   words these as before,
   then "Final fare is calculated when your trip ends." and the disclaimer
   ("Indicative fare for the route, date and time you entered, … Terms of Use
-  apply."). Then "Edit trip details" and the waitlist (+91 field and the
-  consent tick, then the one-time code). No "Book a Buddy" until booking
-  opens; no deposit line, no itemisation (§2.4). A vote and a signup made on
-  the same fare land on the same row of the clients list (see below).
+  apply.", the Terms linked). Then "Edit trip details" and the waitlist —
+  "Join the waitlist", "Get one message when booking opens.", the +91 field
+  and the consent tick (its Privacy Policy and Terms of Use open in a new
+  tab), then the one-time code. Joined, it says "You're on the waitlist. One
+  message when booking opens.", the trip saved (route, trip type, date) and
+  **Get Another Estimate**, which goes back to the form with the trip still
+  in it (PRD S8). No "Book a Buddy" until booking opens; no deposit line, no
+  itemisation (§2.4). A vote and a signup made on the same fare land on the
+  same row of the clients list (see below).
 
 **The stay question** ("Will you arrange your Buddy's overnight stay?") shows
 only on round trips over more than one day (§5.2); a same-day round trip long
 enough for a rest stop includes its stay.
 
 **The rates.** Every rate is in `rates.json` at the repo root — Rate Table
-v1.10 §3.4, plus the deposit and the app's legacy hourly rate (the website
-has no Hourly). The backend reads it
+v1.10 §3.4, plus the deposit, the service area and the app's legacy hourly
+rate (the website has no Hourly). The backend reads it
 at startup; `build.mjs` compiles it into `/estimate/` and into `/beta/`'s
 `rate-config.js` (built from `src/estimate/artboard-rates.js`, so the
-artboard's copy of the rates is never shipped). To change a rate: edit
+artboard's copy of the rates is never shipped). The website's pages get it
+without the rates only the app uses — `hourly_rate`, the commission, promo
+and GST rates (`APP_ONLY` in `build.mjs`) — or the `_` notes. To change a rate: edit
 `rates.json`, run `npm test` (parity) and the backend tests, restart the
 backend, and merge to main so Cloudflare rebuilds the site. Money is in rupees
 with at most two decimals; the backend refuses anything finer.
 
 **Service area.** Pickups within 25 km of Chandigarh (the Tricity);
 destinations within 600 km (Delhi, Amritsar, Manali, Dharamshala, Rishikesh,
-Jaipur). Autocomplete is restricted to a box of that size and the chosen place
-is checked against the radius — constants at the top of `src/estimate/maps.js`.
+Jaipur); at least 40 km of road one way. Autocomplete is restricted to a box
+of that size and the chosen place is checked against the radius. The three
+numbers are `pickup_radius_km`, `destination_radius_km` and `min_trip_km` in
+`rates.json` (PRD 6.2–6.4); the website applies them, the backend doesn't.
 
 **Time is IST.** Pickup date and time are Indian wall-clock time whatever the
 visitor's browser zone, because the night window and the round trip's return
@@ -151,17 +171,30 @@ pop-ups. The stylesheet the three pages share is `src/shared/site.css`.
   four standards (Verified, Trained, Rated, Priced upfront); and "Questions,
   answered.", eight questions with one answer open at a time (`<details>`
   sharing a name, so it works without a script).
-- **Contact** — "Write to us." and the email; the waitlist card as it was on
-  `/beta/#contact`, taking the number right there (fixed `+91`, the consent
-  tick, then the one-time code); "Become a Buddy" with **Apply to be a
-  Buddy**, which opens the Buddy application pop-up. `/contact/#apply` opens
+- **Contact** — "Write to us." and the email; the waitlist card, taking the
+  number right there ("Verify your mobile number. One message when booking
+  opens. Nothing else.", fixed `+91`, the consent tick, then the one-time
+  code); "Become a Buddy" with **Apply to be a Buddy**, which opens the Buddy
+  application pop-up. `/contact/#apply` opens
   that pop-up straight away — the link to share with drivers — and closing it
   leaves a plain `/contact/`.
 - **Both** end with the closing band ("Plan the trip now. Book it soon." —
   Get an Estimate, Join the Waitlist) and the footer, whose "Become a Buddy"
   opens the application in place. Any `data-rb-waitlist` or `data-rb-apply`
-  element opens the pop-up it names. Terms and Privacy are named in the
-  footer, as in the design, but aren't links: there are no such pages yet.
+  element opens the pop-up it names. The footer's Terms and Privacy link the
+  legal pages (below); `/estimate/` ends with the same footer.
+- **Joined without a trip** (the pop-up, the Contact card): "You're on the
+  waitlist. One message when booking opens." and **Get Estimate**, to
+  `/estimate/` (PRD S8). The Buddy application, once sent: "Application
+  received. One call or message when onboarding opens."; opened again, it
+  starts empty.
+- **The legal pages** — `/privacy/`, `/terms/` and `/buddy/terms/`
+  (`src/privacy`, `src/terms`, `src/buddy/terms`) are placeholders until
+  Legal's text: the title, slots for the version and effective date, and a
+  line pointing to support@ridebuddy.co.in. Each consent line links the
+  first two in a new tab, as do the cookie notice and the fare disclaimer.
+  They're `noindex` and left out of `sitemap.xml` until the real text is in;
+  then drop the `noindex` meta and add them to the sitemap.
 - **Old links** — `/beta/#about`, `/beta/#contact` and `/beta/#apply` go on
   to `/about/`, `/contact/` and `/contact/#apply` before anything else loads.
 
@@ -181,8 +214,8 @@ that carries a phone number confirms it with a one-time code first (below).
 
 | Form | Where | Endpoint | D1 table |
 |---|---|---|---|
-| Join the Waitlist pop-up | `/beta/`'s hero, About's "What you can do today.", and the closing band on every page | `POST /api/waitlist` (`source: home \| about \| contact`, the page it was opened on; `how` from pages cached before How It Works went) | `waitlist` |
-| Join the waitlist | the `/contact/` card | `POST /api/waitlist` (`source: contact`) | `waitlist` |
+| Join the Waitlist pop-up | `/beta/`'s hero, About's "What you can do today.", and the closing band on every page | `POST /api/waitlist` (`source: hero`, `page: home \| about \| contact`, the page it was opened on) | `waitlist` |
+| Join the waitlist | the `/contact/` card | `POST /api/waitlist` (`source: hero`, `page: contact`) | `waitlist` |
 | Join the waitlist | under an `/estimate/` result | `POST /api/waitlist` (`source: estimate`, the trip and its `estimate_id`) | `waitlist` |
 | 👍/👎 on a fare, and a 👎's comment | an `/estimate/` result | `POST /api/feedback` (`estimate_id`, `vote: up \| down`, optional `comment`, the trip) | `waitlist` |
 | Apply to be a Buddy — Individual Buddy | `/contact/`'s "Apply to be a Buddy", the footer's "Become a Buddy", or a `/contact/#apply` link | `POST /api/buddy` (`type: individual`) | `buddies` |
@@ -195,9 +228,16 @@ that carries a phone number confirms it with a one-time code first (below).
   country code, and any landline, is refused: a code can't reach them. The
   message is "Enter a valid mobile number.", shown as soon as the field is
   left with a number that can't be right, and again by the Worker.
+- **Sources** are PRD 10.2's two: `estimate` (a signup under a fare) and
+  `hero` (one without a trip), with the page it was made on kept apart, in
+  the Page column. A page cached from before sends its page as the source
+  (`home`, `about`, `contact`, `how`), which is saved as `hero` from that
+  page; rows saved that way before the change were moved over once (schema
+  5 in `worker/db.js`).
 - **Consent.** Every waitlist form has the tick "Send me an SMS or WhatsApp
-  when booking opens. I agree to the Privacy Policy and Terms of Use." and
-  can't be sent without it; the row's Consent column says Yes. A page cached
+  when booking opens. I agree to the Privacy Policy and Terms of Use." (both
+  linked, opening in a new tab) and can't be sent without it; the row's
+  Consent column says Yes. A page cached
   from before the tick sends no `consent` at all: that signup is kept with
   Consent blank. The Buddy form has no tick.
 - **Buddy applications.** Individual: full name, mobile, driving licence
@@ -222,9 +262,11 @@ that carries a phone number confirms it with a one-time code first (below).
   the same list as `(repeat)`; nothing is merged or dropped.
 - **Spam:** a hidden `website` field only bots fill in (the Worker answers 200
   and keeps nothing), same-origin JSON only, and at most 20 form submissions
-  per network per hour across the forms, plus 60 votes (IPv6 counted per /64).
-  The network is stored as a salted hash and forgotten after an hour. If junk
-  still gets through, Cloudflare Turnstile is the next step.
+  per network per hour across the forms, plus 60 votes and 60 code entries
+  (IPv6 counted per /64): past them, "Too many tries from your network. Try
+  again in an hour." The network is stored as a salted hash and forgotten
+  after an hour. If junk still gets through, Cloudflare Turnstile is the next
+  step.
 - **One-time codes** (`worker/otp.js`), as in the Phase 1 design, always
   required: nothing with a phone number saves without one. Without the 2Factor
   key (below) no code can be sent, so every phone form answers "Couldn’t send
@@ -233,13 +275,16 @@ that carries a phone number confirms it with a one-time code first (below).
   by SMS to the number ("Code sent to +91 XXXXX XX324." on the page, with
   "Change number"); the same POST again with `code` saves it, marked Phone
   verified. Codes last 5 minutes and 3 tries; a new one can be asked for after
-  30 seconds ("Resend OTP in 0:30"); at most 3 codes to a number and 10 to a
-  network an hour, and `OTP_DAILY_CAP` (default 300) codes a day site-wide, so
-  a flood can't run up the SMS bill. D1 keeps only a salted hash of the latest
-  code per number, never the code. Messages: "That code doesn’t match. Try
-  again." · "This code has expired. Get a new OTP." · "Too many attempts. Get a
-  new OTP." · "Couldn’t send the code. Try again in a minute." The 👍/👎 needs
-  no code.
+  30 seconds ("Resend OTP in 0:30", then "Sending a new code…" while it goes);
+  at most 3 codes to a number and 10 to a network an hour (PRD S5), and
+  `OTP_DAILY_CAP` (default 300) codes a day site-wide, so a flood can't run up
+  the SMS bill. The limits count codes actually sent: a request refused, or
+  one 2Factor fails to deliver, uses none. D1 keeps only a salted hash of the
+  latest code per number, never the code. Messages: "That code doesn’t match.
+  Try again." · "This code has expired. Get a new OTP." · "Too many attempts.
+  Get a new OTP." · "Too many codes for this number. Try again in an hour." ·
+  "Too many codes from your network. Try again in an hour." · "Couldn’t send
+  the code. Try again in a minute." The 👍/👎 needs no code.
 - **Tables create themselves** on first use (`CREATE TABLE IF NOT EXISTS`), so
   the database needed no setup step. Columns added since are added to an older
   database in place the first time the Worker opens it (`ADDED_COLUMNS` in
@@ -250,7 +295,7 @@ each list's count and a **Download CSV** button:
 
 | File | Columns |
 |---|---|
-| `ridebuddy-clients-YYYY-MM-DD.csv` | ID, Submitted (IST), Phone, Source, Trip, Fare (₹), 👍/👎, Comment, Consent, Phone verified, Repeat, *attribution* |
+| `ridebuddy-clients-YYYY-MM-DD.csv` | ID, Submitted (IST), Phone, Source (`estimate` or `hero`), Page, Trip, Fare (₹), 👍/👎, Comment, Consent, Phone verified, Repeat, *attribution* |
 | `ridebuddy-buddies-YYYY-MM-DD.csv` | ID, Submitted (IST), Name, Phone, Licence, City or base, Phone verified, Repeat, *attribution* |
 | `ridebuddy-agencies-YYYY-MM-DD.csv` | ID, Submitted (IST), Agency name, Contact person, Phone, City or base, Drivers, Work email, GSTIN, Phone verified, Repeat, *attribution* |
 
@@ -332,39 +377,63 @@ Worker reads with every beacon and every form (`attribution()` in
 | `visitor_id` | a random id for this browser | 12 months |
 | `rb_ft` | the first touch: `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, the referring site, the landing page — written on the first page view and never overwritten | 12 months |
 | `rb_internal` | `1` once any page is opened with `?internal=1` (`?internal=0` clears it): the team's own browser | 12 months |
+| `rb_sid` | the session: a random id, renewed with every event sent, so it ends after 30 minutes with nothing sent (PRD 10.1) | 30 minutes |
 
-Each beacon is stored with the visitor_id and first touch (`beacons.visitor_id`,
-`beacons.touch`), and each list row with all of it (the CSVs' attribution
-columns). A browser marked internal isn't counted in the analytics at all, and
+Each beacon is stored with the visitor_id, first touch and session
+(`beacons.visitor_id`, `beacons.touch`, `beacons.session_id`), and each list
+row with the visitor_id and first touch (the CSVs' attribution columns). A browser marked internal isn't counted in the analytics at all, and
 its signups say Internal: Yes. Campaign parameters (and `?internal`) are
 carried onto every same-site link as it is clicked, and through
 `window.rbCarry()` for the pages' scripted navigation, so the next page still
-has them. A notice at the foot of the page says the site uses cookies until
-its OK is pressed (`rb_cookie_ok`); its wording is a placeholder until
-Product supplies CL-01 (`NOTICE` in `src/site.js`).
+has them. A notice at the foot of the page says the site uses cookies, with
+a link to the Privacy Policy, until its OK is pressed (`rb_cookie_ok`); its
+wording is a placeholder until Product supplies CL-01 (`NOTICE` in
+`src/site.js`).
 
 **What is recorded**
 
 | Event | When | Details kept |
 |---|---|---|
-| `pageview` | every page (the path, with a `#hash` such as `/contact/#apply`) | the page; on arrival, the referring site and any `utm_*` |
+| `page_view` | every page (the path, with a `#hash` such as `/contact/#apply`) | the page; on arrival, the referring site and any `utm_*` |
 | `click` | any link or button | its own label, the page, the part of the page (header, footer, the artboard's section, the estimate form…), a link's target page |
 | named events | the pages' existing `dataLayer` pushes | e.g. `estimate_completed` with trip type, pickup area and city, destination city, distance, fare, days ahead, weekday, hour |
 | `perf` | when a page is left | largest-paint time, load time, connection type |
 | `js_error` | a script error | the message (first 120 characters) |
 
-Named events: `estimator_opened`, `estimate_started`, `estimate_completed`,
-`place_refused` (pickup outside the Tricity, destination past 600 km — area and
-city only), `route_not_found`, `route_failed`, `maps_failed`, `map_point_picked`,
-`fare_feedback` (`vote: up | down`, and whether a comment was sent — never
-its text), `waitlist_opened` (the pop-up, and the page it was opened on),
-`waitlist_joined` (`source: home | about | contact | estimate`),
-`phone_invalid`, `form_invalid`, `save_failed` (`form: …`), `otp_sent`,
-`otp_verified`, `otp_failed` (`form`, and `kind`: wrong, expired, too_many,
-send_failed, resend_wait, number_limit, network_limit, daily_cap — shown under
-Problems; never the code),
-`buddy_application_opened` (`via: link` when a `/contact/#apply` link opened it),
-`buddy_application_submitted` (`type: individual | agency`).
+Named events, as PRD 10.2 names them:
+
+- `estimator_opened` (`entry`: `direct`, or `round` / `one` from a
+  `?type=` link), `estimate_started` (the first touch of the form, once, with
+  the trip type it chose), `estimate_completed` (`estimate_id`, trip type,
+  pickup area and city, destination city, distance, fare, days ahead, weekday,
+  hour, `night`, `long_drive`, `drive_through`, `stay`, `date_touched`).
+- `estimate_refused` — `reason`: `pickup_out_of_area`, `destination_too_far`,
+  `too_short`, `route_not_found`, `route_failed` (with `cause`: `connection`,
+  or Google's status), `maps_failed`; with the trip type, and for a place the
+  area and city only (and `km` for `too_short`).
+- `fare_feedback` — once per vote or change of vote, not for the comment:
+  `estimate_id`, `vote: up | down`, `is_change`, `has_comment` (whether a
+  comment was ever sent — never its text), and the trip it was on (type, km,
+  fare, days, night, stay, long drive, drive-through, destination city).
+- `otp_sent` (`source`: `estimate`, `hero` or `buddy`; `estimate_id` or null;
+  `is_resend`), `otp_verified` (`source`, `estimate_id`), `otp_failed`
+  (`source`, `estimate_id`, `reason`: `wrong_code`, `expired`,
+  `too_many_attempts` or `send_failed`, a send refused with its `cause`:
+  `resend_wait`, `number_limit`, `network_limit`, `daily_cap`… — shown under
+  Problems; never the code).
+- `signup_completed` (`lead_id`, `source: estimate | hero`, `estimate_id`,
+  `is_repeat`, and `days_ahead` for a signup under a fare),
+  `buddy_interest_submitted` (`buddy_interest_id`, `type: individual |
+  agency`), `phone_invalid` and `save_failed` (`form: signup | buddy`;
+  `save_failed` also `feedback`, a 👍/👎 that didn't save),
+  `form_invalid`.
+- Outside PRD 10.2, kept as before: `waitlist_opened` (the pop-up, and the
+  page it was opened on), `buddy_application_opened` (`via: link` when a
+  `/contact/#apply` link opened it), `map_point_picked`, `long_drive_plan`.
+
+The dashboard reads older beacons under their old names too (`pageview`,
+`waitlist_joined`, `place_refused`, `route_failed`…), so days before the
+change still count.
 
 **Never recorded:** anything typed into a form — phone numbers, names,
 licences, agency details, comments — and no street addresses: places are reduced to their area and city
@@ -464,7 +533,7 @@ canvas into `Webpage/` and rebuild.
    becomes the design's "Join the Waitlist", which opens a pop-up: the `+91`
    field and the tick, then the design's code step (`codeStep()` in the
    patches), saving to `/api/waitlist` only after the code ("You're on the
-   waitlist. We'll message you once."). Home ends with the design's closing
+   waitlist. One message when booking opens.", with Get Estimate). Home ends with the design's closing
    band, "Plan the trip now. Book it soon." — "Get an Estimate" and "Join the
    Waitlist". The header and phone menu have no "Estimate Fare" link, since
    "Get an Estimate" goes to the same page (the footer keeps its links).
@@ -487,8 +556,16 @@ canvas into `Webpage/` and rebuild.
    Book a Buddy handlers, the How It Works journey data with its deposit copy,
    the mock trip card and the FAQ map (P07). The pop-up's number message is
    "Enter a valid mobile number.", shown when the field is left too (S04).
+12. **QA audit v2.4.** The pop-up saves as PRD 10.2's `source: hero` with
+   `page: home` and reports PRD 10.2's events (`otp_sent`, `otp_verified`,
+   `otp_failed`, `signup_completed`, `phone_invalid`, `save_failed`); its
+   consent line links the Privacy Policy and Terms of Use in a new tab (S03);
+   joined, it offers Get Estimate (S06); a resend says "Sending a new code…"
+   (N11); the footer's Terms and Privacy link the legal pages (W09); and the
+   artboard's dead Buddy and Contact handlers — `mailto:` drafts and a TODO —
+   are cut (P07). Its rate config carries no app-only rate.
 
-5–11 are text patches listed in `artboard-patches.mjs` (a `cut` patch removes
+5–12 are text patches listed in `artboard-patches.mjs` (a `cut` patch removes
 everything between two markers). Each must match the
 artboard an exact number of times (once, unless it says otherwise). A canvas
 re-export that changes one of those spots fails the build here, loudly,
@@ -542,19 +619,28 @@ stop, then the drive-through switch and back), an out-of-area pickup, the map
 picker (open, drag, re-caption, tap a place, confirm, then price the pinned
 point), fullscreen map, mobile viewport — and re-prices every estimate with
 the backend's `fare_breakdown` on the exact inputs the page used — with Get
-Estimate disabled and its hint until the trip is complete, the pickup time
+Estimate disabled and its hint until the trip is complete (the dates start
+empty), a trip under 40 km refused in PRD 6.3's words, the error screen when
+the route lookup fails, the pickup time
 drawn like the date fields, the three sections under the map (the trip in
 two rows first, then the trip-time and distance; on a 360px phone the trip
 across the top), the fare on its own, "Inclusive of all taxes", the §2.4
-lines, and the disclaimers. Then the forms: a 👎 with a comment,
-then joining the waitlist under the same estimate (one row with the vote), the
+lines, and the disclaimers. Then the forms: a 👎 with a comment (no
+message, one `fare_feedback`),
+then joining the waitlist under the same estimate (one row with the vote,
+the confirmation with the trip and Get Another Estimate, and PRD 10.2's
+events with their properties: `signup_completed`, `otp_*`,
+`estimate_completed`, `estimator_opened`, `estimate_started`), the
 `/contact/` waitlist card, About's Join the Waitlist pop-up, the `/beta` hero's,
 an individual Buddy application from an old `/beta/#apply` link and a driver
 agency's from Contact's own button, each refused once (a short number, no
 tick, a short GSTIN), then confirmed with the one-time code the stand-in
 2Factor received (a wrong code refused, "Change number", the resend
 countdown, focus on the code field) and read back from the admin download,
-Phone verified, with the page each signup came from. About's sections, its
+Phone verified, with its source (`estimate` or `hero`) and the page each
+signup came from; the consent lines' links to the legal pages, Get Estimate
+on the confirmations without a trip, and the Buddy form empty when opened
+again. About's sections, its
 FAQ (the first answer open, one at a time) and its links to `/estimate/`;
 Contact's email; old `/beta/#about`, `#contact` and `#apply` links landing
 on the new pages; `/beta`'s header and footer pointing there and its HTML
@@ -568,9 +654,14 @@ headers of `/estimate/`, `/about/` and `/contact/` are each measured against
 open phone menu — and must match except for the page underlined. Last, `/admin` must count the run
 exactly (one visitor, every fare shown, signups and both kinds of
 application, the 👎, the funnels, destinations, mistyped numbers per form,
-clicks, the wrong code under Problems), its chart must show a day on hover,
-and the stored events must hold no phone number, one-time code, name,
-licence, agency detail, comment or address.
+clicks, the wrong code under Problems, the 40 km refusal), its chart must
+show a day on hover, every beacon must carry the run's one visitor_id and
+one session, and the stored events must hold no phone number, one-time code,
+name, licence, agency detail, comment or address. Then the legal pages
+(served, `noindex`, out of the sitemap), the site's code without the
+app-only rates, the cookie notice's Privacy Policy link, and M7: a visit
+from `/?utm_source=test&utm_campaign=qa` that signs up under an estimate
+keeps that first touch on its row.
 
 Tapping a place icon is exercised by firing the click Google fires for one (a
 click carrying a `placeId`) rather than hunting for the icon's pixel, which is
@@ -584,7 +675,14 @@ port (`localhost:*/*` matches nothing); if your key allows an explicit
 `localhost:8098/*`, run with `VERIFY_HOST=localhost VERIFY_PORT=8098`. When
 `HTTPS_PROXY` is set (the Claude Code sandbox), every Google request is replayed
 from Node through the proxy and fulfilled into the page, because Chromium's own
-tunnels through that proxy fail; elsewhere the browser fetches directly.
+tunnels through that proxy fail; elsewhere the browser fetches directly. A
+replay gives up after 15 seconds, so a hung one (the Google Fonts stylesheet,
+which the pages' scripts wait for) can't use up a whole navigation's wait.
+
+The test browser is counted like a visitor: `site.js` is told to count it
+(`window.__rbCountAutomation`), and its user agent drops "Headless" — set for
+the whole browser at launch, because a per-page override misses the beacon a
+page sends as it is left, which the Worker would then drop as a bot.
 
 ## Deploying (Cloudflare Workers Builds)
 
@@ -610,7 +708,7 @@ database, so test submissions from a preview land in the real lists.
 Validate config changes locally with `npx wrangler deploy --dry-run`.
 
 **Caching** (`src/_headers`). The pages — `/`, `/estimate/`, `/about/`,
-`/contact/`, `/beta/` — are sent `no-cache`: a browser checks each with
+`/contact/`, `/privacy/`, `/terms/`, `/buddy/terms/`, `/beta/` — are sent `no-cache`: a browser checks each with
 Cloudflare on every visit (a quick 304 when nothing changed), so a deploy
 shows at once. The scripts and stylesheet `build.mjs` makes
 (`/estimate/app.js`, `/shared/pages.js`, `/shared/site.css`, `/site.js`) are
@@ -622,7 +720,16 @@ the build versions its scripts by itself.
 
 **Search engines.** `/`, `/estimate/`, `/about/` and `/contact/` are listed in
 `src/sitemap.xml`, which `src/robots.txt` points to; `/beta/` stays out
-(`noindex`, and disallowed in `robots.txt`). Submit the sitemap in Google
+(`noindex`, and disallowed in `robots.txt`), and so do the legal pages until
+their text is final (`noindex`). The site's own `robots.txt` blocks no AI
+crawlers: lines that do, at the top of the live file, are Cloudflare's
+managed robots.txt, which it puts before ours. To stop that: the
+`ridebuddy.co.in` zone → Security → Settings → Bot traffic → "Instruct AI
+bot traffic with robots.txt" off (older dashboards: Security → Bots,
+"Manage your robots.txt" → "Disable robots.txt configuration"). "Block AI
+bots" on the same page blocks them at the edge whatever `robots.txt` says,
+so set it to allow too if AI search should read the site. Then check
+`https://ridebuddy.co.in/robots.txt`. Submit the sitemap in Google
 Search Console once the site is live. Every page is `lang="en-IN"`, with its
 own title and description, a canonical link on the bare domain, and the
 shared icons and sharing card from `src/shared/head.html` (the logomark as
@@ -665,8 +772,12 @@ allow `ridebuddy.co.in/*`.
   D1 calls a request, 50M rows written a month.
 - The artboard's own estimator (unreachable since every Estimate link goes to
   `/estimate/`) still has its unwired waitlist; it is dead code, left as is.
-- **"Privacy Policy" and "Terms of Use"** in the consent tick and the
-  disclaimer are plain text: there are no such pages yet to link to.
+- **The legal pages are placeholders.** `/privacy/`, `/terms/` and
+  `/buddy/terms/` exist, and every consent line, the disclaimer, the cookie
+  notice and the footer link them, but each says its text is to come. Put
+  Legal's text, version and effective date in `src/privacy/index.html`,
+  `src/terms/index.html` and `src/buddy/terms/index.html`, then drop their
+  `noindex` and add them to `src/sitemap.xml`.
 - **No Hourly on the website.** The app still offers it, priced by the
   backend at the legacy ₹249/h, outside Rate Table v1.10
   (`uncovered_by_rate_table`).

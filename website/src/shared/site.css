@@ -139,6 +139,9 @@ button.rb-chip { min-height: 44px; }
 .rb-consent .rb-error-msg { margin-top: -12px; }
 .rb-consent label { display: flex; gap: 12px; align-items: flex-start; min-height: 44px; cursor: pointer; font-size: 13px; line-height: 1.55; color: var(--color-charcoal); }
 .rb-consent input { flex: 0 0 auto; width: 20px; height: 20px; margin: 1px 0 0; accent-color: #4A5C2F; cursor: pointer; }
+/* Privacy Policy and Terms of Use, opening in a new tab (PRD S3). */
+.rb-consent a { color: var(--color-green-700); text-decoration: underline; text-underline-offset: 2px; }
+.rb-consent a:hover { color: var(--color-green-500); }
 .rb-done { display: flex; gap: 10px; align-items: center; background: var(--badge-confirmed-bg, #E8F3E8); border-radius: var(--radius-lg); padding: 16px; font-size: 15px; font-weight: 500; color: #1B5E20; }
 .rb-done svg { flex: 0 0 auto; }
 
@@ -206,6 +209,11 @@ button.rb-chip { min-height: 44px; }
   font-family: var(--font-display), Urbanist, sans-serif; font-weight: 800; font-size: clamp(26px, 3.6vw, 38px);
   line-height: 1.1; letter-spacing: -0.02em; margin: 0; color: var(--color-charcoal);
 }
+/* The legal pages (/privacy/, /terms/, /buddy/terms/): Legal's text, its version and date. */
+.rb-legal p { font-size: 16px; line-height: 1.65; color: var(--color-charcoal); margin: 0 0 16px; max-width: 64ch; }
+.rb-legal .rb-legal__meta { font-size: 14px; color: var(--color-grey-500); margin: 14px 0 28px; }
+.rb-legal a { color: var(--color-green-700); text-decoration: underline; text-underline-offset: 2px; }
+
 /* A white card. */
 .rb-box {
   background: var(--color-white); border-radius: var(--radius-lg); box-shadow: var(--shadow-md);

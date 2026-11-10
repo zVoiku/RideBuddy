@@ -10,9 +10,11 @@
  * Attribution: first-party cookies the Worker reads with every beacon and
  * every form (worker/lib.js attribution()) — `visitor_id` (12 months), the
  * first touch `rb_ft` (all five utm_* values, the referring site, the landing
- * page) and `rb_internal`, set by ?internal=1 so the team's own visits stay
- * out of the counts. Campaign parameters ride along on internal links, and a
- * notice says the site uses cookies. See website/README.md, "Analytics".
+ * page), the session `rb_sid` (until 30 minutes pass with nothing sent: PRD
+ * 10.2's session_id) and `rb_internal`, set by ?internal=1 so the team's own
+ * visits stay out of the counts. Campaign parameters ride along on internal
+ * links, and a notice says the site uses cookies, with the Privacy Policy.
+ * See website/README.md, "Analytics".
  */
 (() => {
   const YEAR = 365 * 86400;
@@ -27,13 +29,22 @@
   const setCookie = (k, v, maxAge = YEAR) => {
     document.cookie = `${k}=${v}; Path=/; Max-Age=${maxAge}; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
   };
+  const randomId = () => [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 24);
+
+  /** The session goes on while something is sent at least every 30 minutes; each call restarts the 30. */
+  const SESSION = 30 * 60;
+  function touchSession() {
+    try {
+      const sid = getCookie('rb_sid');
+      setCookie('rb_sid', /^[a-z0-9]{8,40}$/.test(sid) ? sid : randomId(), SESSION);
+    } catch (e) { /* cookies blocked: events go without a session */ }
+  }
 
   // ----- Attribution cookies ------------------------------------------------------------
 
   try {
-    if (!/^[a-z0-9]{12,40}$/.test(getCookie('visitor_id'))) {
-      setCookie('visitor_id', [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 24));
-    }
+    if (!/^[a-z0-9]{12,40}$/.test(getCookie('visitor_id'))) setCookie('visitor_id', randomId());
+    touchSession();
     // The first touch is kept as it was: later visits don't overwrite it.
     if (!getCookie('rb_ft')) {
       const ft = {};
@@ -79,7 +90,7 @@
 
   // ----- Cookie notice --------------------------------------------------------------------
 
-  // Placeholder wording until Product supplies CL-01.
+  // Placeholder wording until Product supplies CL-01; the Privacy Policy says the rest (PRD A5).
   const NOTICE = 'RideBuddy uses cookies to remember how you found us and to count visits. Nothing is shared with advertisers.';
   if (!getCookie('rb_cookie_ok')) {
     const bar = document.createElement('div');
@@ -91,7 +102,14 @@
       + 'font:14px/1.5 "DM Sans",system-ui,-apple-system,sans-serif';
     const text = document.createElement('p');
     text.style.cssText = 'margin:0;flex:1 1 auto';
-    text.textContent = NOTICE;
+    text.textContent = `${NOTICE} `;
+    const policy = document.createElement('a');
+    policy.href = '/privacy/';
+    policy.target = '_blank';
+    policy.rel = 'noopener';
+    policy.textContent = 'Privacy Policy';
+    policy.style.cssText = 'color:#F5F0E8;text-decoration:underline;text-underline-offset:2px';
+    text.append(policy);
     const ok = document.createElement('button');
     ok.type = 'button';
     ok.textContent = 'OK';
@@ -132,6 +150,7 @@
   function send(ev) {
     if (sent >= MAX_EVENTS) return;
     sent += 1;
+    touchSession();
     queue.push(Object.assign({ p: page() }, ev));
     if (!timer) timer = setTimeout(flush, 1500);
   }
@@ -145,7 +164,7 @@
     const p = page();
     if (p === lastPage) return;
     lastPage = p;
-    const ev = { n: 'pageview', p };
+    const ev = { n: 'page_view', p };
     if (!landed) {
       // Where this visit came from, once per page load (f: this page load's
       // first view). Our own pages count as internal, www or not; campaign

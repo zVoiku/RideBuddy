@@ -27,12 +27,14 @@ RideBuddy-partner/     Driver app — self-contained Expo project, own package.j
   src/                 api client, theme tokens, TripMap (native) + TripMap.web
   README.md            Lifecycle, privacy rules, and on-device run instructions
 website/               ridebuddy.co.in on Cloudflare Workers (see website/README.md)
-  build.mjs            builds dist/: holding page, /estimate/, /about/, /contact/, /beta/ artboard
+  build.mjs            builds dist/: holding page, /estimate/, /about/, /contact/, the legal pages, /beta/ artboard
   src/about, src/contact  static pages; src/shared/ holds what they and /estimate/ share
+  src/privacy, src/terms, src/buddy/terms  legal placeholders (noindex) until Legal's text
                        (header, waitlist pop-up, Buddy form, code step, site.css, footer)
   src/site.js          the site's own analytics, attribution cookies and cookie notice (added to every page)
   worker/              Worker script: forms (+ one-time codes) and analytics -> D1, /admin lists + dashboard
-rates.json             Every fare rate (Rate Table v1.10): read by the backend and the website build
+rates.json             Every fare rate (Rate Table v1.10) and the website's service area: read by the
+                       backend and the website build (which leaves out the app-only rates)
 scripts/capture.js     Playwright script: screenshots the whole flow (web build)
 .claude/               SessionStart hook that installs deps + scaffolds .env
 ```
