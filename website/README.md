@@ -80,13 +80,13 @@ result in `frontend/app/booking/summary.tsx`.
   request got no answer, "Couldn’t calculate that route. Try again." when
   Google refused it.
 - **Result** — the route on an interactive map with tap-to-expand, and under
-  it three sections: the trip the fare is for, in two rows centred on each
-  other in the fare's typeface and green ("Round Trip" over "2 days" — the
-  days the fare covers, a rest stop's included), then EST. TRIP TIME and EST.
-  DISTANCE (time to the nearest 5 minutes, distance to the km, as §2.4 says;
-  the fare uses the exact values; a round trip shows the total and "… each
-  way", one way says "One way"). Below 640px the trip runs across the top and
-  the other two sit side by side under it.
+  it three sections set alike, each an icon, a label and a value: TRIP TYPE
+  ("Round Trip" or "One Way"), TRIP DURATION (the days the fare covers, a rest
+  stop's included: "2 days") and EST. DISTANCE (the whole trip's, both ways on
+  a round trip, to the km as §2.4 says; the fare uses the exact distance). The
+  drive time isn't shown; the fare still uses it. Below 640px the three sit
+  one under the other: a 360px phone has room for two side by side only with
+  their words wrapped.
   Past 12 hours of driving, a box with the plan in PRD 6.5's words — "This
   trip needs more than 12 hours of driving. Your Buddy needs rest for a safe
   trip. The fare includes a rest stop.", or with the switch on, "Driving
@@ -622,9 +622,9 @@ the backend's `fare_breakdown` on the exact inputs the page used — with Get
 Estimate disabled and its hint until the trip is complete (the dates start
 empty), a trip under 40 km refused in PRD 6.3's words, the error screen when
 the route lookup fails, the pickup time
-drawn like the date fields, the three sections under the map (the trip in
-two rows first, then the trip-time and distance; on a 360px phone the trip
-across the top), the fare on its own, "Inclusive of all taxes", the §2.4
+drawn like the date fields, the three sections under the map (trip type,
+trip duration and distance, set alike, each on one line; on a 360px phone one
+under the other), the fare on its own, "Inclusive of all taxes", the §2.4
 lines, and the disclaimers. Then the forms: a 👎 with a comment (no
 message, one `fare_feedback`),
 then joining the waitlist under the same estimate (one row with the vote,

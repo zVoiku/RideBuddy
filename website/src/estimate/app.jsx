@@ -23,7 +23,10 @@ const { useState, useEffect, useRef } = React;
 // Icons from the artboard.
 const PIN = 'M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0';
 const NAV = 'm3 11 19-9-9 19-2-8-8-2z';
-const CLOCK = ['M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z', 'M12 6v6l4 2'];
+// The sections under the map: a round trip's arrows (or one way's), a calendar for the days.
+const ROUND_TRIP = ['m17 2 4 4-4 4', 'M3 11v-1a4 4 0 0 1 4-4h14', 'm7 22-4-4 4-4', 'M21 13v1a4 4 0 0 1-4 4H3'];
+const ONE_WAY = ['M5 12h14', 'm12 5 7 7-7 7'];
+const CALENDAR = ['M8 2v4', 'M16 2v4', 'M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', 'M3 10h18'];
 const ROUTE = ['M6 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', 'M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15', 'M18 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'];
 const ALERT = ['M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z', 'M12 9v4', 'M12 17h.01'];
 const THUMB_UP = ['M7 10v12', 'M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z'];
@@ -32,13 +35,6 @@ const THUMB_DOWN = ['M17 14V2', 'M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A
 /** Today's date in IST, +offset days — the page prices on Indian wall-clock time whatever the visitor's zone. */
 function istDate(offsetDays = 0) {
   return new Date(Date.now() + (330 + offsetDays * 1440) * 60000).toISOString().slice(0, 10);
-}
-
-/** A drive time for display: rounded to the nearest 5 minutes (§2.4); the fare uses the exact one. */
-function fmtDuration(min) {
-  const t = Math.round(min / 5) * 5;
-  const h = Math.floor(t / 60), m = t % 60;
-  return h ? `${h} h${m ? ` ${m} min` : ''}` : `${m} min`;
 }
 
 /** "22:00" -> "10 PM", "06:30" -> "6:30 AM": the night window as the conditions say it. */
@@ -64,7 +60,7 @@ function newEstimateId() {
   return `est_${[...bytes].map((b) => b.toString(36).padStart(2, '0')).join('').slice(0, 20)}`;
 }
 
-/** The trip a fare is for, ["Round Trip", "2 days"]: two rows, first under the route map. */
+/** The trip a fare is for, ["Round Trip", "2 days"]: the first two sections under the route map. */
 function tripParts(result) {
   const d = result.trip_days;
   return [result.labels.round ? 'Round Trip' : 'One Way', `${d} day${d === 1 ? '' : 's'}`];
@@ -86,30 +82,26 @@ function tripOf(result) {
 // ----- Small parts of the result ---------------------------------------------------
 
 /**
- * Under the route map, three sections: the trip the fare is for in two rows
- * ("Round Trip" over "2 days"), then the drive time and the distance, each way
- * too on a round trip.
+ * Under the route map, three sections set alike, each an icon, a label and a
+ * value: the trip type, the days the fare covers, and the distance (the whole
+ * trip's, both ways on a round trip; to the km, as §2.4 says).
  */
 function TripTiles({ route, round, detail }) {
   const km = Math.round(route.distance_km);
-  const min = route.duration_min;
-  const tile = (icon, label, value, note) => (
+  const tile = (icon, label, value) => (
     <div className="rb-tile">
       <Icon d={icon} size={20} stroke="#4A5C2F" />
       <div>
         <div className="rb-tile__label">{label}</div>
         <div className="rb-tile__value">{value}</div>
-        <div className="rb-tile__note">{note}</div>
       </div>
     </div>
   );
   return (
     <div className="rb-tiles">
-      <div className="rb-tile rb-tile--trip">
-        <div className="rb-tile__trip"><span>{detail[0]}</span><span>{detail[1]}</span></div>
-      </div>
-      {tile(CLOCK, 'Est. trip time', fmtDuration(round ? 2 * min : min), round ? `${fmtDuration(min)} each way` : 'One way')}
-      {tile(ROUTE, 'Est. distance', `${(round ? 2 * km : km).toLocaleString('en-IN')} km`, round ? `${km.toLocaleString('en-IN')} km each way` : 'One way')}
+      {tile(round ? ROUND_TRIP : ONE_WAY, 'Trip type', detail[0])}
+      {tile(CALENDAR, 'Trip duration', detail[1])}
+      {tile(ROUTE, 'Est. distance', `${(round ? 2 * km : km).toLocaleString('en-IN')} km`)}
     </div>
   );
 }
