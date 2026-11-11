@@ -162,34 +162,35 @@ async function setTime(page, hhmm) {
   await page.selectOption('#rb-pickup-minute', String(m));
 }
 
-/** "Round Trip / 3 days": the trip the fare is for, the two rows of the first section under the map. */
-const fareTrip = (page) => page.locator('.rb-tile__trip').evaluate((el) => [...el.children].map((row) => row.textContent.trim()).join(' / '));
-
-/** The time and distance sections under the map, as read: "EST. TRIP TIME 3 h 15 min One way". */
-const estTiles = (page) => page.locator('.rb-tile:not(.rb-tile--trip)').evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()));
+/** The sections under the map, label and value as written: "Trip type: Round Trip | Trip duration: 3 days | Est. distance: 228 km". */
+const estTiles = (page) => page.locator('.rb-tiles > .rb-tile').evaluateAll((els) => els.map((e) => {
+  const text = (sel) => e.querySelector(sel)?.textContent.trim();
+  return `${text('.rb-tile__label')}: ${text('.rb-tile__value')}`;
+}).join(' | '));
 
 /**
- * The sections under the map as drawn: the trip first, in two rows centred on
- * each other and in its section, in the fare's typeface and green; on a wide
- * screen the three side by side, on a phone the trip across the top and the
- * other two side by side below. The fare panel holds the fare alone.
+ * The sections under the map as drawn: alike — each an icon, a label set like
+ * Est. distance's and a value set like its "N km", each on one line, with
+ * nothing more (no "each way" line); on a wide screen the three side by side,
+ * on a phone one under the other, each across the width. The fare panel holds
+ * the fare alone.
  */
 const tilesLook = (page) => page.evaluate(() => {
-  const [trip, time, dist] = [...document.querySelectorAll('.rb-tiles > .rb-tile')];
-  const text = trip.querySelector('.rb-tile__trip');
+  const tiles = [...document.querySelectorAll('.rb-tiles > .rb-tile')];
   const box = (el) => el.getBoundingClientRect();
-  // The words themselves, not the rows' boxes (which share one width).
-  const rows = [...text.children].map((row) => { const r = document.createRange(); r.selectNodeContents(row); return r.getBoundingClientRect(); });
-  const mid = (r) => (r.left + r.right) / 2;
-  const [a, b, c] = [box(trip), box(time), box(dist)];
+  const font = (el) => { const cs = getComputedStyle(el); return [cs.fontFamily, cs.fontSize, cs.fontWeight, cs.color, cs.textTransform, cs.letterSpacing].join(' '); };
+  const lines = (el) => { const r = document.createRange(); r.selectNodeContents(el); return r.getClientRects().length; };
+  const labels = tiles.map((t) => t.querySelector('.rb-tile__label'));
+  const values = tiles.map((t) => t.querySelector('.rb-tile__value'));
+  const [a, b, c] = tiles.map(box);
   const fare = document.querySelector('.rb-fare__value');
   return {
-    first: !!time.textContent.match(/^Est\. trip time/i) && !!dist.textContent.match(/^Est\. distance/i),
-    twoRows: rows.length === 2 && rows[1].top >= rows[0].bottom - 1 && Math.abs(mid(rows[0]) - mid(rows[1])) < 1 && Math.abs(mid(rows[0]) - mid(a)) < 1,
-    style: getComputedStyle(text).fontFamily === getComputedStyle(fare).fontFamily && getComputedStyle(text).color === getComputedStyle(fare).color,
+    alike: tiles.length === 3 && tiles.every((t) => t.querySelector('svg') && t.innerText.split('\n').filter((l) => l.trim()).length === 2)
+      && labels.every((l) => font(l) === font(labels[2])) && values.every((v) => font(v) === font(values[2])),
+    oneLine: [...labels, ...values].every((el) => lines(el) === 1) && tiles.every((t) => t.scrollWidth <= t.clientWidth),
     inRow: a.top === b.top && b.top === c.top && a.right <= b.left + 1 && b.right <= c.left + 1,
-    // Across the row's inside (its borders aside, which round to whole pixels).
-    stacked: Math.abs(a.width - trip.parentElement.clientWidth) < 1 && b.top >= a.bottom - 1 && b.top === c.top && b.right <= c.left + 1,
+    // Each across the inside (the borders aside, which round to whole pixels).
+    stacked: tiles.every((t) => Math.abs(box(t).width - t.parentElement.clientWidth) < 1) && b.top >= a.bottom - 1 && c.top >= b.bottom - 1,
     fareAlone: !document.querySelector('.rb-farepanel .rb-fare__trip') && document.querySelector('.rb-farepanel').innerText.replace(/\s+/g, ' ').trim().startsWith(`ESTIMATED FARE ${fare.textContent} Inclusive of all taxes`),
   };
 });
@@ -385,25 +386,22 @@ async function main() {
     await page.getByRole('button', { name: 'Close' }).click();
     check(!(await page.$('.rb-map--full')), 'map closes again');
 
-    // The trip under the map: drive time to the nearest 5 minutes, distance to the km (§2.4).
+    // Under the map: the trip type, its days, and the distance to the km (§2.4).
     const tiles = await estTiles(page);
     const km = Math.round(one.inputs.distanceKm);
-    const t5 = Math.round(one.inputs.durationHours * 12) * 5;
-    const wantTime = `${Math.floor(t5 / 60)} h${t5 % 60 ? ` ${t5 % 60} min` : ''}`;
-    check(tiles.length === 2 && tiles[0].toUpperCase() === `EST. TRIP TIME ${wantTime} One way`.toUpperCase() && new RegExp(`^EST\\. DISTANCE ${km} km One way$`, 'i').test(tiles[1]),
-      `one way: trip time (to 5 min) and distance tiles (${tiles.join(' | ')})`);
+    check(tiles === `Trip type: One Way | Trip duration: 1 day | Est. distance: ${km} km`, `one way: trip type, trip duration and distance under the map (${tiles})`);
     const result = (await page.locator('.rb-result').innerText()).replace(/\s+/g, ' ');
     check(result.includes('Inclusive of all taxes') && !/Extra distance/.test(result) && result.includes('Final fare is calculated when your trip ends.'),
       'the fare says it includes all taxes; no "Extra distance" line; the final-fare line stays');
-    check(await fareTrip(page) === 'One Way / 1 day', `under the map, first, the trip the fare is for ("${await fareTrip(page)}")`);
     const wide = await tilesLook(page);
-    check(wide.first && wide.twoRows && wide.style && wide.inRow && wide.fareAlone,
-      `three sections under the map: the trip in two rows, centred, in the fare's typeface and green, then trip time, then distance; the fare panel holds the fare alone (${JSON.stringify(wide)})`);
-    // A 360px phone, the narrowest common one: the trip across the top, the other two side by side below.
+    check(wide.alike && wide.oneLine && wide.inRow && wide.fareAlone,
+      `three sections under the map, side by side and set alike (each an icon, a label like Est. distance's, a value like its km; no "each way" line); the fare panel holds the fare alone (${JSON.stringify(wide)})`);
+    // A 360px phone, the narrowest common one: the three one under the other.
     await page.setViewportSize({ width: 360, height: 800 });
     const narrow = await tilesLook(page);
+    await page.screenshot({ path: path.join(SHOTS, 'estimate-tiles-360.png'), fullPage: true });
     await page.setViewportSize({ width: 1280, height: 1000 });
-    check(narrow.first && narrow.twoRows && narrow.stacked, `…and on a 360px phone, the trip across the top, time and distance below (${JSON.stringify(narrow)})`);
+    check(narrow.alike && narrow.oneLine && narrow.stacked, `…and on a 360px phone, one under the other, each on one line (${JSON.stringify(narrow)})`);
     const oneConds = await conds(page);
     check(JSON.stringify(oneConds) === JSON.stringify(["Includes 12 hours of your Buddy's time from pickup.", "Includes your Buddy's food.", TOLLS, EXTRA_TIME]),
       `one way, 9 AM: the §2.4 lines (${oneConds.join(' | ')})`);
@@ -506,9 +504,8 @@ async function main() {
     check(round.result.trip_days === 3 && round.result.stay_included === true, 'round trip bills 3 days with the stay included');
     const roundTiles = await estTiles(page);
     const each = Math.round(round.inputs.distanceKm); // the route one way
-    check(new RegExp(`^EST\\. DISTANCE ${2 * each} km ${each} km each way$`, 'i').test(roundTiles[1] || '') && /each way$/.test(roundTiles[0] || ''),
-      `round trip: the tiles give the total and each way (${roundTiles.join(' | ')})`);
-    check(await fareTrip(page) === 'Round Trip / 3 days', `round trip: "${await fareTrip(page)}"`);
+    check(roundTiles === `Trip type: Round Trip | Trip duration: 3 days | Est. distance: ${(2 * each).toLocaleString('en-IN')} km`,
+      `round trip: the type, its 3 days and the whole trip's distance, both ways (${roundTiles})`);
     const roundConds = await conds(page);
     check(roundConds[0] === "Includes 12 hours of your Buddy's time from pickup." && roundConds.includes("Includes your Buddy's stay for 2 nights."),
       `round trip: 12 hours from pickup (no "on each of the N days"), and the stay for 2 nights (${roundConds.slice(0, 3).join(' | ')})`);
@@ -526,7 +523,8 @@ async function main() {
     const warn = (await page.locator('.rb-long__warn').textContent().catch(() => '')).replace(/\s+/g, ' ').trim();
     check(jaipur.result.long_drive && !jaipur.result.drive_through && jaipur.result.trip_days === 2
       && warn === REST_STOP, `long drive: PRD 6.5's rest-stop line, a second Trip Day ("${warn}")`);
-    check(await fareTrip(page) === 'Round Trip / 2 days', `a same-day round trip with its rest stop is priced as 2 days, and says so ("${await fareTrip(page)}")`);
+    const jaipurTiles = await estTiles(page);
+    check(jaipurTiles.startsWith('Trip type: Round Trip | Trip duration: 2 days |'), `a same-day round trip with its rest stop is priced as 2 days, and says so (${jaipurTiles})`);
     const switchLabel = (await page.locator('.rb-switch__label').textContent()).trim();
     check(switchLabel === 'Drive through without a rest stop' && !(await conds(page)).some((c) => /long drive|rest stop/i.test(c)),
       `long drive: the switch reads "${switchLabel}", and the list of lines doesn't repeat the plan`);
