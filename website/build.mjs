@@ -5,6 +5,8 @@
  *   dist/estimate/       the fare estimator: React page precompiled with esbuild
  *   dist/about/          About and Contact: static pages (src/about, src/contact),
  *   dist/contact/          with the closing band and footer filled in from src/shared
+ *   dist/chandigarh/ …   the six city pages (src/cities): one layout, each city's own
+ *                        copy, trips with measured distances and "From" fares
  *   dist/shared/         what those three pages share: site.css, pages.js (the About
  *                        and Contact pages' header, pop-ups and forms), img/
  *   dist/beta/           the design-canvas artboard from ../Webpage
@@ -56,6 +58,9 @@ import path from 'node:path';
 import { build as esbuild, transform } from 'esbuild';
 import sharp from 'sharp';
 import { ARTBOARD_PATCHES } from './artboard-patches.mjs';
+import { CITY_PAGES, cityRoutes, cityTips, measuredRoutes } from './src/cities/cities.mjs';
+import { CITY_IMAGES, cityPage } from './src/cities/page.mjs';
+import { bandHtml } from './src/shared/buddy.mjs';
 
 const require = createRequire(import.meta.url);
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -70,7 +75,7 @@ const HOME = '/beta/';
 // The static pages built from src/<name>/index.html, beside the estimator.
 const PAGES = ['about', 'contact', 'privacy', 'terms', 'buddy/terms'];
 // Source folders that are not copied as they are: each is built below.
-const BUILT = ['estimate', 'shared', ...PAGES];
+const BUILT = ['estimate', 'shared', 'cities', ...PAGES];
 
 // `exports` maps stop these packages resolving deep subpaths directly, so
 // locate each package root via its package.json and join from there.
@@ -145,10 +150,15 @@ async function htmlFiles(dir, rel = '') {
 /**
  * A standalone page's HTML as served: the design system's folder and Home's
  * path filled in, each <!-- partial:name --> replaced by src/shared/name.html
- * (the closing band, the footer), and the analytics added.
+ * (the closing band, the footer), the Contact page's Buddy band
+ * (<!-- buddyband:contact -->, shared/buddy.mjs), and the analytics added.
  */
 async function standalone(html, what, dsDir) {
-  return withSiteScript((await fillPartials(html.replaceAll('__DS_DIR__', `/_ds/${dsDir}`))).replaceAll('__HOME__', HOME), what);
+  const filled = (await fillPartials(html.replaceAll('__DS_DIR__', `/_ds/${dsDir}`)))
+    .replace('<!-- buddyband:contact -->', () => bandHtml('contact', 'Contact — Become a Buddy').replace(/\n/g, '\n  '));
+  const out = withSiteScript(filled.replaceAll('__HOME__', HOME), what);
+  if (/__[A-Z_]+__|<!-- (partial|buddyband):/.test(out)) throw new Error(`${what} has a placeholder build.mjs does not fill`);
+  return out;
 }
 
 /** Each <!-- partial:name --> replaced by src/shared/name.html: the head's icons and sharing card, the closing band, the footer. */
@@ -265,8 +275,16 @@ async function main() {
   for (const page of PAGES) {
     await mkdir(path.join(OUT, page), { recursive: true });
     const html = await standalone(await readFile(path.join(SRC, page, 'index.html'), 'utf8'), `the ${page} page`, dsDir);
-    if (/__[A-Z_]+__|<!-- partial:/.test(html)) throw new Error(`the ${page} page has a placeholder build.mjs does not fill`);
     await writeFile(path.join(OUT, page, 'index.html'), html);
+  }
+
+  // 3c. The city pages (src/cities): their trips priced from routes.json, what
+  //     Google measured from each city's pickup point (test/measure-routes.mjs).
+  const measured = measuredRoutes(JSON.parse(await readFile(path.join(SRC, 'cities', 'routes.json'), 'utf8')));
+  for (const slug of Object.keys(CITY_PAGES)) {
+    const html = cityPage(slug, { routes: cityRoutes(slug, measured), tips: cityTips(slug, measured) });
+    await mkdir(path.join(OUT, slug), { recursive: true });
+    await writeFile(path.join(OUT, slug, 'index.html'), await standalone(html, `the ${slug} page`, dsDir));
   }
   const SHARED = path.join(OUT, 'shared');
   await mkdir(path.join(SHARED, 'img'), { recursive: true });
@@ -276,6 +294,13 @@ async function main() {
   for (const width of [800, 1360]) {
     await sharp(path.join(CANVAS, 'assets', 'family-departure.png')).resize({ width, withoutEnlargement: true })
       .webp({ quality: 80 }).toFile(path.join(SHARED, 'img', `family-departure-${width}.webp`));
+  }
+  // The city pages' photos: the Home hero (16:10) and the Buddy (4:5), two widths each.
+  for (const [img, ratio] of [[CITY_IMAGES.hero, 10 / 16], [CITY_IMAGES.trust, 5 / 4]]) {
+    for (const width of img.widths) {
+      await sharp(path.join(CANVAS, 'assets', img.file)).resize(width, Math.round(width * ratio), { fit: 'cover' })
+        .webp({ quality: 80 }).toFile(path.join(SHARED, 'img', `${img.name}-${width}.webp`));
+    }
   }
   await cp(path.join(CANVAS, 'assets', 'ridebuddy-logomark-parchment.svg'), path.join(SHARED, 'img', 'logomark-parchment.svg'));
   // Every page's icons and sharing card (src/shared/head.html): the logomark as

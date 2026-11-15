@@ -132,6 +132,21 @@ class Component extends DCLogic {`,
         ] },
       ],`,
   },
+  {
+    why: 'DS02: the footer\'s Cities column (the city pages), and "Become a Buddy" in the visitor\'s Buddy language, Hindi first (src/shared/buddy.mjs)',
+    from: String.raw`        { title: 'Services', items: [
+          { label: 'Round trips', go: this.presetTrip('round'), href: '/estimate/?type=round' },`,
+    to: String.raw`        { title: 'Cities', items: [
+          { label: 'Chandigarh', href: '/chandigarh/' }, { label: 'Mohali', href: '/mohali/' }, { label: 'Panchkula', href: '/panchkula/' },
+        ] },
+        { title: 'Services', items: [
+          { label: 'Round trips', go: this.presetTrip('round'), href: '/estimate/?type=round' },`,
+  },
+  {
+    why: 'DS02: …the More column\'s Buddy link in the visitor\'s Buddy language',
+    from: "          { label: 'Become a Buddy', href: '/contact/#apply' },\n",
+    to: "          { label: (() => { try { return localStorage.getItem('rb_buddy_lang') === 'en' ? 'Become a Buddy' : 'Buddy बनें'; } catch (e) { return 'Buddy बनें'; } })(), href: '/contact/#apply' },\n",
+  },
   { why: 'logo link', from: '<a href="#" onClick="{{ goHome }}"', to: '<a href="{{ homeHref }}" onClick="{{ goHome }}"' },
   { why: 'header and mobile-menu links', from: '<a href="#" onClick="{{ l.go }}"', to: '<a href="{{ l.href }}" onClick="{{ l.go }}"', count: 2 },
   { why: '"Estimate this trip" links', from: '<a href="#" onClick="{{ s.go }}"', to: '<a href="{{ s.href }}" onClick="{{ s.go }}"' },
@@ -605,4 +620,18 @@ const VERIFIED = [
   },
 ];
 
-export const ARTBOARD_PATCHES = [...ESTIMATE, ...URLS, ...BOOKING, ...FORMS, ...WAITLIST, ...AUDIT, ...HOW, ...MOVED_OUT, ...VERIFIED];
+// ----- Website changes v2: the beta tag (DS01) -------------------------------------
+
+const BETA_TAG = [
+  {
+    why: 'DS01: the beta tag beside the wordmark, as the Phase 1 design sets it (the standalone pages: site.css .rb-beta)',
+    from: '        <span style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:21px;letter-spacing:-0.01em;color:var(--color-charcoal)">RideBuddy</span>\n',
+    to: `        <span class="rb-logo-word" style="display:flex;align-items:flex-start;gap:4px">
+          <span style="font-family:var(--font-display),Urbanist,sans-serif;font-weight:800;font-size:21px;line-height:1;letter-spacing:-0.01em;color:var(--color-charcoal)">RideBuddy</span>
+          <span style="display:inline-flex;align-items:center;height:15px;padding:0 5px;border-radius:999px;background:var(--color-green-50);border:1px solid var(--color-green-100);color:var(--color-green-700);font-family:var(--font-body),'DM Sans',sans-serif;font-size:10px;font-weight:500;line-height:1;letter-spacing:0.02em;margin-top:-6px;white-space:nowrap">beta</span>
+        </span>
+`,
+  },
+];
+
+export const ARTBOARD_PATCHES = [...ESTIMATE, ...URLS, ...BOOKING, ...FORMS, ...WAITLIST, ...AUDIT, ...HOW, ...MOVED_OUT, ...VERIFIED, ...BETA_TAG];

@@ -27,9 +27,12 @@ RideBuddy-partner/     Driver app — self-contained Expo project, own package.j
   src/                 api client, theme tokens, TripMap (native) + TripMap.web
   README.md            Lifecycle, privacy rules, and on-device run instructions
 website/               ridebuddy.co.in on Cloudflare Workers (see website/README.md)
-  build.mjs            builds dist/: holding page, /estimate/, /about/, /contact/, the legal pages, /beta/ artboard
+  build.mjs            builds dist/: holding page, /estimate/, /about/, /contact/, the city pages, the legal pages, /beta/ artboard
   src/about, src/contact  static pages; src/shared/ holds what they and /estimate/ share
                        (header, waitlist pop-up, Buddy form, code step, site.css, footer)
+  src/shared/buddy.mjs the Hindi-first Buddy copy, language switch and band; WHATSAPP_NUMBER ('' hides WhatsApp)
+  src/cities/          the six city pages (/chandigarh/ … /new-chandigarh/): copy, layout, routes.json
+                       (Google's distances and times, re-measured by test/measure-routes.mjs)
   src/privacy, src/terms, src/buddy/terms  legal placeholders (noindex) until Legal's text
   src/site.js          the site's own analytics, attribution cookies and cookie notice (added to every page)
   worker/              Worker script: forms (+ one-time codes) and analytics -> D1, /admin lists + dashboard

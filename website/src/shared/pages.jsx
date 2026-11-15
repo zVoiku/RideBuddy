@@ -1,11 +1,14 @@
 /* global React, ReactDOM */
 /**
- * /about/ and /contact/ are static pages (src/about, src/contact). This adds
- * what needs a script: the site header, the "Join the Waitlist" pop-up behind
- * every [data-rb-waitlist] button, the Contact page's waitlist card, and the
+ * /about/, /contact/, the legal pages and the city pages are static pages
+ * (src/about, src/contact, src/cities …). This adds what needs a script: the
+ * site header (with a city page's city menu), the "Join the Waitlist" pop-up
+ * behind every [data-rb-waitlist] button, the Contact page's waitlist card, the
  * Buddy application behind every [data-rb-apply] link or button — opened
- * straight away by a /contact/#apply link, the one shared to recruit Buddies.
+ * straight away by a /contact/#apply link, the one shared to recruit Buddies —
+ * and the Buddy bands and footer link in the visitor's language (buddy.mjs).
  */
+import { initBuddyLang } from './buddy.mjs';
 import { SiteHeader } from './header.jsx';
 import { track } from './ui.jsx';
 import { ContactWaitlist, WaitlistPopup } from './waitlist.jsx';
@@ -13,8 +16,10 @@ import { ApplyPopup } from './apply.jsx';
 
 const { useState, useEffect } = React;
 
-/** The page, as body[data-page] names it: 'about' or 'contact' — also the `page` of a waitlist signup made on it (forms.js PAGES). */
+/** The page, as body[data-page] names it: 'about', 'contact', a city's slug — also the `page` of a waitlist signup made on it (forms.js PAGES). */
 const PAGE = document.body.getAttribute('data-page') || '';
+/** A city page's city (body[data-city]): the header shows the city menu. */
+const CITY = document.body.getAttribute('data-city') || null;
 const APPLY = '#apply';
 
 function Popups() {
@@ -60,7 +65,8 @@ function Popups() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('rb-header')).render(<SiteHeader current={PAGE} />);
+initBuddyLang();
+ReactDOM.createRoot(document.getElementById('rb-header')).render(<SiteHeader current={PAGE} city={CITY} />);
 const card = document.getElementById('rb-contact-waitlist');
 if (card) ReactDOM.createRoot(card).render(<ContactWaitlist />);
 ReactDOM.createRoot(document.body.appendChild(document.createElement('div'))).render(<Popups />);

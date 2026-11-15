@@ -8,22 +8,29 @@
  * its first POST is checked and answered 202 with a code sent to the number;
  * the same POST again with the right `code` saves it. No code sent, no save.
  */
+import { CITIES } from '../src/cities/list.mjs';
 import { clock } from './analytics.js';
 import { addHit, networkHash, ready } from './db.js';
 import { json, sameOrigin } from './http.js';
 import { checkCode, otpSkipped, sendCode } from './otp.js';
 import {
-  AGENCY_ERROR, CITY_ERROR, CONSENT_ERROR, CONTACT_ERROR, EMAIL_ERROR, GSTIN_ERROR, LICENCE_ERROR, NAME_ERROR, TOUCH_FIELDS,
+  AGENCY_ERROR, BUDDY_CONSENT_ERROR, CITY_ERROR, CONSENT_ERROR, CONTACT_ERROR, EMAIL_ERROR, GSTIN_ERROR, LICENCE_ERROR, NAME_ERROR, TOUCH_FIELDS,
   attribution, cleanComment, cleanText, describeTrip, isEmail, isGstin, normalizePhone, tripFare,
 } from './lib.js';
 
 /**
  * Where a waitlist signup was made (PRD S1, S9): `estimate`, under a fare, or
  * `hero`, a Join the Waitlist button with no trip. The page it was on is kept
- * apart, as these names. Pages cached from before sent the page as the source
- * (home, about, contact, how): those are hero signups from that page.
+ * apart, as these names: the site's pages and the city pages (/chandigarh/ …).
+ * Pages cached from before sent the page as the source (home, about, contact,
+ * how): those are hero signups from that page.
  */
-export const PAGES = { home: 'Home page', how: 'How It Works page', about: 'About page', contact: 'Contact page', estimate: 'Estimate page' };
+export const PAGES = {
+  home: 'Home page', how: 'How It Works page', about: 'About page', contact: 'Contact page', estimate: 'Estimate page',
+  ...Object.fromEntries(CITIES.map((c) => [c.slug, `${c.name} page`])),
+};
+/** The Buddy application's languages (src/shared/buddy.mjs). */
+const LANGUAGES = ['hi', 'en'];
 
 /** { source, page } for a waitlist post, or null for one this Worker doesn't know. */
 function signupSource(body) {
@@ -195,43 +202,67 @@ async function feedback({ db, who }, body, now) {
   return json(200, { ok: true });
 }
 
+/** At least `n` characters (code points): a full name, a licence number, a place. */
+const atLeast = (s, n) => Array.from(s).length >= n;
+
+/**
+ * The consent an application was sent with (W08/B01): ticked, the version of
+ * the wording the applicant read, and the language they read it in. Every
+ * application now carries the tick; a page cached from before it sends no
+ * `consent`, and its application is kept with the consent left blank.
+ */
+function buddyConsent(body, errors) {
+  if (Object.hasOwn(body, 'consent') && body.consent !== true) errors.consent = BUDDY_CONSENT_ERROR;
+  return {
+    consent: body.consent === true ? 1 : null,
+    version: body.consent === true ? cleanText(body.consent_version, 60) || null : null,
+    language: LANGUAGES.includes(body.language) ? body.language : null,
+  };
+}
+
 async function buddy(ctx, body, now) {
   const { db } = ctx;
   const phone = normalizePhone(body.phone);
   const city = cleanText(body.city, 60);
   const errors = {};
+  // The same rules as the form's (src/shared/apply.jsx), which turns Get OTP on only once they are met.
   if (body.type === 'agency') {
     const agency = cleanText(body.agency, 100);
     const contact = cleanText(body.contact, 100);
     const email = cleanText(body.email, 120).toLowerCase();
     const gstin = cleanText(body.gstin, 30).toUpperCase().replace(/\s+/g, '');
-    if (!agency) errors.agency = AGENCY_ERROR;
-    if (!contact) errors.contact = CONTACT_ERROR;
+    if (!atLeast(agency, 2)) errors.agency = AGENCY_ERROR;
+    if (!atLeast(contact, 3)) errors.contact = CONTACT_ERROR;
     if (!phone.ok) errors.phone = phone.error;
-    if (!city) errors.city = CITY_ERROR;
+    if (!atLeast(city, 2)) errors.city = CITY_ERROR;
     if (email && !isEmail(email)) errors.email = EMAIL_ERROR;
     if (gstin && !isGstin(gstin)) errors.gstin = GSTIN_ERROR;
+    const agreed = buddyConsent(body, errors);
     if (Object.keys(errors).length) return invalid(errors);
     const proof = await provePhone(ctx, phone.phone, body.code);
     if (proof.response) return proof.response;
     const drivers = DRIVERS.includes(body.drivers) ? body.drivers : null;
-    const saved = await db.prepare(`INSERT INTO agencies (created_at, agency, contact, phone, city, drivers, email, gstin, verified, ${cols})
-      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ${marks(10)})`)
-      .bind(now, agency, contact, phone.phone, city, drivers, email || null, gstin || null, proof.verified, ...attrValues(ctx.who)).run();
+    const saved = await db.prepare(`INSERT INTO agencies (created_at, agency, contact, phone, city, drivers, email, gstin, verified,
+        consent, consent_version, language, ${cols})
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ${marks(13)})`)
+      .bind(now, agency, contact, phone.phone, city, drivers, email || null, gstin || null, proof.verified,
+        agreed.consent, agreed.version, agreed.language, ...attrValues(ctx.who)).run();
     return json(200, { ok: true, buddy_interest_id: `agency_${saved.meta.last_row_id}` });
   }
   const name = cleanText(body.name, 100);
   const licence = cleanText(body.licence, 40);
-  if (!name) errors.name = NAME_ERROR;
+  if (!atLeast(name, 3)) errors.name = NAME_ERROR;
   if (!phone.ok) errors.phone = phone.error;
-  if (!licence) errors.licence = LICENCE_ERROR;
+  if (!atLeast(licence, 6)) errors.licence = LICENCE_ERROR;
   // A page cached from before the city field sends no `type`; keep its application.
-  if (!city && body.type !== undefined) errors.city = CITY_ERROR;
+  if (!atLeast(city, 2) && body.type !== undefined) errors.city = CITY_ERROR;
+  const agreed = buddyConsent(body, errors);
   if (Object.keys(errors).length) return invalid(errors);
   const proof = await provePhone(ctx, phone.phone, body.code);
   if (proof.response) return proof.response;
-  const saved = await db.prepare(`INSERT INTO buddies (created_at, name, phone, licence, city, verified, ${cols}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ${marks(7)})`)
-    .bind(now, name, phone.phone, licence, city || null, proof.verified, ...attrValues(ctx.who)).run();
+  const saved = await db.prepare(`INSERT INTO buddies (created_at, name, phone, licence, city, verified, consent, consent_version, language, ${cols})
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ${marks(10)})`)
+    .bind(now, name, phone.phone, licence, city || null, proof.verified, agreed.consent, agreed.version, agreed.language, ...attrValues(ctx.who)).run();
   // PRD 10.2's buddy_interest_id: the list and its ID (buddies.csv, agencies.csv).
   return json(200, { ok: true, buddy_interest_id: `buddy_${saved.meta.last_row_id}` });
 }
