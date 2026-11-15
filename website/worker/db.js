@@ -95,7 +95,7 @@ const SCHEMA = [
  * exists": a column that is already there fails as a duplicate, which is fine.
  * SCHEMA_VERSION in meta records that this has run.
  */
-const SCHEMA_VERSION = '5';
+const SCHEMA_VERSION = '6';
 /** 4: where each row and beacon came from (lib.js attribution(); src/site.js sets the cookies). */
 const ATTRIBUTION = ['visitor_id TEXT', ...TOUCH_FIELDS.map((f) => `${f} TEXT`), 'internal INTEGER'];
 const ADDED_COLUMNS = [
@@ -109,6 +109,8 @@ const ADDED_COLUMNS = [
   ['beacons', 'visitor_id TEXT'], ['beacons', 'touch TEXT'],
   // 5: PRD sources (estimate or hero) with the page kept apart, and each beacon's session
   ['waitlist', 'page TEXT'], ['beacons', 'session_id TEXT'],
+  // 6: an application's consent, the version of its wording, and the language it was read in (W08/B01)
+  ...['buddies', 'agencies'].flatMap((t) => [[t, 'consent INTEGER'], [t, 'consent_version TEXT'], [t, 'language TEXT']]),
 ];
 const AFTER_COLUMNS = [
   'CREATE INDEX IF NOT EXISTS waitlist_estimate ON waitlist (estimate_id)',

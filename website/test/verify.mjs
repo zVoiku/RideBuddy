@@ -13,11 +13,14 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { startDev } from './dev-server.mjs';
 import { startTwoFactorStub } from './twofactor-stub.mjs';
+import { CITIES, CITY_PAGES, cityRoutes, cityTips, cityTitle, measuredRoutes } from '../src/cities/cities.mjs';
+import { BUDDY_COPY, CONSENT_VERSION } from '../src/shared/buddy.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium, request } = require('playwright');
@@ -138,7 +141,9 @@ function headerGeometry() {
   return {
     header: `${box(header)}|${css(header, 'position', 'backgroundColor', 'boxShadow', 'borderBottom')}`,
     logo: box(brand.querySelector('img')),
-    name: `${box(brand.querySelector('span'))}|${css(brand.querySelector('span'), 'fontFamily', 'fontSize', 'fontWeight', 'color')}`,
+    name: (() => { const word = brand.querySelector('span'); const text = word.querySelector('span') || word; return `${box(text)}|${css(text, 'fontFamily', 'fontSize', 'fontWeight', 'color', 'lineHeight')}`; })(),
+    // DS01: the beta tag beside the wordmark.
+    beta: (() => { const tag = [...brand.querySelectorAll('span')].find((x) => x.textContent.trim() === 'beta'); return tag ? `${box(tag)}|${css(tag, 'backgroundColor', 'color', 'fontSize', 'borderRadius')}` : null; })(),
     links: links.map((a) => `${a.textContent.trim()}@${box(a)}|${css(a, 'fontSize', 'fontWeight')}`),
     cta: cta && `${cta.textContent.trim()}@${box(cta)}|${css(cta, 'backgroundColor', 'color', 'borderRadius', 'fontSize')}`,
     burger: shown(burger) ? box(burger) : null,
@@ -234,7 +239,7 @@ async function main() {
   // scripts and stylesheet built with it by content, kept a year (src/_headers,
   // build.mjs versionAssets): a cached page can't meet a newer script.
   const served = async (p) => { const r = await fetch(`${dev.base}${p}`); return { cache: r.headers.get('cache-control'), body: Buffer.from(await r.arrayBuffer()) }; };
-  for (const page of ['/', '/estimate/', '/about/', '/contact/', '/beta/']) {
+  for (const page of ['/', '/estimate/', '/about/', '/contact/', '/beta/', ...CITIES.map((c) => `/${c.slug}/`)]) {
     const { cache, body } = await served(page);
     const refs = [...body.toString().matchAll(/(?:src|href)="(\/(?:estimate\/app\.js|shared\/pages\.js|shared\/site\.css|site\.js))(\?v=[0-9a-f]{12})?"/g)];
     const wrong = [];
@@ -247,16 +252,16 @@ async function main() {
   }
 
   /** Types the code the stand-in 2Factor got for `phone` and verifies it, after one wrong try when `wrongFirst`. */
-  const enterCode = async (pg, scope, fieldId, phone, wrongFirst = false) => {
+  const enterCode = async (pg, scope, fieldId, phone, wrongFirst = false, verify = 'Verify Number') => {
     const code = stub.codeFor(phone);
     if (wrongFirst) {
       await pg.fill(fieldId, code === '000000' ? '000001' : '000000');
-      await scope.getByRole('button', { name: 'Verify Number' }).click();
+      await scope.getByRole('button', { name: verify }).click();
       const err = await scope.locator('[role="alert"], .rb-error-msg').first().textContent({ timeout: 10000 }).catch(() => '');
       check(err === CODE_WRONG, `${phone}: a wrong code is refused ("${err}")`);
     }
     await pg.fill(fieldId, code || '');
-    await scope.getByRole('button', { name: 'Verify Number' }).click();
+    await scope.getByRole('button', { name: verify }).click();
   };
   // Counted like a visitor: a browser that doesn't call itself headless, and
   // site.js's opt-in for automation (it skips navigator.webdriver otherwise).
@@ -656,8 +661,8 @@ async function main() {
     const contactText = await contact.evaluate(() => document.body.innerText);
     check(contactText.includes('Write to us.') && await contact.locator('.rb-email a').getAttribute('href') === 'mailto:support@ridebuddy.co.in'
       && contactText.includes('Verify your mobile number. One message when booking opens. Nothing else.') && !contactText.includes('One message when the app is live')
-      && contactText.includes('Drive with RideBuddy.'),
-      'Contact: "Write to us.", the email, the waitlist card with About\'s line (C03), and "Become a Buddy"');
+      && contactText.includes(BUDDY_COPY.hi.bandTitle) && contactText.includes(BUDDY_COPY.hi.contactLine),
+      'Contact: "Write to us.", the email, the waitlist card with About\'s line (C03), and "Become a Buddy", in Hindi first (DS04)');
     await contact.screenshot({ path: path.join(SHOTS, 'contact.png'), fullPage: true });
     const contactForm = contact.locator('#rb-contact-waitlist');
     await contact.fill('#rb-contact-phone', '12345');
@@ -744,8 +749,14 @@ async function main() {
     const betaHrefs = await beta.$$eval('header nav a', (as) => as.map((a) => `${a.textContent.trim()}=${a.getAttribute('href')}`).join(' '));
     check(betaHrefs === 'Home=/beta/ About=/about/ Contact=/contact/', `/beta's header leads to the pages of their own (${betaHrefs})`);
     const footHrefs = await beta.$$eval('footer a', (as) => Object.fromEntries(as.map((a) => [a.textContent.trim(), a.getAttribute('href')])));
-    check(footHrefs.About === '/about/' && footHrefs.Contact === '/contact/' && footHrefs['Become a Buddy'] === '/contact/#apply' && footHrefs.Terms === '/terms/' && footHrefs.Privacy === '/privacy/',
-      `…and so does its footer, Terms and Privacy included (W09) (About ${footHrefs.About}, Contact ${footHrefs.Contact}, Become a Buddy ${footHrefs['Become a Buddy']}, Terms ${footHrefs.Terms}, Privacy ${footHrefs.Privacy})`);
+    check(footHrefs.About === '/about/' && footHrefs.Contact === '/contact/' && footHrefs['Buddy बनें'] === '/contact/#apply' && footHrefs.Terms === '/terms/' && footHrefs.Privacy === '/privacy/',
+      `…and so does its footer, Terms and Privacy included (W09), "Buddy बनें" in Hindi first (DS02) (About ${footHrefs.About}, Contact ${footHrefs.Contact}, Buddy बनें ${footHrefs['Buddy बनें']}, Terms ${footHrefs.Terms}, Privacy ${footHrefs.Privacy})`);
+    const betaFoot = (await beta.locator('footer').innerText()).replace(/\s+/g, ' ');
+    const colAt = ['PAGES', 'CITIES', 'SERVICES', 'MORE'].map((t) => betaFoot.toUpperCase().indexOf(t));
+    check(colAt.every((at, i) => at >= 0 && (i === 0 || at > colAt[i - 1])) && footHrefs.Chandigarh === '/chandigarh/' && footHrefs.Mohali === '/mohali/' && footHrefs.Panchkula === '/panchkula/'
+      && !footHrefs.Zirakpur && !footHrefs.Kharar && !footHrefs['New Chandigarh'],
+      `DS02 on /beta: Pages, Cities, Services, More; the Cities column holds Chandigarh, Mohali and Panchkula only (${betaFoot.slice(0, 160)})`);
+    check(await beta.locator('header').getByText('beta', { exact: true }).count() === 1, 'DS01 on /beta: the beta tag beside the logo');
     const homeText = await beta.evaluate(() => document.body.innerText);
     check(!/police/i.test(homeText) && homeText.includes('Every Buddy is verified before their first trip.'), 'Home: "Every Buddy is verified before their first trip."');
     check(homeText.includes('Verified, trained Buddies for outstation trips from the Chandigarh Tricity, in your own car.'), 'Home: the hero line (L01)');
@@ -803,67 +814,223 @@ async function main() {
     await beta.getByRole('button', { name: 'Get an Estimate' }).first().click();
     await beta.waitForURL('**/estimate/', { timeout: 15000 }).then(() => check(true, '/beta "Get an Estimate" navigates to /estimate/')).catch(() => check(false, '/beta "Get an Estimate" navigates to /estimate/'));
 
-    // Apply to be a Buddy, from an old /beta/#apply link: /contact/#apply opens the form.
+    // Apply to be a Buddy (W08/B01, B02/B03, DS04), from an old /beta/#apply link: /contact/#apply opens the form, in Hindi first.
+    const HI = BUDDY_COPY.hi;
+    const EN = BUDDY_COPY.en;
     await beta.goto(`${ORIGIN}/beta/#apply`, { waitUntil: 'commit' });
     await beta.waitForURL('**/contact/#apply', { timeout: 15000 }).catch(() => {});
-    check(await beta.waitForSelector('#rb-full-name', { timeout: 30000 }).then(() => true).catch(() => false) && new URL(beta.url()).pathname === '/contact/',
+    check(await beta.waitForSelector('#apply-name', { timeout: 30000 }).then(() => true).catch(() => false) && new URL(beta.url()).pathname === '/contact/',
       `an old /beta/#apply link opens the Buddy application on /contact/ (${new URL(beta.url()).pathname}${new URL(beta.url()).hash})`);
     const applyDialog = beta.getByRole('dialog');
+    const dialogTitle = async () => (await applyDialog.locator('h2').textContent()).trim();
+    const langPressed = () => applyDialog.locator('[aria-label="भाषा / Language"] [aria-pressed="true"]').textContent();
+    check(await dialogTitle() === HI.titleInd && await applyDialog.getAttribute('lang') === 'hi' && await langPressed() === 'हिंदी'
+      && await applyDialog.getByRole('button', { name: HI.getOtp }).isDisabled(),
+      `DS04: the form opens in Hindi, हिंदी selected, ${HI.getOtp} greyed ("${await dialogTitle()}")`);
+    await beta.screenshot({ path: path.join(SHOTS, 'contact-apply-hindi.png') });
+    // English is a tap away; the band behind follows, and this browser remembers the choice.
+    await applyDialog.getByRole('button', { name: 'English' }).click();
+    check(await dialogTitle() === EN.titleInd && await applyDialog.getAttribute('lang') === 'en' && await langPressed() === 'English'
+      && (await beta.locator('.rb-buddyband h2').textContent()) === EN.bandTitle && await beta.evaluate(() => localStorage.getItem('rb_buddy_lang')) === 'en',
+      `…English with one tap; the band follows, and the choice is remembered ("${await dialogTitle()}")`);
     const modalText = await applyDialog.textContent();
-    check(!/email app/i.test(modalText) && modalText.includes('Apply to be a Buddy.'), 'the Buddy application, with no "email app" wording');
-    await beta.getByRole('button', { name: 'Send Application' }).click();
-    const empty = await applyDialog.locator('.rb-error-msg').allTextContents();
-    check(empty.join(' | ') === `Enter your full name. | ${PHONE_ERROR} | Enter your licence number. | Enter your city or base.`, `an empty application flags all four fields (${empty.join(' | ')})`);
-    await beta.fill('#rb-full-name', 'Voiku Zavadschi');
+    check(!/email app/i.test(modalText) && modalText.includes(EN.subInd) && (await applyDialog.locator('.rb-help').textContent()) === EN.verifyNote
+      && await applyDialog.locator('a[data-rb-wa]').count() === 0,
+      'the form: the design\'s lines, "Verify your number to submit the application." under Get OTP, and no WhatsApp until there is a number');
+    const getOtp = applyDialog.getByRole('button', { name: EN.getOtp });
+    check(await getOtp.isDisabled() && await applyDialog.locator('.rb-error-msg').count() === 0, 'B01: an empty form shows no errors, and Get OTP stays greyed');
+    const consentLine = (await applyDialog.locator('label:has(#apply-consent)').textContent()).replace(/\s+/g, ' ').trim();
+    const applyLinks = await applyDialog.locator('label:has(#apply-consent) a').evaluateAll((as) => as.map((x) => `${x.textContent}=${x.getAttribute('href')} ${x.target}`));
+    check(!(await beta.isChecked('#apply-consent')) && consentLine === 'RideBuddy can contact me by phone, SMS or WhatsApp about my application. I agree to the Privacy Policy and Terms of Use.'
+      && applyLinks.join(', ') === 'Privacy Policy=/privacy/ _blank, Terms of Use=/terms/ _blank',
+      `W08: the consent box, unticked, its Privacy Policy and Terms of Use opening in a new tab ("${consentLine}")`);
+    await beta.fill('#apply-name', 'Voiku Zavadschi');
     await beta.fill('#apply-phone', '987087132');
-    await beta.fill('#rb-driving-licence-number', 'VNS8893');
-    check((await applyDialog.locator('.rb-error-msg').allTextContents()).includes(PHONE_ERROR), 'Buddy application: moving on from a short number flags it at once');
-    await beta.fill('#rb-your-city-or-base', 'Mohali');
-    await beta.getByRole('button', { name: 'Send Application' }).click();
-    check((await applyDialog.locator('.rb-error-msg').allTextContents()).join() === PHONE_ERROR, 'Buddy application: a number a digit short is flagged under the field');
+    await beta.fill('#apply-licence', 'VNS8893');
+    check((await applyDialog.locator('.rb-error-msg').allTextContents()).join() === PHONE_ERROR, 'Buddy application: moving on from a short number flags it at once');
+    await beta.fill('#apply-city', 'Mohali');
+    await beta.locator('#apply-consent').check();
+    check(await getOtp.isDisabled(), '…and Get OTP stays greyed while it is short, ticked or not');
     await beta.fill('#apply-phone', '9870871324');
-    await beta.getByRole('button', { name: 'Send Application' }).click();
-    check(!!(await beta.waitForSelector('#apply-code', { timeout: 10000 }).catch(() => null)) && await applyDialog.getByText('Code sent to +91 XXXXX XX324.').count() === 1,
-      'Buddy application: a code goes to the number');
+    await beta.locator('#apply-consent').uncheck();
+    check(await getOtp.isDisabled() && await applyDialog.locator('.rb-error-msg').count() === 0, '…and without the consent ticked');
+    await beta.locator('#apply-consent').check();
+    check(await getOtp.isEnabled(), 'B01: every field right and the consent ticked: Get OTP turns on');
+    await beta.screenshot({ path: path.join(SHOTS, 'contact-apply-filled.png') });
+    await getOtp.click();
+    check(!!(await beta.waitForSelector('#apply-code', { timeout: 10000 }).catch(() => null)) && await applyDialog.getByText('Code sent to +91 XXXXX XX324.').count() === 1
+      && await applyDialog.locator('.rb-otp__box').count() === 6 && await applyDialog.getByRole('button', { name: EN.verifyInd }).isDisabled(),
+      `B02: a code goes to the number; six boxes, and ${EN.verifyInd} greyed until they are full`);
+    // The boxes: digits fill them from the left; a code pasted or filled in from the SMS lands whole.
+    const boxes = () => applyDialog.locator('.rb-otp__box').allTextContents();
+    await beta.locator('#apply-code').pressSequentially('12');
+    const typed = (await boxes()).join('');
+    // Text arriving all at once at the caret, as a paste or the keyboard's SMS suggestion delivers it — here on the two digits typed.
+    await beta.keyboard.insertText('Your RideBuddy code is 482 913');
+    const pasted = (await boxes()).join('');
+    await beta.locator('#apply-code').press('Backspace');
+    const backspaced = (await boxes()).join('');
+    check(typed === '12' && pasted === '482913' && backspaced === '48291' && await beta.getAttribute('#apply-code', 'autocomplete') === 'one-time-code',
+      `B02: typed digits fill the boxes in turn (${typed}), a code pasted on them lands whole, in their place (${pasted}), Backspace takes the last off (${backspaced}); SMS autofill on`);
     await beta.screenshot({ path: path.join(SHOTS, 'contact-apply-code.png') });
-    await enterCode(beta, applyDialog, '#apply-code', '+919870871324');
-    check(await beta.waitForSelector('text=Application received. One call or message when onboarding opens.', { timeout: 10000 }).then(() => true).catch(() => false), 'B03: Buddy application received with the code, in PRD 12\'s words');
+    await beta.locator('#apply-code').fill('');
+    await enterCode(beta, applyDialog, '#apply-code', '+919870871324', true, EN.verifyInd);
+    check(await applyDialog.getByText(EN.sentInd).waitFor({ timeout: 10000 }).then(() => true).catch(() => false), `B03: "${EN.sentInd}"`);
     await beta.screenshot({ path: path.join(SHOTS, 'contact-apply-sent.png') });
     const bRow = (await download(dev, 'buddies')).at(-1) || [];
-    check(bRow.slice(2, 7).join('; ') === 'Voiku Zavadschi; +919870871324; VNS8893; Mohali; Yes', `Buddy application: row saved, phone verified (${bRow.slice(2, 7).join('; ')})`);
-    await beta.getByRole('button', { name: 'Done' }).click();
+    check(bRow.slice(2, 10).join('; ') === `Voiku Zavadschi; +919870871324; VNS8893; Mohali; Yes; Yes; ${CONSENT_VERSION}; English`,
+      `Buddy application: saved with the verified phone, the consent, its version and the language (${bRow.slice(2, 10).join('; ')})`);
+    await beta.getByRole('button', { name: EN.done }).click();
     check(await beta.getByRole('dialog').count() === 0 && new URL(beta.url()).hash === '', 'closing the form leaves a plain /contact/ URL');
 
-    // A driver agency, through the page's own "Apply to be a Buddy" button. The form opens again empty (N9).
-    await beta.locator('.rb-buddyband').getByRole('button', { name: /Apply to be a Buddy/ }).click();
-    check(await beta.inputValue('#rb-full-name') === '' && await beta.inputValue('#apply-phone') === '' && await beta.inputValue('#rb-driving-licence-number') === '',
-      'N9: after Done, the next application starts with empty fields');
-    await beta.getByRole('radio', { name: /Driver agency/ }).click();
-    check(await beta.waitForSelector('#rb-agency-name', { timeout: 5000 }).then(() => true).catch(() => false) && !(await beta.$('#rb-driving-licence-number')), 'choosing "Driver agency" swaps in the agency fields');
-    await beta.fill('#rb-agency-name', 'Tricity Drivers');
-    await beta.fill('#rb-contact-person', 'Gurpreet Kaur');
+    // A driver agency, in Hindi, through the band's own button. The form opens again empty (N9).
+    await beta.locator('.rb-buddyband').getByRole('button', { name: 'हिंदी' }).click();
+    check((await beta.locator('.rb-buddyband h2').textContent()) === HI.bandTitle && (await beta.locator('footer [data-rb-apply]').textContent()) === HI.footerLink,
+      'back to Hindi from the band: the band and the footer\'s link follow');
+    await beta.locator('.rb-buddyband').getByRole('button', { name: new RegExp(HI.applyBtn) }).click();
+    check(await dialogTitle() === HI.titleInd && await beta.inputValue('#apply-name') === '' && await beta.inputValue('#apply-phone') === ''
+      && await beta.inputValue('#apply-licence') === '' && !(await beta.isChecked('#apply-consent')),
+      'N9: after Done, the next application starts empty, consent unticked, in the language chosen');
+    await beta.getByRole('radio', { name: new RegExp(HI.agTitle) }).click();
+    check(await beta.waitForSelector('#apply-agency', { timeout: 5000 }).then(() => true).catch(() => false) && !(await beta.$('#apply-licence')) && await dialogTitle() === HI.titleAg,
+      'choosing the driver agency swaps in the agency fields and its title');
+    await beta.fill('#apply-agency', 'Tricity Drivers');
+    await beta.fill('#apply-name', 'Gurpreet Kaur');
     await beta.fill('#apply-phone', '9811122233');
-    await beta.fill('#rb-city-or-base', 'Panchkula');
+    await beta.fill('#apply-city', 'Panchkula');
     await applyDialog.getByText('6–20', { exact: true }).click();
-    await beta.fill('#rb-work-email-\\(optional\\)', 'ops@tricitydrivers.in');
-    await beta.fill('#rb-gstin-\\(optional\\)', '03ABCDE1234F1Z');
-    await beta.getByRole('button', { name: 'Send Application' }).click();
-    await applyDialog.locator('.rb-error-msg').first().waitFor({ timeout: 10000 }).catch(() => {}); // the Worker's answer
+    await beta.fill('#apply-email', 'ops@tricitydrivers.in');
+    await beta.fill('#apply-gstin', '03ABCDE1234F1Z');
+    await beta.locator('#apply-email').click(); // leaving the GSTIN says what is wrong with it (and moves the form down a line)
+    await beta.locator('#apply-consent').check();
     const gErr = await applyDialog.locator('.rb-error-msg').allTextContents();
-    check(gErr.join() === 'Enter the 15-character GSTIN, or leave it blank.', `agency: a GSTIN a character short is refused (${gErr.join(' | ')})`);
-    await beta.fill('#rb-gstin-\\(optional\\)', '03ABCDE1234F1Z5');
-    await beta.getByRole('button', { name: 'Send Application' }).click();
-    check(!!(await beta.waitForSelector('#apply-code', { timeout: 10000 }).catch(() => null)), 'agency application: a code goes to the number');
-    await enterCode(beta, applyDialog, '#apply-code', '+919811122233');
-    check(await beta.waitForSelector('text=Application received. One call or message when onboarding opens.', { timeout: 10000 }).then(() => true).catch(() => false), 'agency application: received with the code');
+    check(gErr.join() === HI.err.gstin && await applyDialog.getByRole('button', { name: HI.getOtp }).isDisabled(),
+      `agency: a GSTIN a character short is flagged as it is left, in Hindi, and Get OTP stays greyed (${gErr.join(' | ')})`);
+    const agConsent = (await applyDialog.locator('label:has(#apply-consent)').textContent()).replace(/\s+/g, ' ').trim();
+    check(agConsent === `${HI.consentAg} ${HI.agreeA} ${HI.privacy} ${HI.and} ${HI.terms}${HI.agreeB}`, `the agency's consent, in Hindi ("${agConsent}")`);
+    await beta.fill('#apply-gstin', '03ABCDE1234F1Z5');
+    await applyDialog.getByRole('button', { name: HI.getOtp }).click();
+    check(!!(await beta.waitForSelector('#apply-code', { timeout: 10000 }).catch(() => null)) && await applyDialog.getByText(HI.codeSent('233')).count() === 1,
+      `agency application: a code goes to the number ("${HI.codeSent('233')}")`);
+    await enterCode(beta, applyDialog, '#apply-code', '+919811122233', false, HI.verifyAg);
+    check(await applyDialog.getByText(HI.sentAg).waitFor({ timeout: 10000 }).then(() => true).catch(() => false), `B03: the agency's own confirmation ("${HI.sentAg}")`);
+    await beta.screenshot({ path: path.join(SHOTS, 'contact-agency-sent.png') });
     const aRow = (await download(dev, 'agencies')).at(-1) || [];
-    check(aRow.slice(2, 10).join('; ') === 'Tricity Drivers; Gurpreet Kaur; +919811122233; Panchkula; 6–20; ops@tricitydrivers.in; 03ABCDE1234F1Z5; Yes', `agency application: row saved in agencies.csv, phone verified (${aRow.slice(2, 10).join('; ')})`);
-    await beta.getByRole('button', { name: 'Done' }).click();
-    // The footer's "Become a Buddy" opens the form in place.
-    await beta.locator('footer').getByRole('link', { name: 'Become a Buddy' }).click();
-    check(await beta.getByRole('dialog').waitFor({ timeout: 5000 }).then(() => true).catch(() => false) && new URL(beta.url()).pathname === '/contact/', 'the footer\'s "Become a Buddy" opens the form in place');
+    check(aRow.slice(2, 13).join('; ') === `Tricity Drivers; Gurpreet Kaur; +919811122233; Panchkula; 6–20; ops@tricitydrivers.in; 03ABCDE1234F1Z5; Yes; Yes; ${CONSENT_VERSION}; Hindi`,
+      `agency application: saved in agencies.csv with the verified phone, the consent, its version and the language (${aRow.slice(2, 13).join('; ')})`);
+    await beta.getByRole('button', { name: HI.done }).click();
+    // The footer's "Buddy बनें" opens the form in place.
+    await beta.locator('footer').getByRole('link', { name: HI.footerLink }).click();
+    check(await beta.getByRole('dialog').waitFor({ timeout: 5000 }).then(() => true).catch(() => false) && new URL(beta.url()).pathname === '/contact/',
+      `the footer's "${HI.footerLink}" opens the form in place`);
     await beta.keyboard.press('Escape');
+    // Leaving sends what the page still holds for the analytics (a closed tab never says goodbye).
+    await beta.goto('about:blank');
     await beta.close();
+
+    // DS03: the city pages. One layout; each city's own copy, trips, tips and pickups (src/cities/cities.mjs); the trips'
+    // distances, drive times and "From" fares from what Google gave the live estimator (routes.json) and the fare engine.
+    const measured = measuredRoutes(JSON.parse(readFileSync(path.join(HERE, '..', 'src', 'cities', 'routes.json'), 'utf8')));
+    const cityPage = await ctx.newPage();
+    cityPage.on('pageerror', (e) => errors.push('PAGEERROR city ' + String(e).slice(0, 200)));
+    cityPage.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 200)); });
+    const texts = (sel) => cityPage.$$eval(sel, (els) => els.map((e) => e.textContent.replace(/\s+/g, ' ').trim()));
+    for (const c of CITIES) {
+      const copy = CITY_PAGES[c.slug];
+      await cityPage.goto(`${ORIGIN}/${c.slug}/`, { waitUntil: 'networkidle' });
+      await cityPage.waitForSelector('header select', { timeout: 30000 });
+      const want = cityRoutes(c.slug, measured);
+      const cards = await cityPage.$$eval('.rb-route', (as) => as.map((a) => [
+        a.querySelector('.rb-route__name').textContent, a.querySelector('.rb-route__type').textContent, a.querySelector('.rb-route__meta').textContent,
+        a.querySelector('.rb-route__from').textContent, a.querySelector('.rb-route__line').textContent, a.getAttribute('href'), a.getAttribute('aria-label')].join(' | ')));
+      const wantCards = want.map((r) => [r.dest, r.type, r.meta, `From ${r.from}`, r.line, r.href, r.aria].join(' | '));
+      check(JSON.stringify(cards) === JSON.stringify(wantCards), `${c.name}: the four trips, measured and priced (${want.map((r) => `${r.dest} ${r.meta.replace(' · ', ', ')} from ${r.from}`).join('; ')})`);
+      const tips = await cityPage.$$eval('.rb-tip', (as) => as.map((a) => `${a.querySelector('h3').textContent} | ${a.querySelector('p').textContent} | ${a.getAttribute('href')}`));
+      check(JSON.stringify(tips) === JSON.stringify(cityTips(c.slug, measured).map((t) => `${t.title} | ${t.body} | ${t.href}`)), `${c.name}: the tips, their drive times filled in, each linked to its trip`);
+      const head = {
+        title: await cityPage.title(),
+        h1: (await cityPage.locator('h1').textContent()).trim(),
+        canonical: await cityPage.getAttribute('link[rel="canonical"]', 'href'),
+        crumbs: (await texts('.rb-crumbs li')).join(' '),
+        home: await cityPage.getAttribute('.rb-crumbs a', 'href'),
+        chips: (await texts('.rb-localities li')).join(','),
+        nearby: await cityPage.$$eval('.rb-nearby a', (as) => as.map((a) => a.getAttribute('href')).join(',')),
+        city: await cityPage.inputValue('header select'),
+        band: (await cityPage.locator('.rb-buddyband h2').textContent()).trim(),
+        terms: await cityPage.getAttribute('.rb-farenote a', 'href'),
+        estimate: await cityPage.getAttribute('.rb-cityhero__ctas a', 'href'),
+        beta: await cityPage.locator('header .rb-beta').count(),
+      };
+      const wantHead = {
+        title: cityTitle(c.slug), h1: copy.h1, canonical: `https://ridebuddy.co.in/${c.slug}/`, crumbs: `Home › ${copy.name}`, home: '/beta/',
+        chips: copy.localities.join(','), nearby: copy.nearby.map((n) => `/${n}/`).join(','), city: c.slug, band: HI.bandTitle,
+        terms: '/terms/', estimate: `/estimate/?city=${c.slug}`, beta: 1,
+      };
+      const off = Object.keys(wantHead).filter((k) => head[k] !== wantHead[k]);
+      check(!off.length, `${c.name}: "${head.title}", its own h1, canonical, breadcrumb, pickups, nearby areas, its name in the city menu, the beta tag, the Buddy band in Hindi${off.length ? ` — differs in ${off.map((k) => `${k}: ${JSON.stringify(head[k])} vs ${JSON.stringify(wantHead[k])}`).join('; ')}` : ''}`);
+      if (c.slug === 'chandigarh') await cityPage.screenshot({ path: path.join(SHOTS, 'city-chandigarh.png'), fullPage: true });
+    }
+    // Each page's text is its own: no city's page reads like another's (not doorway pages).
+    const leads = await Promise.all(CITIES.map(async (c) => (await (await fetch(`${dev.base}/${c.slug}/`)).text()).match(/<p class="rb-cityhero__intro">([^<]+)</)?.[1]));
+    check(new Set(leads).size === CITIES.length && leads.every(Boolean), 'each city page has its own intro');
+    // The city menu goes to the city chosen, and says so to the analytics.
+    await cityPage.goto(`${ORIGIN}/chandigarh/`, { waitUntil: 'networkidle' });
+    await cityPage.waitForSelector('header select', { timeout: 30000 });
+    await cityPage.selectOption('header select', 'mohali');
+    await cityPage.waitForURL('**/mohali/', { timeout: 15000 }).catch(() => {});
+    check(new URL(cityPage.url()).pathname === '/mohali/' && await cityPage.inputValue('header select') === 'mohali', `the city menu goes to the city chosen (${new URL(cityPage.url()).pathname})`);
+    // Other spellings of an address: the city's page, for good.
+    await cityPage.goto(`${ORIGIN}/New-Chandigarh`, { waitUntil: 'load' });
+    check(new URL(cityPage.url()).pathname === '/new-chandigarh/' && (await cityPage.locator('h1').textContent()).includes('New Chandigarh'), `/New-Chandigarh opens /new-chandigarh/ (${new URL(cityPage.url()).pathname})`);
+    // The footer's Cities: Chandigarh, Mohali and Panchkula; the nearby areas only in the city menu (DS02).
+    const cityFoot = await cityPage.$$eval('footer nav[aria-label="Cities"] a', (as) => as.map((a) => `${a.textContent}=${a.getAttribute('href')}`).join(', '));
+    check(cityFoot === 'Chandigarh=/chandigarh/, Mohali=/mohali/, Panchkula=/panchkula/', `DS02: the footer's Cities column (${cityFoot})`);
+    // A phone: the menu beside the logomark (the wordmark makes room), and no sideways scrolling.
+    await cityPage.setViewportSize({ width: 360, height: 800 });
+    await cityPage.goto(`${ORIGIN}/new-chandigarh/`, { waitUntil: 'networkidle' });
+    await cityPage.waitForSelector('header select', { timeout: 30000 });
+    const cityNarrow = await cityPage.evaluate(() => ({
+      wide: document.documentElement.scrollWidth,
+      word: getComputedStyle(document.querySelector('header .rb-brand__word')).display,
+      select: Math.round(document.querySelector('header select').getBoundingClientRect().height),
+      text: document.querySelector('header select').selectedOptions[0].textContent,
+    }));
+    check(cityNarrow.wide <= 360 && cityNarrow.word === "none" && cityNarrow.select >= 44 && cityNarrow.text === "New Chandigarh",
+      `at 360px: no sideways scrolling (${cityNarrow.wide}px), the wordmark makes room, the 44px city menu reads "${cityNarrow.text}"`);
+    await cityPage.screenshot({ path: path.join(SHOTS, 'city-new-chandigarh-phone.png'), fullPage: true });
+    await cityPage.setViewportSize({ width: 1280, height: 1000 });
+
+    // A trip card opens the estimator on that trip: its type, the city's pickup point and the destination, looked up
+    // with Google as the visitor's own choice would be; the dates the visitor's to pick. At 9 AM its fare is the card's.
+    await cityPage.goto(`${ORIGIN}/chandigarh/`, { waitUntil: 'networkidle' });
+    const delhi = cityRoutes('chandigarh', measured).find((r) => r.id === 'delhi');
+    await cityPage.locator('.rb-route', { hasText: 'Delhi' }).click();
+    await cityPage.waitForURL('**/estimate/**', { timeout: 15000 }).catch(() => {});
+    await cityPage.waitForSelector('#rb-destination', { timeout: 30000 });
+    await cityPage.waitForFunction(() => !document.querySelector('.rb-place__busy'), null, { timeout: 30000 }).catch(() => {});
+    const linked = {
+      url: new URL(cityPage.url()).search,
+      pickup: await cityPage.inputValue('#rb-pickup'),
+      dest: await cityPage.inputValue('#rb-destination'),
+      oneWay: await cityPage.getAttribute('[data-rb-trip="one"]', 'aria-pressed'),
+      date: await cityPage.inputValue('#rb-pickup-date'),
+      hint: await cityPage.locator('.rb-hint').textContent().catch(() => ''),
+      off: await cityPage.getByRole('button', { name: 'Get Estimate' }).isDisabled(),
+    };
+    check(linked.url === delhi.href.slice('/estimate/'.length) && linked.pickup === 'Sector 17, Chandigarh' && /^Delhi/.test(linked.dest) && linked.oneWay === 'true'
+      && linked.date === '' && linked.off && linked.hint === 'Pick the pickup date.',
+      `a card opens the estimator on its trip: One Way, "${linked.pickup}" → "${linked.dest}", no date yet (${linked.hint})`);
+    await cityPage.fill('#rb-pickup-date', istDay(14));
+    await setTime(cityPage, '09:00');
+    const fromCard = await estimateAndCompare(cityPage, 'Chandigarh → Delhi, from the city page');
+    const cardFare = (await cityPage.locator('[data-testid="fare-estimate"]').textContent()).trim();
+    check(cardFare === delhi.from, `…and at 9 AM its fare is the card's "From ${delhi.from}" (${cardFare}, ${fromCard.inputs.distanceKm.toFixed(1)} km)`);
+    const routeHead = (await cityPage.locator('.rb-result__route').textContent()).trim();
+    check(routeHead === 'Sector 17 → Delhi' && await cityPage.locator('.rb-tiles').count() === 1, `DS05: the result's heading is the route only ("${routeHead}"); the trip type and days are the sections under the map`);
+    await cityPage.screenshot({ path: path.join(SHOTS, 'city-to-estimate.png'), fullPage: true });
+    // Leaving sends what the page still holds for the analytics (a closed tab never says goodbye).
+    await cityPage.goto('about:blank');
+    await cityPage.close();
 
     // The standalone pages wear the main site's header: same parts in the same
     // places as /beta/'s, at desktop and phone widths, open menu included; only
@@ -971,6 +1138,15 @@ async function main() {
     const leaks = ['98708', '71324', '7911', '98111', '81112', 'Voiku', 'VNS8893', 'Gurpreet', 'Tricity Drivers', 'tricitydrivers', '03ABCDE', 'usually pay', pinned, pinned.split(',').slice(0, 2).join(','), ...codes].filter((x) => x && stored.includes(x));
     check(stored.includes('estimate_completed') && codes.length >= 6 && !leaks.length,
       `analytics store no phone numbers, one-time codes, names, licences, agency details, comments or addresses (${leaks.join(', ') || 'none found'})`);
+    // The new moments (website changes v2): the city menu, the Buddy language, the language an application was sent in, the city page a trip came from.
+    const storedEvents = stored.split('\n').filter(Boolean).flatMap((l) => JSON.parse(l));
+    const eventsNamed = (n) => storedEvents.filter((e) => e.n === n);
+    const buddyLangs = eventsNamed('buddy_language_changed').map((e) => e.d?.language).sort().join();
+    const buddySent = eventsNamed('buddy_interest_submitted').map((e) => `${e.d?.type}:${e.d?.language}`).sort().join();
+    const citySwitched = eventsNamed('city_switched').map((e) => `${e.d?.from}→${e.d?.to}`).join();
+    const openedFrom = eventsNamed('estimator_opened').filter((e) => e.d?.city).map((e) => `${e.d.city}:${e.d.entry}`).join();
+    check(buddyLangs === 'en,hi' && buddySent === 'agency:hi,individual:en' && citySwitched === 'chandigarh→mohali' && openedFrom === 'chandigarh:one',
+      `analytics: buddy_language_changed (${buddyLangs}), buddy_interest_submitted with its language (${buddySent}), city_switched (${citySwitched}), estimator_opened from a city page (${openedFrom})`);
 
     if (blocked.length) console.log(`  note: ${new Set(blocked).size} host path(s) unreachable from this sandbox and aborted: ${[...new Set(blocked.map((u) => new URL(u).host))].join(', ')}`);
     // Through the sandbox proxy, Google's abuse detection answers some batched
@@ -994,7 +1170,7 @@ async function main() {
 
     // Every page: Indian English, its own title and description, a canonical address on the bare domain, the sharing image.
     const heads = [];
-    for (const url of ['/', '/estimate/', '/about/', '/contact/']) {
+    for (const url of ['/', '/estimate/', '/about/', '/contact/', ...CITIES.map((c) => `/${c.slug}/`)]) {
       const html = await (await fetch(`${dev.base}${url}`)).text();
       const title = html.match(/<title>([^<]+)<\/title>/)?.[1];
       const desc = html.match(/<meta name="description" content="([^"]+)"/)?.[1];
@@ -1009,6 +1185,7 @@ async function main() {
     }
     // The legal pages (W09): placeholders until Legal's text, out of search results and the sitemap meanwhile.
     const sitemap = await (await fetch(`${dev.base}/sitemap.xml`)).text();
+    check(CITIES.every((c) => sitemap.includes(`<loc>https://ridebuddy.co.in/${c.slug}/</loc>`)), 'DS03: the six city pages are in the sitemap');
     for (const [url, h1] of [['/privacy/', 'Privacy Policy'], ['/terms/', 'Terms of Use'], ['/buddy/terms/', 'Buddy Terms of Use']]) {
       const res = await fetch(`${dev.base}${url}`);
       const html = await res.text();

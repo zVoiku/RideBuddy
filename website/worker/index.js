@@ -11,10 +11,13 @@
  *                        one-time code, sent through 2Factor)
  *   POST /api/e          the site's own analytics (src/site.js)      analytics.js
  *   GET  /admin …        lists, analytics, downloads, behind a password  admin.js
+ *   GET  /Chandigarh …   a city page's address spelt another way: 301 to its page
+ *                        (/chandigarh/; src/cities/list.mjs)
  *
  * Nothing is emailed: the lists and the analytics live in D1 (binding DB).
  * The tables create themselves on first use. See website/README.md.
  */
+import { cityFromPath } from '../src/cities/list.mjs';
 import { handleAdmin } from './admin.js';
 import { ingest } from './analytics.js';
 import { handleForm } from './forms.js';
@@ -36,6 +39,11 @@ export default {
     } catch (e) {
       console.error('worker error', e?.stack || e);
       return path.startsWith('/api/') ? json(500, { ok: false, error: SAVE_FAILED }) : plain(500, 'Something went wrong.');
+    }
+    // /Chandigarh, /new_chandigarh, /NewChandigarh/ …: the city page, for good. The query (a campaign's tags) goes along.
+    const city = (request.method === 'GET' || request.method === 'HEAD') && cityFromPath(url.pathname);
+    if (city && url.pathname !== `/${city}/`) {
+      return new Response(null, { status: 301, headers: { Location: `/${city}/${url.search}`, 'Cache-Control': 'public, max-age=3600' } });
     }
     return env.ASSETS.fetch(request);
   },

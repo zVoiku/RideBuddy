@@ -24,6 +24,24 @@
 /buddy/terms/
   Cache-Control: no-cache
 
+/chandigarh/
+  Cache-Control: no-cache
+
+/mohali/
+  Cache-Control: no-cache
+
+/panchkula/
+  Cache-Control: no-cache
+
+/zirakpur/
+  Cache-Control: no-cache
+
+/kharar/
+  Cache-Control: no-cache
+
+/new-chandigarh/
+  Cache-Control: no-cache
+
 /beta/
   Cache-Control: no-cache
 

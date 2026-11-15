@@ -6,8 +6,12 @@
  * thin marks with 4px rounded ends, hairline grid, values in text colours, the
  * hover detail repeated in a table. Light only, like the rest of the site.
  */
+import { CITIES } from '../src/cities/list.mjs';
 import { escapeHtml as h, groupINR } from './lib.js';
 import { DIRECT, WEEKDAYS } from './stats.js';
+
+/** The most days the events download covers at a time (admin.js events.csv). */
+export const EVENT_DAYS_MAX = 31;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS3 = WEEKDAYS.map((d) => d.slice(0, 3));
@@ -132,6 +136,7 @@ const card = (title, sub, body, { id = '', wide = false } = {}) => `
 const pageName = (p) => ({
   '/': 'Holding page (/)', '/beta/': 'Home (/beta/)', '/estimate/': 'Estimate', '/about/': 'About', '/contact/': 'Contact',
   '/contact/#apply': 'Apply to be a Buddy (link)',
+  ...Object.fromEntries(CITIES.map((c) => [`/${c.slug}/`, c.name])),
   // Before About, Contact and the Buddy form had pages of their own.
   '/beta/#how-it-works': 'How It Works', '/beta/#about': 'About (on /beta/)', '/beta/#contact': 'Contact (on /beta/)',
   '/beta/#apply': 'Apply to be a Buddy (/beta/ link)',
@@ -145,7 +150,8 @@ const FARES = ['Under ₹1,000', '₹1,000–1,999', '₹2,000–4,999', '₹5,0
 const HOURS = ['Before 6 am', 'Morning, 6–12', 'Afternoon, 12–5 pm', 'Evening, 5–10 pm', 'Night, after 10 pm'];
 const WEEK = [...WEEKDAYS.slice(1), WEEKDAYS[0]];
 export const LINK_PAGES = [
-  ['/beta/', 'Home'], ['/estimate/', 'Estimate'], ['/contact/#apply', 'Apply to be a Buddy'], ['/about/', 'About'], ['/contact/', 'Contact'], ['/', 'Holding page'],
+  ['/beta/', 'Home'], ['/estimate/', 'Estimate'], ['/contact/#apply', 'Apply to be a Buddy'], ['/about/', 'About'], ['/contact/', 'Contact'],
+  ...CITIES.map((c) => [`/${c.slug}/`, c.name]), ['/', 'Holding page'],
 ];
 
 /**
@@ -327,6 +333,9 @@ export function renderDashboard(v) {
     ${card('Downloads', '', `<p><a class="btn ghost" href="/admin/daily.csv">Daily numbers (CSV)</a></p>
       <p class="note">One row a day since the first visit: visitors, page views, fares shown, waitlist signups, Buddy and agency applications.
       Detailed visit records are kept 13 months; the daily numbers are kept for good.</p>
+      <p><a class="btn ghost" href="/admin/events.csv?days=${Math.min(range.days, EVENT_DAYS_MAX)}">Every event, ${range.days === 1 ? 'today' : `last ${Math.min(range.days, EVENT_DAYS_MAX)} days`} (CSV)</a></p>
+      <p class="note">One row per page view, click and named event, as stored: when, the page, what was clicked, the event's details,
+      the session and visitor IDs, and how that visitor first arrived (the UTM tags, the referring site, the landing page). Up to ${EVENT_DAYS_MAX} days at a time.</p>
       <p class="note">To delete a list entry: Cloudflare → Storage &amp; databases → D1 → <b>ridebuddy</b> → Console, then
       <code>DELETE FROM waitlist WHERE id = 17;</code> (or <code>buddies</code>, <code>agencies</code>), using the ID column of the download.</p>`)}
   </div>`;

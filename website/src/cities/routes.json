@@ -1,0 +1,162 @@
+{
+  "_about": "What Google gave each city page trip, one way, from the city's pickup point (src/cities/cities.mjs): road distance in metres, drive time in seconds, and the places the link's words were taken as. Written by test/measure-routes.mjs; the build turns it into the cards' distances, drive times and \"From\" fares.",
+  "measured": "2026-11-15",
+  "routes": {
+    "chandigarh": {
+      "shimla": {
+        "metres": 113739,
+        "seconds": 11789,
+        "pickup": "Sector 17, Chandigarh",
+        "destination": "Shimla, Himachal Pradesh"
+      },
+      "kasauli": {
+        "metres": 57763,
+        "seconds": 6724,
+        "pickup": "Sector 17, Chandigarh",
+        "destination": "Kasauli, Himachal Pradesh"
+      },
+      "manali": {
+        "metres": 263205,
+        "seconds": 20272,
+        "pickup": "Sector 17, Chandigarh",
+        "destination": "Manali, Himachal Pradesh"
+      },
+      "delhi": {
+        "metres": 246054,
+        "seconds": 15906,
+        "pickup": "Sector 17, Chandigarh",
+        "destination": "Delhi"
+      }
+    },
+    "mohali": {
+      "shimla": {
+        "metres": 120061,
+        "seconds": 12629,
+        "pickup": "Phase 7, Sector 61, Mohali, Punjab",
+        "destination": "Shimla, Himachal Pradesh"
+      },
+      "amritsar": {
+        "metres": 222827,
+        "seconds": 13889,
+        "pickup": "Phase 7, Sector 61, Mohali, Punjab",
+        "destination": "Amritsar, Punjab"
+      },
+      "dharamshala": {
+        "metres": 232382,
+        "seconds": 18902,
+        "pickup": "Phase 7, Sector 61, Mohali, Punjab",
+        "destination": "Dharamshala, Himachal Pradesh"
+      },
+      "delhi": {
+        "metres": 245369,
+        "seconds": 15975,
+        "pickup": "Phase 7, Sector 61, Mohali, Punjab",
+        "destination": "Delhi"
+      }
+    },
+    "panchkula": {
+      "shimla": {
+        "metres": 104865,
+        "seconds": 10465,
+        "pickup": "Sector 5, Panchkula, Ambala Division, Haryana",
+        "destination": "Shimla, Himachal Pradesh"
+      },
+      "kasauli": {
+        "metres": 48889,
+        "seconds": 5401,
+        "pickup": "Sector 5, Panchkula, Ambala Division, Haryana",
+        "destination": "Kasauli, Himachal Pradesh"
+      },
+      "mussoorie": {
+        "metres": 191715,
+        "seconds": 16933,
+        "pickup": "Sector 5, Panchkula, Ambala Division, Haryana",
+        "destination": "Mussoorie, Uttarakhand"
+      },
+      "delhi": {
+        "metres": 241426,
+        "seconds": 15147,
+        "pickup": "Sector 5, Panchkula, Ambala Division, Haryana",
+        "destination": "Delhi"
+      }
+    },
+    "zirakpur": {
+      "delhi": {
+        "metres": 232721,
+        "seconds": 14516,
+        "pickup": "VIP Road, Zirakpur, Punjab",
+        "destination": "Delhi"
+      },
+      "shimla": {
+        "metres": 113217,
+        "seconds": 11382,
+        "pickup": "VIP Road, Zirakpur, Punjab",
+        "destination": "Shimla, Himachal Pradesh"
+      },
+      "rishikesh": {
+        "metres": 196917,
+        "seconds": 16641,
+        "pickup": "VIP Road, Zirakpur, Punjab",
+        "destination": "Rishikesh, Uttarakhand"
+      },
+      "manali": {
+        "metres": 280860,
+        "seconds": 20784,
+        "pickup": "VIP Road, Zirakpur, Punjab",
+        "destination": "Manali, Himachal Pradesh"
+      }
+    },
+    "kharar": {
+      "manali": {
+        "metres": 251912,
+        "seconds": 19386,
+        "pickup": "Sunny Enclave, Kharar, Punjab",
+        "destination": "Manali, Himachal Pradesh"
+      },
+      "dalhousie": {
+        "metres": 326064,
+        "seconds": 24508,
+        "pickup": "Sunny Enclave, Kharar, Punjab",
+        "destination": "Dalhousie, Himachal Pradesh"
+      },
+      "amritsar": {
+        "metres": 215499,
+        "seconds": 13372,
+        "pickup": "Sunny Enclave, Kharar, Punjab",
+        "destination": "Amritsar, Punjab"
+      },
+      "shimla": {
+        "metres": 129244,
+        "seconds": 13624,
+        "pickup": "Sunny Enclave, Kharar, Punjab",
+        "destination": "Shimla, Himachal Pradesh"
+      }
+    },
+    "new-chandigarh": {
+      "manali": {
+        "metres": 255021,
+        "seconds": 19683,
+        "pickup": "Mullanpur Garibdass, Punjab",
+        "destination": "Manali, Himachal Pradesh"
+      },
+      "dharamshala": {
+        "metres": 228163,
+        "seconds": 18688,
+        "pickup": "Mullanpur Garibdass, Punjab",
+        "destination": "Dharamshala, Himachal Pradesh"
+      },
+      "kasauli": {
+        "metres": 65554,
+        "seconds": 7701,
+        "pickup": "Mullanpur Garibdass, Punjab",
+        "destination": "Kasauli, Himachal Pradesh"
+      },
+      "delhi": {
+        "metres": 255572,
+        "seconds": 17092,
+        "pickup": "Mullanpur Garibdass, Punjab",
+        "destination": "Delhi"
+      }
+    }
+  }
+}

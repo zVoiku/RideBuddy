@@ -4,6 +4,7 @@
  * /admin shows. No bindings and no I/O: test/worker.mjs runs them under Node,
  * the SQL against Node's own SQLite.
  */
+import { CITIES } from '../src/cities/list.mjs';
 import { cleanText } from './lib.js';
 
 // ----- What the browser may send ------------------------------------------------------
@@ -162,7 +163,10 @@ export const SLOW_MS = 4000;
 const JOINED_FROM = {
   estimate: 'Under an estimate', contact: 'Contact page', home: 'Home page', how: 'How It Works page', about: 'About page',
 };
-const HERO_PAGES = [[/^\/contact\//, 'Contact page'], [/^\/about\//, 'About page'], [/^\/(beta\/)?(#|$)/, 'Home page']];
+const HERO_PAGES = [
+  [/^\/contact\//, 'Contact page'], [/^\/about\//, 'About page'], [/^\/(beta\/)?(#|$)/, 'Home page'],
+  ...CITIES.map((c) => [new RegExp(`^/${c.slug}/`), `${c.name} page`]),
+];
 function joinedFrom(source, page) {
   if (source !== 'hero') return JOINED_FROM[source] || 'Other';
   const hit = HERO_PAGES.find(([re]) => re.test(page || ''));

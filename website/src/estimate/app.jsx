@@ -17,6 +17,7 @@ import {
   postForm, TERMS, track, useCodeForm, WAITLIST_JOINED,
 } from '../shared/ui.jsx';
 import { SiteHeader } from '../shared/header.jsx';
+import { initBuddyLang } from '../shared/buddy.mjs';
 
 const { useState, useEffect, useRef } = React;
 
@@ -65,9 +66,6 @@ function tripParts(result) {
   const d = result.trip_days;
   return [result.labels.round ? 'Round Trip' : 'One Way', `${d} day${d === 1 ? '' : 's'}`];
 }
-
-/** "Round Trip · 2 days": the same, in one line under the route. */
-const tripDetail = (result) => tripParts(result).join(' · ');
 
 /** What the Worker words into the Trip column, plus the fare, which has its own. */
 function tripOf(result) {
@@ -262,9 +260,10 @@ function PlaceField({ label, icon, placeholder, kind, trip, value, onChange, onS
   const box = useRef(null);
 
   // Debounced suggestions, min two characters, one Places session per field
-  // interaction (the session closes when a place is chosen).
+  // interaction (the session closes when a place is chosen). Not while a
+  // link's place is being looked up (`prefill`).
   useEffect(() => {
-    if (value.place || !value.text || value.text.trim().length < 2) { setItems([]); return undefined; }
+    if (value.place || value.prefill || !value.text || value.text.trim().length < 2) { setItems([]); return undefined; }
     let cancelled = false;
     const t = setTimeout(async () => {
       setBusy(true);
@@ -279,7 +278,7 @@ function PlaceField({ label, icon, placeholder, kind, trip, value, onChange, onS
       }
     }, 250);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [value.text, value.place, kind]);
+  }, [value.text, value.place, value.prefill, kind]);
 
   useEffect(() => {
     const close = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
@@ -315,7 +314,7 @@ function PlaceField({ label, icon, placeholder, kind, trip, value, onChange, onS
       <Input label={label} icon={icon} placeholder={placeholder} value={value.text} error={error || undefined}
         onChange={(e) => onChange(e.target.value)} onFocus={() => items.length && setOpen(true)}
         autoComplete="off" disabled={disabled} />
-      {busy && <span className="rb-place__busy" aria-hidden="true" />}
+      {(busy || value.prefill) && <span className="rb-place__busy" aria-hidden="true" />}
       {onOpenMap && (
         <button type="button" className="rb-place__map" onClick={() => { setOpen(false); onOpenMap(); }}
           title="Pick the exact point on a map" aria-label={`Pick ${label.toLowerCase()} on a map`}>
@@ -584,14 +583,26 @@ function RouteMap({ route, pickup, joined }) {
 
 // ----- The page ------------------------------------------------------------------
 
-const PRESET = new URLSearchParams(window.location.search).get('type');
+const PARAMS = new URLSearchParams(window.location.search);
+const PRESET = PARAMS.get('type');
+/**
+ * A trip a link opens with (a city page's cards and tips, src/cities): the
+ * pickup and destination in words (?from=Sector 17, Chandigarh&to=Shimla),
+ * looked up as the page opens (maps.findPlace), and the city page it came from
+ * (?city=chandigarh), for the analytics. The dates stay the visitor's to pick.
+ */
+const linked = (k) => (PARAMS.get(k) || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+const PREFILL = { pickup: linked('from'), destination: linked('to') };
+const FROM_CITY = /^[a-z][a-z-]{1,30}$/.test(PARAMS.get('city') || '') ? PARAMS.get('city') : '';
+/** A field's starting value: empty, or a link's place, still to be looked up. */
+const startField = (text) => ({ text, place: null, prefill: !!text });
 // The furthest ahead a trip can be priced: today + 180 days.
 const MAX_DAYS_AHEAD = 180;
 
 function App() {
   const [tripType, setTripType] = useState(['round', 'one'].includes(PRESET) ? PRESET : 'round');
-  const [pickup, setPickup] = useState({ text: '', place: null });
-  const [destination, setDestination] = useState({ text: '', place: null });
+  const [pickup, setPickup] = useState(() => startField(PREFILL.pickup));
+  const [destination, setDestination] = useState(() => startField(PREFILL.destination));
   // No date until the visitor picks one (PRD D2, audit W06): band 3 counts the date they chose.
   const [departDate, setDepartDate] = useState('');
   const [returnDate, setReturnDate] = useState('');
@@ -617,7 +628,7 @@ function App() {
   // Place details resolve asynchronously after a suggestion is chosen; the
   // estimate must not run against a half-selected field.
   const [busyFields, setBusyFields] = useState({});
-  const resolving = Object.values(busyFields).some(Boolean);
+  const resolving = Object.values(busyFields).some(Boolean) || !!pickup.prefill || !!destination.prefill;
   // Which field, if any, is currently choosing a point on the map.
   const [picker, setPicker] = useState(null);
   // Analytics: the first time the visitor touches the form, and maps failing (once each).
@@ -637,8 +648,20 @@ function App() {
   const multiDay = isRound && !!departDate && !!returnDate && returnDate > departDate;
 
   useEffect(() => {
-    // How the visitor arrived: a trip-type deep link (/estimate/?type=round, ?type=one) or directly.
-    track('estimator_opened', { entry: ['round', 'one'].includes(PRESET) ? PRESET : 'direct' });
+    // How the visitor arrived: a trip-type deep link (/estimate/?type=round, ?type=one) or directly,
+    // and from which city page, if one sent them (?city=).
+    track('estimator_opened', { entry: ['round', 'one'].includes(PRESET) ? PRESET : 'direct', ...(FROM_CITY ? { city: FROM_CITY } : {}) });
+    // A link's places, chosen as the visitor would choose them; one that can't
+    // be found stays as words in its field, for the visitor to pick from the
+    // suggestions. A field typed into meanwhile keeps what was typed.
+    const fill = async (kind, text, set) => {
+      if (!text) return;
+      let place = null;
+      try { place = await maps.findPlace(text, kind); } catch (e) { place = null; }
+      set((v) => (v.prefill ? (place ? { text: place.description, place } : { text, place: null }) : v));
+    };
+    fill('pickup', PREFILL.pickup, setPickup);
+    fill('destination', PREFILL.destination, setDestination);
     const onFail = () => {
       setMapsDown(maps.REFUSAL.maps_failed);
       if (!mapsFailed.current) { mapsFailed.current = true; track('estimate_refused', { reason: 'maps_failed', trip: tripType }); }
@@ -821,9 +844,8 @@ function App() {
     return out;
   })() : [];
 
-  const routeLine = result
-    ? `${result.labels.pickup} → ${result.labels.destination} · ${tripDetail(result)}`
-    : '';
+  // The route only: the trip type and days are the sections under the map (DS05).
+  const routeLine = result ? `${result.labels.pickup} → ${result.labels.destination}` : '';
 
   return (
     <>
@@ -995,6 +1017,8 @@ function App() {
   );
 }
 
+// The footer's Buddy link in the visitor's Buddy language (shared/buddy.mjs).
+initBuddyLang();
 // The header's "Get an Estimate" stays on this page and brings back the form.
 ReactDOM.createRoot(document.getElementById('rb-header')).render(<SiteHeader onGetEstimate={() => window.dispatchEvent(new CustomEvent('rb-get-estimate'))} />);
 ReactDOM.createRoot(document.getElementById('app')).render(<App />);

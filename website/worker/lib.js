@@ -12,6 +12,7 @@ export const CONTACT_ERROR = 'Enter the contact person’s name.';
 export const EMAIL_ERROR = 'Enter a valid email address, or leave it blank.';
 export const GSTIN_ERROR = 'Enter the 15-character GSTIN, or leave it blank.';
 export const CONSENT_ERROR = 'Tick the box to join the waitlist.';
+export const BUDDY_CONSENT_ERROR = 'Tick the box to send your application.';
 export const LINK_ONLY_ERROR = 'Add a few words. Links alone aren’t saved.';
 
 // One-time codes (otp.js), worded as in the Phase 1 design.

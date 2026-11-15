@@ -61,7 +61,10 @@ export async function postForm(path, body) {
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.ok) return { ...data, ok: true };
     if (res.status === 202 && data.otp === 'sent') return { ok: false, otp: 'sent', sentTo: data.sentTo, resendIn: data.resendIn || 30, errors: {} };
-    return { ok: false, error: data.error || SAVE_ERROR[path] || 'Couldn’t save that. Try again.', errors: data.errors || {}, reason: data.reason || '' };
+    return {
+      ok: false, error: data.error || SAVE_ERROR[path] || 'Couldn’t save that. Try again.', errors: data.errors || {}, reason: data.reason || '',
+      status: res.status, resendIn: data.resendIn,
+    };
   } catch (e) {
     return { ok: false, error: NETWORK_ERROR, errors: {}, network: true };
   }
@@ -81,15 +84,15 @@ export function focusWhenReady(id, tries = 20) {
  * Mobile number with a fixed +91, as on every form of the site. Leaving the
  * field with a number that can't be right says so at once (`onError`).
  */
-export function PhoneField({ id, value, onChange, error, onError }) {
+export function PhoneField({ id, value, onChange, error, onError, label = 'Mobile number', placeholder = '10-digit mobile', invalid = PHONE_ERROR }) {
   return (
     <div className="rb-field">
-      <label className="rb-label" htmlFor={id}>Mobile number</label>
+      <label className="rb-label" htmlFor={id}>{label}</label>
       <div className={'rb-phone' + (error ? ' rb-phone--error' : '')}>
         <span className="rb-phone__cc" aria-hidden="true">+91</span>
-        <input id={id} type="tel" inputMode="numeric" autoComplete="tel-national" placeholder="10-digit mobile"
+        <input id={id} type="tel" inputMode="numeric" autoComplete="tel-national" placeholder={placeholder}
           value={value} onChange={(e) => onChange(tenDigits(e.target.value))}
-          onBlur={() => { if (onError && value && !MOBILE.test(value)) onError(PHONE_ERROR); }}
+          onBlur={() => { if (onError && value && !MOBILE.test(value)) onError(invalid); }}
           aria-invalid={error ? 'true' : undefined} aria-describedby={error ? `${id}-err` : undefined} />
       </div>
       {error && <span className="rb-error-msg" id={`${id}-err`} role="alert">{error}</span>}
@@ -108,6 +111,43 @@ export function CodeField({ id, value, onChange, error }) {
       <input id={id} className={'rb-code' + (error ? ' rb-code--error' : '')} type="text" inputMode="numeric" autoComplete="one-time-code"
         pattern="[0-9]*" placeholder="••••••" value={value} onChange={(e) => onChange(e.target.value.replace(/\D/g, '').slice(0, 6))}
         aria-invalid={error ? 'true' : undefined} aria-describedby={error ? `${id}-err` : undefined} />
+      {error && <span className="rb-error-msg" id={`${id}-err`} role="alert">{error}</span>}
+    </div>
+  );
+}
+
+/**
+ * The code as six boxes (the Buddy application, B02), drawn as the design
+ * system's OtpInput draws them. One real field lies over the six, so the code
+ * types in from the left box to the right, a pasted code or one filled in from
+ * the SMS ("From Messages", autocomplete="one-time-code") lands whole, and
+ * Backspace takes the last digit off — as every phone's keyboard expects.
+ */
+export function OtpBoxes({ id, value, onChange, error, label }) {
+  const [focused, setFocused] = useState(false);
+  // A tap anywhere on the boxes puts the caret after the last digit.
+  const toEnd = (e) => { const n = e.target.value.length; if (e.target.selectionStart === e.target.selectionEnd) e.target.setSelectionRange(n, n); };
+  const change = (typed) => {
+    const digits = typed.replace(/\D/g, '');
+    // A whole code arriving on digits already there (pasted, or the SMS suggestion): that code, not the two run together.
+    if (digits.startsWith(value) && digits.length - value.length >= 6) onChange(digits.slice(value.length, value.length + 6));
+    else onChange(digits.slice(0, 6));
+  };
+  return (
+    <div className="rb-field">
+      <label className="rb-label" htmlFor={id}>{label}</label>
+      <div className={'rb-otp' + (error ? ' rb-otp--error' : '')}>
+        <input id={id} className="rb-otp__field" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]*"
+          value={value} onChange={(e) => change(e.target.value)}
+          onFocus={(e) => { setFocused(true); toEnd(e); }} onBlur={() => setFocused(false)} onClick={toEnd}
+          aria-invalid={error ? 'true' : undefined} aria-describedby={error ? `${id}-err` : undefined} />
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <span key={i} aria-hidden="true"
+            className={'rb-otp__box' + (value[i] ? ' rb-otp--filled' : '') + (focused && i === Math.min(value.length, 5) ? ' rb-otp--at' : '')}>
+            {value[i] || ''}
+          </span>
+        ))}
+      </div>
       {error && <span className="rb-error-msg" id={`${id}-err`} role="alert">{error}</span>}
     </div>
   );
@@ -145,7 +185,7 @@ export const Honeypot = React.forwardRef((props, ref) => (
  * A pop-up: the dimmed page behind, Escape to close, the page held still while
  * it is open, and the focus moved into it and back to where it was.
  */
-export function Dialog({ label, labelledBy, onClose, children }) {
+export function Dialog({ label, labelledBy, onClose, lang, children }) {
   const box = useRef(null);
   const close = useRef(onClose);
   close.current = onClose;
@@ -163,7 +203,7 @@ export function Dialog({ label, labelledBy, onClose, children }) {
   }, []);
   return (
     <div className="rb-overlay">
-      <div ref={box} className="rb-dialog" role="dialog" aria-modal="true" aria-label={label} aria-labelledby={labelledBy} tabIndex={-1}>
+      <div ref={box} className="rb-dialog" role="dialog" aria-modal="true" aria-label={label} aria-labelledby={labelledBy} tabIndex={-1} lang={lang}>
         {children}
       </div>
     </div>
@@ -171,14 +211,15 @@ export function Dialog({ label, labelledBy, onClose, children }) {
 }
 
 /** A pop-up's title, line under it, and close button. */
-export function DialogHead({ id, title, sub, onClose }) {
+export function DialogHead({ id, title, sub, onClose, above = null, closeLabel = 'Close' }) {
   return (
     <div className="rb-dialog__head">
       <div>
+        {above}
         <h2 id={id}>{title}</h2>
         <p>{sub}</p>
       </div>
-      <button type="button" className="rb-dialog__close" aria-label="Close" onClick={onClose}><Icon d={CLOSE} size={20} /></button>
+      <button type="button" className="rb-dialog__close" aria-label={closeLabel} onClick={onClose}><Icon d={CLOSE} size={20} /></button>
     </div>
   );
 }
@@ -217,6 +258,8 @@ export function useCodeForm(path, codeId) {
   const [step, setStep] = useState('form');
   const [code, setCode] = useState('');
   const [codeError, setCodeError] = useState('');
+  // The failure behind codeError — reason, status, network — for a form that words it in its own language (apply.jsx).
+  const [codeFail, setCodeFail] = useState(null);
   const [sentTo, setSentTo] = useState('');
   const [resendAt, setResendAt] = useState(0);
   const [now, setNow] = useState(0);
@@ -237,6 +280,7 @@ export function useCodeForm(path, codeId) {
     const ids = { source, estimate_id: estimateId };
     setPending(withCode ? 'verify' : atCode ? 'resend' : 'form');
     setCodeError('');
+    setCodeFail(null);
     const r = await postForm(path, withCode ? { ...body, code: withCode } : body);
     setPending('');
     if (r.otp === 'sent') {
@@ -257,7 +301,7 @@ export function useCodeForm(path, codeId) {
       } else {
         track(r.errors.phone ? 'phone_invalid' : Object.keys(r.errors).length ? 'form_invalid' : 'save_failed', { form: formOf(source) });
       }
-      if (atCode) { setCodeError(r.errors.code || r.error); return null; }
+      if (atCode) { setCodeError(r.errors.code || r.error); setCodeFail(r); return null; }
       return r;
     }
     if (withCode) track('otp_verified', ids);
@@ -267,10 +311,10 @@ export function useCodeForm(path, codeId) {
   };
 
   return {
-    step, code, codeError, sentTo, sending, pending, submit, codeId,
+    step, code, codeError, codeFail, sentTo, sending, pending, submit, codeId,
     resendIn: Math.max(0, Math.ceil((resendAt - now) / 1000)),
-    setCode: (v) => { setCode(v); setCodeError(''); },
-    changeNumber: () => { setStep('form'); setCode(''); setCodeError(''); },
+    setCode: (v) => { setCode(v); setCodeError(''); setCodeFail(null); },
+    changeNumber: () => { setStep('form'); setCode(''); setCodeError(''); setCodeFail(null); },
   };
 }
 

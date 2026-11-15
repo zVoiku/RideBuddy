@@ -11,10 +11,12 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { startDev } from './dev-server.mjs';
 import {
-  CODE_EXPIRED, CODE_NETWORK_LIMIT, CODE_NUMBER_LIMIT, CODE_SEND_FAILED, CODE_TOO_MANY, CODE_WRONG, CONSENT_ERROR, EMAIL_ERROR,
+  BUDDY_CONSENT_ERROR, CODE_EXPIRED, CODE_NETWORK_LIMIT, CODE_NUMBER_LIMIT, CODE_SEND_FAILED, CODE_TOO_MANY, CODE_WRONG, CONSENT_ERROR, EMAIL_ERROR,
   GSTIN_ERROR, LINK_ONLY_ERROR, PHONE_ERROR, cleanComment, cleanText, csvCell, describeTrip, groupINR, isEmail, isGstin, istStamp,
   maskPhone, networkOf, normalizePhone, shiftDay, splitStoredTrip, toCsv, tripFare,
 } from '../worker/lib.js';
+import { CITIES, cityFromPath } from '../src/cities/list.mjs';
+import { PAGES } from '../worker/forms.js';
 import { startTwoFactorStub } from './twofactor-stub.mjs';
 import {
   DAY_SQL, DIRECT, aheadBand, cleanEvents, deviceOf, fareBand, isBot, sourceOf, speedBand, summarize,
@@ -125,6 +127,22 @@ function units() {
   same(cleanText('  Voiku \n\t Zavadschi\u0000 ', 100), 'Voiku Zavadschi', 'text: whitespace and control characters');
   same(cleanText('ab😀cd', 3), 'ab😀', 'text: capped by character, not UTF-16 unit');
   same([shiftDay('2026-09-26', 1), shiftDay('2026-03-01', -1), shiftDay('2026-12-31', 1)].join(' '), '2026-09-27 2026-02-28 2027-01-01', 'days move across month and year ends');
+}
+
+function cityUnits() {
+  console.log('\ncity pages');
+  for (const [p, want] of [
+    ['/Chandigarh', 'chandigarh'], ['/chandigarh/', 'chandigarh'], ['/MOHALI', 'mohali'], ['/New%20Chandigarh/', 'new-chandigarh'],
+    ['/new_chandigarh', 'new-chandigarh'], ['/NewChandigarh', 'new-chandigarh'], ['/zirakpur/more', null], ['/chandigarhh', null], ['/%E0%A4', null], ['/', null],
+  ]) same(cityFromPath(p), want, `the address ${p} names ${want ? `/${want}/` : 'no city page'}`);
+  same(CITIES.map((c) => PAGES[c.slug]).join(), 'Chandigarh page,Mohali page,Panchkula page,Zirakpur page,Kharar page,New Chandigarh page',
+    'a signup made on a city page is named after its city (forms.js PAGES)');
+  const joined = new Map(dayTotals([{ vid: 'K', device: 'Phone', city: 'Kharar', events: [
+    { n: 'page_view', p: '/kharar/', f: 1 }, { n: 'signup_completed', p: '/kharar/', d: { source: 'hero' } },
+    { n: 'signup_completed', p: '/new-chandigarh/', d: { source: 'hero' } },
+  ] }], '2026-09-26').map(([m, k, v]) => [`${m}|${k}`, v]));
+  check(joined.get('waitlist|Kharar page') === 1 && joined.get('waitlist|New Chandigarh page') === 1 && !joined.has('waitlist|Chandigarh page'),
+    'the analytics count a Join the Waitlist signup on a city page as that page\'s');
 }
 
 function analyticsUnits() {
@@ -288,7 +306,7 @@ async function locked() {
     const refused = await post(dev.base, '/api/waitlist', { phone: '9870871324', source: 'contact', consent: true });
     check(refused.status === 503 && json(refused)?.reason === 'not_configured' && json(refused)?.error === CODE_SEND_FAILED,
       `without the 2Factor key, a signup is refused: "${json(refused)?.error}" (${refused.status})`);
-    const app = await post(dev.base, '/api/buddy', { type: 'individual', name: 'A B', phone: '9870871324', licence: 'X1', city: 'Mohali' });
+    const app = await post(dev.base, '/api/buddy', { type: 'individual', name: 'A B', phone: '9870871324', licence: 'PB01 2011', city: 'Mohali' });
     same(app.status, 503, '…and so is a Buddy application');
     same((await post(dev.base, '/api/feedback', { estimate_id: 'est_nokey00000000001', vote: 'up' })).status, 200, 'a 👍 on a fare needs no code and still saves');
   } finally {
@@ -305,6 +323,19 @@ async function endpoints() {
     for (const [p, want] of [['/', 200], ['/beta/', 200], ['/estimate/', 200], ['/about/', 200], ['/contact/', 200], ['/sitemap.xml', 200], ['/no-such-page', 404]]) {
       same((await raw(B, { path: p })).status, want, `static site still served: ${p}`);
     }
+    // DS03: the city pages, and the other ways their addresses get typed, sent on for good.
+    for (const c of CITIES) same((await raw(B, { path: `/${c.slug}/` })).status, 200, `the ${c.name} page is served at /${c.slug}/`);
+    for (const [from, to] of [
+      ['/Chandigarh', '/chandigarh/'], ['/MOHALI/', '/mohali/'], ['/Panchkula', '/panchkula/'], ['/Zirakpur/', '/zirakpur/'], ['/Kharar', '/kharar/'],
+      ['/New-Chandigarh', '/new-chandigarh/'], ['/new_chandigarh/', '/new-chandigarh/'], ['/NewChandigarh', '/new-chandigarh/'],
+      ['/New%20Chandigarh?utm_source=flyer', '/new-chandigarh/?utm_source=flyer'],
+    ]) {
+      const r = await raw(B, { path: from });
+      check(r.status === 301 && r.headers.location === to, `${from} goes to ${to} for good (${r.status} ${r.headers.location || ''})`);
+    }
+    const bare = await raw(B, { path: '/kharar' });
+    check([301, 307, 308].includes(bare.status) && bare.headers.location === '/kharar/', `/kharar goes to /kharar/ (${bare.status} ${bare.headers.location || ''})`);
+    same((await raw(B, { path: '/chandigarhh' })).status, 404, 'a near miss is still not found');
 
     // The client waitlist. A page cached from before PRD sources sends its page as the source.
     const leads = [];
@@ -393,15 +424,15 @@ async function endpoints() {
     const buddies = await admin(B, '/admin/buddies.csv', { user: 'Admin' });
     same(buddies.status, 200, 'buddies.csv downloads (username in any case)');
     const b = listRows(buddies.text);
-    same(b[0], `ID,Submitted (IST),Name,Phone,Licence,City or base,Phone verified,Repeat${ATTR_HEAD}`, 'buddies header');
-    check(b[1].endsWith(',Voiku Zavadschi,+919870871324,VNS8893,Mohali,,'), `an application row (${b[1]})`);
-    check(b[2].endsWith(`,"'=HYPERLINK(""http://x"",""click"")",+919870871324,"PB01 2011, 0012345",,,(repeat)`), 'a formula-like name opens as text; a licence with a comma stays one cell; same phone is a repeat');
+    same(b[0], `ID,Submitted (IST),Name,Phone,Licence,City or base,Phone verified,Consent,Consent version,Language,Repeat${ATTR_HEAD}`, 'buddies header');
+    check(b[1].endsWith(',Voiku Zavadschi,+919870871324,VNS8893,Mohali,,,,,'), `an application row (${b[1]})`);
+    check(b[2].endsWith(`,"'=HYPERLINK(""http://x"",""click"")",+919870871324,"PB01 2011, 0012345",,,,,,(repeat)`), 'a formula-like name opens as text; a licence with a comma stays one cell; same phone is a repeat');
 
     const agencies = await admin(B, '/admin/agencies.csv');
     same(agencies.status, 200, 'agencies.csv downloads');
     const a = listRows(agencies.text);
-    same(a[0], `ID,Submitted (IST),Agency name,Contact person,Phone,City or base,Drivers,Work email,GSTIN,Phone verified,Repeat${ATTR_HEAD}`, 'agencies header');
-    same(a.slice(1).map(after).join(' | '), 'Tricity Drivers,Gurpreet Kaur,+919811122233,Panchkula,6–20,ops@tricitydrivers.in,03ABCDE1234F1Z5,, | Solo Cabs,Aman,+919811122233,Zirakpur,,,,,(repeat)',
+    same(a[0], `ID,Submitted (IST),Agency name,Contact person,Phone,City or base,Drivers,Work email,GSTIN,Phone verified,Consent,Consent version,Language,Repeat${ATTR_HEAD}`, 'agencies header');
+    same(a.slice(1).map(after).join(' | '), 'Tricity Drivers,Gurpreet Kaur,+919811122233,Panchkula,6–20,ops@tricitydrivers.in,03ABCDE1234F1Z5,,,,, | Solo Cabs,Aman,+919811122233,Zirakpur,,,,,,,,(repeat)',
       'agency rows: email lower-cased, GSTIN upper-cased, optional fields blank, a repeat number marked');
 
     const dash = await admin(B, '/admin');
@@ -412,6 +443,28 @@ async function endpoints() {
     check(/One-time codes: no 2Factor key ?, so no phone form can save\. Add TWOFACTOR_API_KEY as a Secret/.test(dv), 'the admin page says when the 2Factor key is missing');
     check(dash.headers['cache-control'] === 'no-store' && /noindex/.test(dash.headers['x-robots-tag'] || ''), 'admin responses are never cached or indexed');
 
+    // A Join the Waitlist signup from a city page keeps the page it was made on.
+    same((await post(B, '/api/waitlist', { phone: '9811100055', source: 'hero', page: 'new-chandigarh', consent: true }, { 'CF-Connecting-IP': '198.51.100.21' })).status, 200,
+      'a signup from a city page is saved');
+    check(listRows((await admin(B, '/admin/clients.csv')).text).at(-1).endsWith(',+919811100055,hero,New Chandigarh page,,,,,Yes,,'), '…named after its page in the list');
+
+    // W08/B01: the consent box, the version of its wording and the language it was read in, kept with the application.
+    const VERSION = 'draft-2026-10-10 (pending CL-03)';
+    const consentApp = { type: 'individual', name: 'Consent Test', phone: '9811100050', licence: 'PB01 20110012345', city: 'Mohali', consent_version: VERSION, language: 'hi' };
+    same(json(await apply({ ...consentApp, consent: false }))?.errors?.consent, BUDDY_CONSENT_ERROR, 'an application without the consent tick is refused');
+    same((await apply({ ...consentApp, consent: true })).status, 200, '…and saved with it');
+    same((await apply({ type: 'agency', agency: 'Consent Cabs', contact: 'Simran Kaur', phone: '9811100051', city: 'Kharar', consent: true, consent_version: VERSION, language: 'en' })).status, 200, 'an agency too');
+    same(listRows((await admin(B, '/admin/buddies.csv')).text).at(-1).replace(/^\d+,[^,]+,/, ''), `Consent Test,+919811100050,PB01 20110012345,Mohali,,Yes,${VERSION},Hindi,`,
+      'buddies.csv: Consent, its version and the language (Hindi)');
+    same(listRows((await admin(B, '/admin/agencies.csv')).text).at(-1).replace(/^\d+,[^,]+,/, ''), `Consent Cabs,Simran Kaur,+919811100051,Kharar,,,,,Yes,${VERSION},English,`,
+      'agencies.csv: the same (English)');
+    same((await apply({ ...consentApp, phone: '9811100054', consent: true, language: 'fr', consent_version: 'x'.repeat(200) })).status, 200, 'an unknown language is left blank, an overlong version cut');
+    same(listRows((await admin(B, '/admin/buddies.csv')).text).at(-1).split(',').slice(-3).join(), `${'x'.repeat(60)},,`, '…as the list shows');
+    const short = await apply({ type: 'individual', name: 'Al', phone: '9811100052', licence: 'PB01', city: 'M', consent: true });
+    same(Object.keys(json(short)?.errors || {}).join(), 'name,licence,city', 'a name under 3 characters, a licence under 6 and a city under 2 are refused, as the form refuses them');
+    const shortAgency = await apply({ type: 'agency', agency: 'A', contact: 'Al', phone: '9811100053', city: 'Kharar', consent: true });
+    same(Object.keys(json(shortAgency)?.errors || {}).join(), 'agency,contact', '…and an agency\'s one-letter name and two-letter contact');
+
     // Attribution (W10): the cookies src/site.js sets ride on every form; each list row keeps them.
     const touch = encodeURIComponent(JSON.stringify({ utm_source: 'whatsapp', utm_medium: 'group', utm_campaign: 'launch', utm_term: 'driver', utm_content: 'v2', referrer: 'l.instagram.com', landing_page: '/about/' }));
     const cookies = { 'CF-Connecting-IP': '198.51.100.40', Cookie: `visitor_id=k3v9x0q2m8w4r7t1z5y6; rb_ft=${touch}; rb_internal=1` };
@@ -419,7 +472,7 @@ async function endpoints() {
     same((await post(B, '/api/buddy', { type: 'individual', name: 'Attr Test', phone: '9811100041', licence: 'PB01 4', city: 'Mohali' }, cookies)).status, 200, '…and an application');
     const ATTR_CELLS = 'k3v9x0q2m8w4r7t1z5y6,whatsapp,group,launch,driver,v2,l.instagram.com,/about/,Yes';
     check(csvRows((await admin(B, '/admin/clients.csv')).text).at(-1).endsWith(`,+919811100040,hero,About page,,,,,Yes,,,${ATTR_CELLS}`), 'clients.csv: the visitor_id, all five utm values, the referrer, the landing page and Internal');
-    check(csvRows((await admin(B, '/admin/buddies.csv')).text).at(-1).endsWith(`,Attr Test,+919811100041,PB01 4,Mohali,,,${ATTR_CELLS}`), 'buddies.csv: the same');
+    check(csvRows((await admin(B, '/admin/buddies.csv')).text).at(-1).endsWith(`,Attr Test,+919811100041,PB01 4,Mohali,,,,,,${ATTR_CELLS}`), 'buddies.csv: the same');
     same((await post(B, '/api/waitlist', { phone: '9811100042', source: 'contact', consent: true }, { 'CF-Connecting-IP': '198.51.100.41', Cookie: 'visitor_id=<x>; rb_ft=%7Bnot-json' })).status, 200, 'malformed cookies don\'t stop a signup');
     check(csvRows((await admin(B, '/admin/clients.csv')).text).at(-1).endsWith(',+919811100042,hero,Contact page,,,,,Yes,,,,,,,,,,,'), '…and are left blank');
 
@@ -543,6 +596,32 @@ async function analytics() {
     check(/Still adding up 4 earlier days in this period/.test(first), `a backlog is summed in steps, and says so (${first.match(/Still adding up[^.]*/)?.[0] || 'no notice'})`);
     const second = visible((await admin(B, '/admin?days=30', at(TODAY))).text);
     check(!/Still adding up/.test(second) && /Visitors 15 /.test(second), `…and the next load completes it (${second.match(/Visitors [^A-Z]*/)?.[0]})`);
+
+    // W10: every stored event, as a download — on a day of its own, past the others, so their totals stay as they are.
+    const LATER = '2026-12-20T10:00:00+05:30';
+    const ft = encodeURIComponent(JSON.stringify({ utm_source: 'whatsapp', utm_medium: 'group', utm_campaign: 'drivers', referrer: 'l.instagram.com', landing_page: '/kharar/' }));
+    same((await beacon([
+      { n: 'page_view', p: '/kharar/', f: 1, r: 'l.instagram.com', u: { source: 'whatsapp', medium: 'group', campaign: 'drivers' } },
+      { n: 'click', p: '/kharar/', w: 'Kharar — Routes', l: 'Get Estimate: Manali', h: '/estimate/' },
+      { n: 'city_switched', p: '/kharar/', d: { from: 'kharar', to: 'mohali' } },
+    ], { ip: '49.36.10.10', now: LATER, headers: { Cookie: `visitor_id=evts000000000000001; rb_sid=evsess00000001; rb_ft=${ft}` } })).status, 204, 'events of a later day are stored');
+    const events = await admin(B, '/admin/events.csv?days=1', at(LATER));
+    check(events.status === 200 && /attachment; filename="ridebuddy-events-\d{4}-\d{2}-\d{2}\.csv"/.test(events.headers['content-disposition'] || ''), 'events.csv downloads, as a dated attachment');
+    const ev = csvRows(events.text);
+    same(ev[0], 'Time (IST),Event,Page,Label,Where,Link,Details,Session ID,Visitor ID,Device,City,Country,UTM source,UTM medium,UTM campaign,UTM term,UTM content,Referrer,Landing page',
+      'events.csv: its columns');
+    const WHO = 'evsess00000001,evts000000000000001,Phone,,,whatsapp,group,drivers,,,l.instagram.com,/kharar/';
+    // City and country come from Cloudflare's request.cf, whatever the local runtime makes up for them.
+    same(ev.slice(1).map((r) => r.replace(/(evts000000000000001,Phone),[^,]*,[^,]*,/, '$1,,,')).join(' | '), [
+      `2026-12-20 10:00,page_view,/kharar/,,,,"{""landing"":1,""from"":""l.instagram.com"",""campaign"":{""source"":""whatsapp"",""medium"":""group"",""campaign"":""drivers""}}",${WHO}`,
+      `2026-12-20 10:00,click,/kharar/,Get Estimate: Manali,Kharar — Routes,/estimate/,,${WHO}`,
+      `2026-12-20 10:00,city_switched,/kharar/,,,,"{""from"":""kharar"",""to"":""mohali""}",${WHO}`,
+    ].join(' | '), 'events.csv: one row per event, its details, the session and visitor IDs, and the visitor\'s first touch');
+    same(csvRows((await admin(B, '/admin/events.csv?days=1', at('2026-12-25T10:00:00+05:30'))).text).length, 1, 'a day with nothing stored: the columns alone');
+    const wide = csvRows((await admin(B, '/admin/events.csv?days=999', at(LATER))).text);
+    check(wide.length === 4 && csvRows((await admin(B, '/admin/events.csv?days=x', at(LATER))).text).length === 4,
+      'any number of days is held to 31, and anything else means 7');
+    check(visible((await admin(B, '/admin?days=7', at(LATER))).text).includes('Every event, last 7 days (CSV)'), 'the dashboard links the download');
   } finally {
     await dev.stop();
   }
@@ -568,7 +647,7 @@ async function migration() {
     same(c.slice(1).join(' | '), '1,+919870871324,estimate,Estimate page,"Round trip · Sector 17 → Shimla · 12–14 Oct, 09:00",5492,,,,, | 2,+447911123456,hero,Contact page,,,,,,, | 3,,estimate,Estimate page,"One way · Mohali → Kasauli · 20 Oct, 08:00",1650,👎,Fine otherwise,,,',
       'old rows keep their data (a page saved as the source becomes a hero signup from it), the old fare is split into its column, new rows have every column');
     const b = listRows((await admin(B, '/admin/buddies.csv')).text).map((r) => r.replace(/^(\d+),[^,]+,/, '$1,'));
-    same(b.slice(1).join(' | '), '1,Old Applicant,+919000000001,PB01 1,,, | 2,New Applicant,+919000000002,PB01 2,Kharar,,', 'the buddies table gains the city and phone-verified columns');
+    same(b.slice(1).join(' | '), '1,Old Applicant,+919000000001,PB01 1,,,,,, | 2,New Applicant,+919000000002,PB01 2,Kharar,,,,,', 'the buddies table gains the city, phone-verified and consent columns');
     same(csvRows((await admin(B, '/admin/agencies.csv')).text).length, 2, 'the agencies list exists and has the new application');
   } finally {
     await dev.stop();
@@ -655,8 +734,8 @@ async function otp() {
     same(listRows((await admin(B, '/admin/clients.csv')).text).slice(1).map(after).join(' | '),
       '+919811100101,hero,Home page,,,,,Yes,Yes, | +919811100109,estimate,Estimate page,"One way · Sector 17 → Shimla · 12 Oct, 09:00",1612,👎,,Yes,Yes,',
       'the list: only numbers proven with a code, marked Phone verified');
-    same(listRows((await admin(B, '/admin/buddies.csv')).text).slice(1).map(after).join(), 'Harpreet Singh,+919811100107,PB01 20110012345,Mohali,Yes,', 'buddies.csv: Phone verified');
-    same(listRows((await admin(B, '/admin/agencies.csv')).text).slice(1).map(after).join(), 'Hill Drivers,Ravi,+919811100108,Mohali,,,,Yes,', 'agencies.csv: Phone verified');
+    same(listRows((await admin(B, '/admin/buddies.csv')).text).slice(1).map(after).join(), 'Harpreet Singh,+919811100107,PB01 20110012345,Mohali,Yes,,,,', 'buddies.csv: Phone verified');
+    same(listRows((await admin(B, '/admin/agencies.csv')).text).slice(1).map(after).join(), 'Hill Drivers,Ravi,+919811100108,Mohali,,,,Yes,,,,', 'agencies.csv: Phone verified');
 
     // The daily cap (OTP_DAILY_CAP, 30 here): past it, no more SMS today.
     let capped = null;
@@ -675,6 +754,7 @@ async function otp() {
 
 async function main() {
   units();
+  cityUnits();
   analyticsUnits();
   await locked();
   await endpoints();

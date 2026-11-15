@@ -7,10 +7,13 @@
  *   GET /admin/buddies.csv      Buddy applications
  *   GET /admin/agencies.csv     driver agency applications
  *   GET /admin/daily.csv        one row a day: visitors, page views, fares, signups
+ *   GET /admin/events.csv?days=N  every stored event of the last N days (1–31, default 7):
+ *                               page, click or named event, its details, session and visitor
+ *                               IDs, and the visitor's first touch (W10)
  *   GET /admin/exclude?on=1|0   stop / resume counting this browser
  */
 import { clock, dailyHistory, headlineFor, statsFor } from './analytics.js';
-import { LINK_PAGES, renderDashboard, shell } from './dashboard.js';
+import { EVENT_DAYS_MAX, LINK_PAGES, renderDashboard, shell } from './dashboard.js';
 import { addHit, countHits, networkHash, ready, sha256Hex } from './db.js';
 import { PAGES } from './forms.js';
 import { ADMIN_HEADERS, plain } from './http.js';
@@ -46,6 +49,7 @@ export async function handleAdmin(request, env, url, path) {
   if (path === '/admin/buddies.csv') return download('buddies', await buddiesCsv(db));
   if (path === '/admin/agencies.csv') return download('agencies', await agenciesCsv(db));
   if (path === '/admin/daily.csv') return download('daily', await dailyCsv(request, env));
+  if (path === '/admin/events.csv') return download('events', await eventsCsv(request, env, url));
   if (path === '/admin/exclude') return exclude(url);
   return plain(404, 'Not found.');
 }
@@ -188,24 +192,73 @@ async function clientsCsv(db) {
   );
 }
 
+/** An application's consent (W08/B01): ticked, the wording's version, and the language it was read in. */
+const CONSENT_HEAD = ['Consent', 'Consent version', 'Language'];
+const LANGUAGE = { hi: 'Hindi', en: 'English' };
+const consentCells = (r) => [r.consent ? 'Yes' : '', r.consent_version || '', LANGUAGE[r.language] || ''];
+
 async function buddiesCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, name, phone, licence, city, verified, ${ATTR_SQL}, ${REPEAT('buddies')} AS is_repeat FROM buddies t ORDER BY id`,
+    `SELECT id, created_at, name, phone, licence, city, verified, consent, consent_version, language, ${ATTR_SQL}, ${REPEAT('buddies')} AS is_repeat
+       FROM buddies t ORDER BY id`,
   ).all();
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Name', 'Phone', 'Licence', 'City or base', 'Phone verified', 'Repeat', ...ATTR_HEAD],
-    results.map((r) => [r.id, istStamp(r.created_at), r.name, r.phone, r.licence, r.city || '', r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : '', ...attrCells(r)]),
+    ['ID', 'Submitted (IST)', 'Name', 'Phone', 'Licence', 'City or base', 'Phone verified', ...CONSENT_HEAD, 'Repeat', ...ATTR_HEAD],
+    results.map((r) => [r.id, istStamp(r.created_at), r.name, r.phone, r.licence, r.city || '', r.verified ? 'Yes' : '', ...consentCells(r),
+      r.is_repeat ? '(repeat)' : '', ...attrCells(r)]),
   );
 }
 
 async function agenciesCsv(db) {
   const { results } = await db.prepare(
-    `SELECT id, created_at, agency, contact, phone, city, drivers, email, gstin, verified, ${ATTR_SQL}, ${REPEAT('agencies')} AS is_repeat FROM agencies t ORDER BY id`,
+    `SELECT id, created_at, agency, contact, phone, city, drivers, email, gstin, verified, consent, consent_version, language, ${ATTR_SQL},
+       ${REPEAT('agencies')} AS is_repeat FROM agencies t ORDER BY id`,
   ).all();
   return toCsv(
-    ['ID', 'Submitted (IST)', 'Agency name', 'Contact person', 'Phone', 'City or base', 'Drivers', 'Work email', 'GSTIN', 'Phone verified', 'Repeat', ...ATTR_HEAD],
+    ['ID', 'Submitted (IST)', 'Agency name', 'Contact person', 'Phone', 'City or base', 'Drivers', 'Work email', 'GSTIN', 'Phone verified', ...CONSENT_HEAD,
+      'Repeat', ...ATTR_HEAD],
     results.map((r) => [r.id, istStamp(r.created_at), r.agency, r.contact, r.phone, r.city, r.drivers || '', r.email || '', r.gstin || '',
-      r.verified ? 'Yes' : '', r.is_repeat ? '(repeat)' : '', ...attrCells(r)]),
+      r.verified ? 'Yes' : '', ...consentCells(r), r.is_repeat ? '(repeat)' : '', ...attrCells(r)]),
+  );
+}
+
+/** The most rows the events download holds: past it, ask for fewer days. */
+const EVENT_ROWS_MAX = 20000;
+
+/**
+ * Every event the analytics stored on the last `days` IST days, today
+ * included, oldest first (W10): one row each, with the beacon's session and
+ * visitor IDs and the visitor's first touch (src/site.js; analytics.js).
+ */
+async function eventsCsv(request, env, url) {
+  const db = env.DB;
+  await ready(db);
+  const asked = Math.round(Number(url.searchParams.get('days')));
+  const days = Number.isFinite(asked) && asked >= 1 ? Math.min(asked, EVENT_DAYS_MAX) : 7;
+  const today = istDay(clock(request, env));
+  const { results } = await db.prepare(
+    `SELECT b.at, b.device, b.city, b.country, b.visitor_id, b.session_id, b.touch,
+       json_extract(j.value, '$.n') AS n, json_extract(j.value, '$.p') AS p, json_extract(j.value, '$.l') AS l,
+       json_extract(j.value, '$.w') AS w, json_extract(j.value, '$.h') AS h, json_extract(j.value, '$.d') AS d,
+       json_extract(j.value, '$.f') AS f, json_extract(j.value, '$.r') AS r, json_extract(j.value, '$.u') AS u
+     FROM beacons b, json_each(b.events) j
+     WHERE b.day BETWEEN ?1 AND ?2 ORDER BY b.id, j.key LIMIT ?3`,
+  ).bind(shiftDay(today, 1 - days), today, EVENT_ROWS_MAX).all();
+  const parse = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
+  return toCsv(
+    ['Time (IST)', 'Event', 'Page', 'Label', 'Where', 'Link', 'Details', 'Session ID', 'Visitor ID', 'Device', 'City', 'Country',
+      'UTM source', 'UTM medium', 'UTM campaign', 'UTM term', 'UTM content', 'Referrer', 'Landing page'],
+    results.map((r) => {
+      // A page view's details: whether the visit landed here, the site it came from, its campaign.
+      const view = r.n === 'page_view' || r.n === 'pageview';
+      const details = view
+        ? Object.fromEntries(Object.entries({ landing: r.f || null, from: r.r || null, campaign: parse(r.u) }).filter(([, v]) => v != null))
+        : parse(r.d);
+      const touch = parse(r.touch) || {};
+      return [istStamp(new Date(r.at * 1000).toISOString()), r.n, r.p, r.l || '', r.w || '', r.h || '',
+        details && Object.keys(details).length ? JSON.stringify(details) : '', r.session_id || '', r.visitor_id || '', r.device, r.city || '', r.country || '',
+        ...TOUCH_FIELDS.map((k) => touch[k] || '')];
+    }),
   );
 }
 

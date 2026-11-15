@@ -6,6 +6,7 @@
 | `/estimate/` | The fare estimator — the customer app's estimate flow, on the web | `src/estimate/` |
 | `/about/` | About — the Phase 1 design's, as a page of its own | `src/about/`, `src/shared/` |
 | `/contact/` | Contact — write to us, the waitlist card, and Apply to be a Buddy (`/contact/#apply` opens it) | `src/contact/`, `src/shared/` |
+| `/chandigarh/`, `/mohali/`, `/panchkula/`, `/zirakpur/`, `/kharar/`, `/new-chandigarh/` | The city pages: outstation trips from each city, its popular trips priced, tips for the drive, its pickups (other spellings, `/Chandigarh`, `/new_chandigarh`, are sent on) | `src/cities/`, built by `build.mjs` |
 | `/beta/` | The design-canvas artboard — Home until it moves to `/` — shared by link (`noindex`) | `../Webpage`, assembled by `build.mjs` |
 | `/api/waitlist`, `/api/feedback`, `/api/buddy` | Where the site's forms and the fare 👍/👎 save — the phone forms only after a one-time code (2Factor) | `worker/forms.js`, `worker/otp.js` → D1 |
 | `/site.js`, `/api/e` | The site's own analytics: the script on every page, and where it reports | `src/site.js`, `worker/analytics.js` → D1 |
@@ -22,8 +23,9 @@ git-ignored `../.dev.vars` to open the local `/admin`).
 `/estimate/` mirrors the app: the form in `frontend/app/home.tsx` and the
 result in `frontend/app/booking/summary.tsx`.
 
-- **Header** — the main site's header, element for element: logo, Home ·
-  About · Contact, "Get an Estimate", and the full-screen menu
+- **Header** — the main site's header, element for element: logo with its
+  "beta" tag (DS01; on `/beta/` too), Home · About · Contact, "Get an
+  Estimate", and the full-screen menu
   below 1120px (`SiteHeader` in `src/shared/header.jsx`, shared with About and
   Contact; styles in `src/shared/site.css`, CTA from the same design-system
   `Button`). There is no "Estimate Fare" link — "Get an Estimate" goes to the
@@ -38,6 +40,16 @@ result in `frontend/app/booking/summary.tsx`.
   fare is always for a date they chose. No Hourly on the website (the app
   still offers it); an old `?type=hourly` link opens a round trip. No
   booking: the result leads to the waitlist.
+- **Links that open a trip** — `/estimate/?type=round|one&from=…&to=…&city=…`,
+  as the city pages' trip cards and tips send them: the trip type chosen, and
+  the pickup and destination named in words ("Sector 17, Chandigarh",
+  "Shimla"), each looked up as the page opens and taken as the visitor's own
+  choice would be — Google's first suggestion for the words, inside the
+  service area (`findPlace` in `maps.js`). A field shows its spinner and Get
+  Estimate waits while they load; a place that can't be found stays as words
+  in its field, with the suggestions to pick from. The dates stay empty, the
+  visitor's to pick. `city` names the page the visitor came from, for
+  `estimator_opened`.
 - **Map picker** — each place field carries a map button that opens a modal
   map. **Tap one of Google's places and it is selected by name** ("National
   Museum, New Delhi"), which is what a customer means when they point at a
@@ -79,8 +91,9 @@ result in `frontend/app/booking/summary.tsx`.
   depends on the cause: "Check your connection and try again." when the
   request got no answer, "Couldn’t calculate that route. Try again." when
   Google refused it.
-- **Result** — the route on an interactive map with tap-to-expand, and under
-  it three sections set alike, each an icon, a label and a value: TRIP TYPE
+- **Result** — the route as its heading ("Sector 17 → Shimla": the trip type
+  and days are below, not repeated beside it), the route on an interactive map
+  with tap-to-expand, and under it three sections set alike, each an icon, a label and a value: TRIP TYPE
   ("Round Trip" or "One Way"), TRIP DURATION (the days the fare covers, a rest
   stop's included: "2 days") and EST. DISTANCE (the whole trip's, both ways on
   a round trip, to the km as §2.4 says; the fare uses the exact distance). The
@@ -174,20 +187,23 @@ pop-ups. The stylesheet the three pages share is `src/shared/site.css`.
 - **Contact** — "Write to us." and the email; the waitlist card, taking the
   number right there ("Verify your mobile number. One message when booking
   opens. Nothing else.", fixed `+91`, the consent tick, then the one-time
-  code); "Become a Buddy" with **Apply to be a Buddy**, which opens the Buddy
-  application pop-up. `/contact/#apply` opens
-  that pop-up straight away — the link to share with drivers — and closing it
-  leaves a plain `/contact/`.
+  code); the Become a Buddy band, Hindi first ("Become a Buddy, Hindi first"
+  below), whose button opens the Buddy application pop-up. `/contact/#apply`
+  opens that pop-up straight away — the link to share with drivers — and
+  closing it leaves a plain `/contact/`.
 - **Both** end with the closing band ("Plan the trip now. Book it soon." —
-  Get an Estimate, Join the Waitlist) and the footer, whose "Become a Buddy"
-  opens the application in place. Any `data-rb-waitlist` or `data-rb-apply`
+  Get an Estimate, Join the Waitlist) and the footer — Pages, Cities
+  (Chandigarh, Mohali, Panchkula: DS02; the nearby areas are in the city
+  pages' menu only), Services, More — whose "Buddy बनें" ("Become a Buddy" in
+  English) opens the application in place. Any `data-rb-waitlist` or `data-rb-apply`
   element opens the pop-up it names. The footer's Terms and Privacy link the
   legal pages (below); `/estimate/` ends with the same footer.
 - **Joined without a trip** (the pop-up, the Contact card): "You're on the
   waitlist. One message when booking opens." and **Get Estimate**, to
   `/estimate/` (PRD S8). The Buddy application, once sent: "Application
-  received. One call or message when onboarding opens."; opened again, it
-  starts empty.
+  received. One call or message when onboarding opens." (an agency's:
+  "Application received. RideBuddy will call to discuss terms and driver
+  onboarding."); after Done, it starts empty.
 - **The legal pages** — `/privacy/`, `/terms/` and `/buddy/terms/`
   (`src/privacy`, `src/terms`, `src/buddy/terms`) are placeholders until
   Legal's text: the title, slots for the version and effective date, and a
@@ -204,6 +220,108 @@ application in `src/shared/apply.jsx`, and the phone-form parts and the code
 step every phone form goes through in `src/shared/ui.jsx` (the estimator's
 waitlist uses them too).
 
+## City pages
+
+Six landing pages, one per place the Buddies start from (DS03): the cities
+`/chandigarh/`, `/mohali/` and `/panchkula/`, and the nearby areas
+`/zirakpur/`, `/kharar/` and `/new-chandigarh/`. One layout, as the Phase 1
+design draws it (`src/cities/page.mjs`, styles in `site.css`'s "City pages"),
+built as plain HTML for search engines; each page's copy is its own, word for
+word from the design (`src/cities/cities.mjs`), so none reads as a copy of
+another:
+
+- the header's **city menu** beside the logo (on a phone the wordmark makes
+  room for it), grouped Cities / Nearby areas, which goes to the page chosen;
+- the **hero**: breadcrumb, "Outstation trips from …", "A driver for your own
+  car in ….", Get an Estimate (`/estimate/?city=…`) and Join the Waitlist (the
+  pop-up; the signup's page is the city's, "Chandigarh page" in the list);
+- **Popular trips**: four cards, each a link into the estimator on that trip
+  (below), with its distance and drive time and its "From" fare;
+- How it works, What your fare covers, Verified. Trained. Rated.;
+- **Pickups**: the localities (names, not links), the acting-driver line, and
+  links to the nearby areas;
+- **Plan the drive**: four tips, each linked to the same trip;
+- the **Become a Buddy** band, Hindi first, with the offer line ("No joining
+  fee. Allowances paid in full to you. Insurance from your first trip.");
+  then the closing band and the footer.
+
+Each page has its own title ("Driver for your own car in Mohali · RideBuddy"),
+description (its lead line), canonical address and place in `sitemap.xml`.
+The photos are the Home hero and the Buddy portrait, until each city's shot
+is approved (WebP, two widths each). Other spellings of an address —
+`/Chandigarh`, `/MOHALI/`, `/new_chandigarh`, `/NewChandigarh` — are sent to
+the page for good (301, query kept) by the Worker (`cityFromPath` in
+`src/cities/list.mjs`).
+
+**The trips' numbers come from Google, not the copy.** The design measured
+them by hand; here `test/measure-routes.mjs` opens each card's own link in
+the live estimator (so the pickup and destination are exactly what a visitor's
+tap gives), prices it for a 9 AM pickup, and writes what Google gave —
+metres, seconds and the places the words were taken as — to
+`src/cities/routes.json`. The build turns that into each card's "245 km ·
+about 4 h 30 min" (to the nearest 5 km and 15 minutes), each tip's opening
+("About 5 h 45 min via …"; the Amritsar day trip's "Start back by" is 6 PM
+less the drive), and each "From" fare, priced by the estimator's own engine
+for that trip at 9 AM with the Buddy's stay included: ₹1,499 for a same-day
+round trip, ₹3,497 for two days, ₹5,495 for three, and a one-way Delhi trip
+by its distance. The build fails if a trip would price as more days than its
+card says. To refresh the numbers (new trips, a new pickup point, or before
+a launch), build, run the script, rebuild:
+
+```bash
+npm --prefix website run build
+NODE_PATH=/opt/node22/lib/node_modules PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers \
+  node website/test/measure-routes.mjs
+```
+
+A city's `pickup` is the words its links send; where the design's words find
+the wrong place first, other words are used (New Chandigarh's "Mullanpur
+Garibdass" — "Mullanpur, New Chandigarh" finds the cricket stadium). To add a
+city: its entry in `src/cities/list.mjs` and `cities.mjs`, a measurement,
+`/<slug>/` in `src/_headers` (no-cache) and `src/sitemap.xml`.
+
+## Become a Buddy, Hindi first
+
+Everything a driver reads is in Hindi first, with English a tap away (DS04,
+W08/B01, B02/B03): the Become a Buddy band on Contact and on every city page,
+the application pop-up, and the footer's link. The copy is the Phase 1
+design's (`src/shared/buddy.mjs`, `BUDDY_COPY`); its Hindi is a draft until a
+native speaker reviews it and Legal approves the Hindi consent (CL-03) and
+the band's offer line (CL-05). A few Hindi lines the design didn't have — the
+Worker's limits and failures (wait before a new code, too many codes, a save
+or connection failing) — are drafted there in the same voice for that review.
+
+- **हिंदी | English**, on the band and in the pop-up, switches all of them at
+  once; the choice is kept in this browser (`localStorage`, `rb_buddy_lang`),
+  so the next page opens in it. Hindi text uses the brand fonts for Latin and
+  the phone's own Devanagari font (Noto Sans Devanagari on Android), with no
+  web font to download. The bands are built into the pages in Hindi
+  (`bandHtml`), and the pages' scripts switch any `[data-rb-t]` text to the
+  chosen language.
+- **The application**: the language switch, "Prefer WhatsApp? Apply in a chat
+  instead." (once there is a number), Individual Buddy or Driver agency, the
+  fields, and the consent box, unticked and required: "RideBuddy can contact
+  me by phone, SMS or WhatsApp about my application. I agree to the Privacy
+  Policy and Terms of Use." (an agency's adds email), both linked, opening in
+  a new tab. **Get OTP** stays greyed until every field is right — a full
+  name of 3 characters or more, a valid mobile, a licence of 6 or more, a
+  city or base of 2 or more; for an agency its name and contact person, and
+  a valid email and GSTIN if given — and the consent is ticked; a field left
+  wrong says why as it is left. Under it: "Verify your number to submit the
+  application." The code goes in **six boxes** (one real field under them:
+  digits fill the boxes in turn, a code pasted or filled in from the SMS
+  lands whole, Backspace takes the last), then **Verify & Submit
+  Application** (**Verify & Submit Agency Application**), and the
+  confirmation for that kind of applicant. The Worker applies the same rules.
+- **Saved with it**: the consent (Yes), the version of the wording the
+  applicant read (`CONSENT_VERSION`, `draft-2026-10-10 (pending CL-03)`), and
+  the language (Hindi or English), in the buddies and agencies downloads.
+- **Apply on WhatsApp** — on the bands and in the pop-up — is built but
+  hidden: it appears once `WHATSAPP_NUMBER` in `src/shared/buddy.mjs` has the
+  number (country code and number, digits only: `91XXXXXXXXXX`), opening a
+  chat with "नमस्ते RideBuddy, मुझे Buddy (ड्राइवर) बनने के लिए आवेदन करना
+  है।" (or the English) ready to send.
+
 ## Forms, the lists and `/admin`
 
 The site's forms email nothing: they post JSON to the Worker
@@ -214,12 +332,12 @@ that carries a phone number confirms it with a one-time code first (below).
 
 | Form | Where | Endpoint | D1 table |
 |---|---|---|---|
-| Join the Waitlist pop-up | `/beta/`'s hero, About's "What you can do today.", and the closing band on every page | `POST /api/waitlist` (`source: hero`, `page: home \| about \| contact`, the page it was opened on) | `waitlist` |
+| Join the Waitlist pop-up | `/beta/`'s hero, About's "What you can do today.", a city page's hero, and the closing band on every page | `POST /api/waitlist` (`source: hero`, `page: home \| about \| contact \| chandigarh …`, the page it was opened on) | `waitlist` |
 | Join the waitlist | the `/contact/` card | `POST /api/waitlist` (`source: hero`, `page: contact`) | `waitlist` |
 | Join the waitlist | under an `/estimate/` result | `POST /api/waitlist` (`source: estimate`, the trip and its `estimate_id`) | `waitlist` |
 | 👍/👎 on a fare, and a 👎's comment | an `/estimate/` result | `POST /api/feedback` (`estimate_id`, `vote: up \| down`, optional `comment`, the trip) | `waitlist` |
-| Apply to be a Buddy — Individual Buddy | `/contact/`'s "Apply to be a Buddy", the footer's "Become a Buddy", or a `/contact/#apply` link | `POST /api/buddy` (`type: individual`) | `buddies` |
-| Apply to be a Buddy — Driver agency | the same form, "Driver agency" chosen | `POST /api/buddy` (`type: agency`) | `agencies` |
+| Apply to be a Buddy — Individual Buddy | the Become a Buddy band (Contact, the city pages), the footer's "Buddy बनें", or a `/contact/#apply` link | `POST /api/buddy` (`type: individual`, `consent`, `consent_version`, `language`) | `buddies` |
+| Apply to be a Buddy — Driver agency | the same form, "Driver agency" chosen | `POST /api/buddy` (`type: agency`, the same three) | `agencies` |
 
 - **Phone numbers** (`normalizePhone` in `worker/lib.js`): Indian mobiles only.
   Every form shows a fixed `+91` beside a 10-digit field; whatever is typed or
@@ -239,13 +357,17 @@ that carries a phone number confirms it with a one-time code first (below).
   linked, opening in a new tab) and can't be sent without it; the row's
   Consent column says Yes. A page cached
   from before the tick sends no `consent` at all: that signup is kept with
-  Consent blank. The Buddy form has no tick.
-- **Buddy applications.** Individual: full name, mobile, driving licence
-  number, city or base — all required, free text. Agency: agency name, contact
-  person, mobile and city or base (required); drivers you can supply (1–5,
+  Consent blank. The Buddy form has a tick of its own (W08/B01, "Become a
+  Buddy, Hindi first"), saved with its wording's version and the language;
+  an application from a page cached before it is kept with the three blank.
+- **Buddy applications.** Individual: full name (3 characters or more),
+  mobile, driving licence number (6 or more), city or base (2 or more) — all
+  required, free text. Agency: agency name (2 or more), contact person (3 or
+  more), mobile and city or base (required); drivers you can supply (1–5,
   6–20, 21–50, 50+), work email and GSTIN (optional; an email must look like
-  one, a GSTIN must be 15 characters in the GST pattern). A page cached from
-  before the city field is still accepted without it.
+  one, a GSTIN must be 15 characters in the GST pattern). The form turns Get
+  OTP on only when they are met. A page cached from before the city field is
+  still accepted without it.
 - **Votes on fares.** `/estimate/` gives each fare it shows a random
   `estimate_id`. The first 👍/👎 on that fare adds a waitlist row with Phone
   blank; changing it updates the row (the latest vote wins, a comment stays).
@@ -296,8 +418,8 @@ each list's count and a **Download CSV** button:
 | File | Columns |
 |---|---|
 | `ridebuddy-clients-YYYY-MM-DD.csv` | ID, Submitted (IST), Phone, Source (`estimate` or `hero`), Page, Trip, Fare (₹), 👍/👎, Comment, Consent, Phone verified, Repeat, *attribution* |
-| `ridebuddy-buddies-YYYY-MM-DD.csv` | ID, Submitted (IST), Name, Phone, Licence, City or base, Phone verified, Repeat, *attribution* |
-| `ridebuddy-agencies-YYYY-MM-DD.csv` | ID, Submitted (IST), Agency name, Contact person, Phone, City or base, Drivers, Work email, GSTIN, Phone verified, Repeat, *attribution* |
+| `ridebuddy-buddies-YYYY-MM-DD.csv` | ID, Submitted (IST), Name, Phone, Licence, City or base, Phone verified, Consent, Consent version, Language, Repeat, *attribution* |
+| `ridebuddy-agencies-YYYY-MM-DD.csv` | ID, Submitted (IST), Agency name, Contact person, Phone, City or base, Drivers, Work email, GSTIN, Phone verified, Consent, Consent version, Language, Repeat, *attribution* |
 
 *Attribution* is the same nine columns on every list: Visitor ID, UTM source,
 UTM medium, UTM campaign, UTM term, UTM content, Referrer, Landing page and
@@ -403,7 +525,7 @@ wording is a placeholder until Product supplies CL-01 (`NOTICE` in
 Named events, as PRD 10.2 names them:
 
 - `estimator_opened` (`entry`: `direct`, or `round` / `one` from a
-  `?type=` link), `estimate_started` (the first touch of the form, once, with
+  `?type=` link; `city`, the city page a trip link came from), `estimate_started` (the first touch of the form, once, with
   the trip type it chose), `estimate_completed` (`estimate_id`, trip type,
   pickup area and city, destination city, distance, fare, days ahead, weekday,
   hour, `night`, `long_drive`, `drive_through`, `stay`, `date_touched`).
@@ -424,12 +546,18 @@ Named events, as PRD 10.2 names them:
 - `signup_completed` (`lead_id`, `source: estimate | hero`, `estimate_id`,
   `is_repeat`, and `days_ahead` for a signup under a fare),
   `buddy_interest_submitted` (`buddy_interest_id`, `type: individual |
-  agency`), `phone_invalid` and `save_failed` (`form: signup | buddy`;
+  agency`, `language: hi | en`), `phone_invalid` and `save_failed` (`form: signup | buddy`;
   `save_failed` also `feedback`, a 👍/👎 that didn't save),
   `form_invalid`.
 - Outside PRD 10.2, kept as before: `waitlist_opened` (the pop-up, and the
   page it was opened on), `buddy_application_opened` (`via: link` when a
   `/contact/#apply` link opened it), `map_point_picked`, `long_drive_plan`.
+- From the website changes v2, as the Phase 1 design names them:
+  `city_switched` (`from`, `to`: the city menu), `buddy_language_changed`
+  (`language`), `buddy_whatsapp_clicked` (`source: contact_band |
+  city_buddy_band | apply_form`, `page`, `language`; once there is a number).
+  A click on a city page's trip card or tip is a `click` like any other, its
+  label naming the trip ("Get Estimate: Shimla"), on that city's page.
 
 The dashboard reads older beacons under their old names too (`pageview`,
 `waitlist_joined`, `place_refused`, `route_failed`…), so days before the
@@ -476,7 +604,15 @@ refused places), clicks, problems (mistyped numbers per form, failed saves,
 map and route failures, script errors) and page speed (by page and
 connection). Below: the campaign-link maker, "Don't count this browser", and
 `/admin/daily.csv` — one row a day since the first visit (visitors, page
-views, fares shown, waitlist signups, Buddy applications, agency applications).
+views, fares shown, waitlist signups, Buddy applications, agency applications)
+— and `/admin/events.csv?days=N` (W10): every event stored on the last N
+days, today included (1 to 31; 7 when not given, the dashboard's period up to
+31 from its button), one row each, oldest first: the time (IST), the event,
+its page, a click's label, place and link, its details (a page view's: whether
+the visit landed there, the site it came from, its campaign), the session and
+visitor IDs, the device, city and country, and how that visitor first arrived
+(the five UTM values, the referring site, the landing page). At most 20,000
+rows: past that, ask for fewer days.
 
 **Campaign links.** The link maker on `/admin` adds `utm_source`,
 `utm_medium`, `utm_campaign` to a page's address (before any `#`). Visits
@@ -564,8 +700,13 @@ canvas into `Webpage/` and rebuild.
    (N11); the footer's Terms and Privacy link the legal pages (W09); and the
    artboard's dead Buddy and Contact handlers — `mailto:` drafts and a TODO —
    are cut (P07). Its rate config carries no app-only rate.
+13. **Website changes v2.** The beta tag beside the wordmark, as the Phase 1
+   design sets it (DS01); the footer's Cities column — Chandigarh, Mohali,
+   Panchkula — and "Buddy बनें" (or "Become a Buddy", in the language this
+   browser chose) in the More column (DS02). Home's own Become a Buddy band
+   stays as it is.
 
-5–12 are text patches listed in `artboard-patches.mjs` (a `cut` patch removes
+5–13 are text patches listed in `artboard-patches.mjs` (a `cut` patch removes
 everything between two markers). Each must match the
 artboard an exact number of times (once, unless it says otherwise). A canvas
 re-export that changes one of those spots fails the build here, loudly,
@@ -581,6 +722,9 @@ npm run build && npm run test:worker
                          # `wrangler dev` with a throwaway local D1
 NODE_PATH=/opt/node22/lib/node_modules PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers \
   node test/verify.mjs   # end to end in a browser against real Google APIs
+# Not a test: re-measures the city pages' trips into src/cities/routes.json ("City pages").
+NODE_PATH=/opt/node22/lib/node_modules PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers \
+  node test/measure-routes.mjs
 ```
 
 The suites about the forms' fields and lists run with `OTP_OFF=1`, which
@@ -609,7 +753,14 @@ only), analytics across days: what is and isn't counted (crawlers, excluded
 browsers, other sites' pages), yesterday summed plus today live, every
 dashboard section, a label sent to inject HTML shown escaped, the daily CSV,
 "Don't count this browser", the campaign link maker, totals outliving 13
-months, and a backlog summed eight days at a time.
+months, and a backlog summed eight days at a time. And for the website
+changes v2: every way of typing a city page's address (a 301 to the page, the
+query kept; a near miss still not found), a signup made on a city page named
+after it, an application's consent refused when unticked and saved with its
+version and language (an unknown language left blank, an overlong version
+cut), the applications' minimum lengths, and `events.csv`: its columns, one
+row per stored event with its details, session, visitor and first touch, and
+its days held to 1–31.
 
 `verify.mjs` serves `dist/` and the Worker with `wrangler dev`, checks each
 page's caching (sent `no-cache`, its scripts asked for by the hash of what is
@@ -646,7 +797,7 @@ Contact's email; old `/beta/#about`, `#contact` and `#apply` links landing
 on the new pages; `/beta`'s header and footer pointing there and its HTML
 carrying no About or Contact of its own; no How It Works (an old link opens
 Home), "verified" not "police-verified" anywhere, the closing band, the
-footer's "Become a Buddy", the CTA redirect, and both new pages fitting a
+footer's Buddy link, the CTA redirect, and both new pages fitting a
 390px phone. Last of all, a server without the 2Factor key: the pop-up says
 the code couldn't be sent, confirms nothing, and nothing is saved. The
 headers of `/estimate/`, `/about/` and `/contact/` are each measured against
@@ -662,6 +813,29 @@ name, licence, agency detail, comment or address. Then the legal pages
 app-only rates, the cookie notice's Privacy Policy link, and M7: a visit
 from `/?utm_source=test&utm_campaign=qa` that signs up under an estimate
 keeps that first touch on its row.
+
+For the website changes v2, `verify.mjs` also opens all six city pages and
+checks each against `src/cities/cities.mjs` and `routes.json`: the four trip
+cards (distance, drive time, "From" fare, link and label), the tips with their
+drive times, the title, h1, canonical, breadcrumb, pickups, nearby areas, the
+city menu, the beta tag and the band in Hindi; each page's own intro; the city
+menu going to the city chosen; `/New-Chandigarh` landing on its page; the
+footer's Cities column; a 360px phone (no sideways scrolling, the wordmark
+making room for the 44px menu). Then a card's link into the estimator: One
+Way, Sector 17 → Delhi looked up and chosen, no date yet; priced at 9 AM it
+must show the card's "From" fare, re-priced by the backend too, under the
+route-only heading (DS05). The Buddy application runs in both languages:
+Hindi first, English with one tap (the band and the remembered choice
+following), no errors and Get OTP greyed on an empty form, the consent line
+and its links, Get OTP turning on only with every field right and the box
+ticked, the six boxes (typed digits, a code pasted on them, Backspace, SMS
+autofill), Verify & Submit Application, then an agency in Hindi (a short GSTIN
+flagged in Hindi, its consent, Verify & Submit Agency Application, its own
+confirmation), each saved with the consent, its version and the language.
+The beta tag on `/beta/` is measured with the rest of its header against the
+standalone pages', and the stored events must show the language switches,
+both applications with their languages, the city switch, and the estimator
+opened from a city page.
 
 Tapping a place icon is exercised by firing the click Google fires for one (a
 click carrying a `placeId`) rather than hunting for the icon's pixel, which is

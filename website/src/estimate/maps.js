@@ -167,6 +167,21 @@ export async function getPlaceDetails(suggestion) {
   };
 }
 
+/**
+ * A place a link names in words — a city page's "Sector 17, Chandigarh" or
+ * "Shimla" (/estimate/?from=…&to=…) — taken as the visitor would take it:
+ * the first suggestion for those words, if it is inside the service area.
+ * Shaped as PlaceField's choice; null when nothing suitable comes back.
+ */
+export async function findPlace(text, kind) {
+  const sessionToken = await newSession();
+  const [first] = await placesAutocomplete(text, { kind, sessionToken });
+  if (!first) return null;
+  const det = await getPlaceDetails(first);
+  if (!det || !withinService(kind, det).ok) return null;
+  return { ...det, description: first.description, main_text: first.main_text, place_id: first.place_id };
+}
+
 // ----- Directions ---------------------------------------------------------------
 
 /**
