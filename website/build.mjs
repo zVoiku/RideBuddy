@@ -58,8 +58,6 @@ import path from 'node:path';
 import { build as esbuild, transform } from 'esbuild';
 import sharp from 'sharp';
 import { ARTBOARD_PATCHES } from './artboard-patches.mjs';
-import { CITY_PAGES, cityRoutes, cityTips, measuredRoutes } from './src/cities/cities.mjs';
-import { CITY_IMAGES, cityPage } from './src/cities/page.mjs';
 import { bandHtml } from './src/shared/buddy.mjs';
 
 const require = createRequire(import.meta.url);
@@ -171,6 +169,21 @@ async function fillPartials(html) {
   return out;
 }
 
+/**
+ * The city pages' modules (src/cities: their copy and layout, priced by the
+ * fare engine from rates.json), loaded through esbuild, which bundles the JSON
+ * in. Imported straight, they would need a Node that reads JSON modules
+ * (`with { type: 'json' }`: 18.20 / 20.10 and up), and Cloudflare's build
+ * image may run an older one.
+ */
+async function loadCities() {
+  const out = await esbuild({
+    stdin: { contents: "export * from './cities.mjs';\nexport * from './page.mjs';\n", resolveDir: path.join(SRC, 'cities'), sourcefile: 'cities.entry.mjs', loader: 'js' },
+    bundle: true, platform: 'node', format: 'esm', target: ['node16'], write: false, legalComments: 'none', logLevel: 'warning', plugins: [websiteRates],
+  });
+  return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
+}
+
 /** website/.env — KEY=VALUE lines. The process environment wins. */
 async function loadEnv() {
   const file = path.join(HERE, '.env');
@@ -232,6 +245,7 @@ function patchArtboard(html) {
 async function main() {
   await loadEnv();
   const key = mapsKey();
+  const { CITY_IMAGES, CITY_PAGES, cityPage, cityRoutes, cityTips, measuredRoutes } = await loadCities();
 
   await rm(OUT, { recursive: true, force: true });
   await mkdir(BETA, { recursive: true });
